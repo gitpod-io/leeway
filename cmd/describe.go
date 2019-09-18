@@ -155,16 +155,26 @@ func describePackage(pkg *leeway.Package) {
 			fmt.Fprintf(w, "\t%s\n", argdep)
 		}
 	}
-	fmt.Fprintf(w, "Dependencies:\n")
-	for _, dep := range deps {
-		fmt.Fprint(w, dep)
+	if len(pkg.Environment) > 0 {
+		fmt.Fprintf(w, "Build Environment Variables:\n")
+		for _, env := range pkg.Environment {
+			fmt.Fprintf(w, "\t%s\n", env)
+		}
 	}
-	fmt.Fprintf(w, "Sources:\n")
-	for _, src := range manifest {
-		segs := strings.Split(src, ":")
-		name := strings.TrimPrefix(segs[0], pkg.C.Origin+"/")
-		version := segs[1]
-		fmt.Fprintf(w, "\t%s\t%s\n", name, version)
+	if len(pkg.Dependencies) > 0 {
+		fmt.Fprintf(w, "Dependencies:\n")
+		for _, dep := range deps {
+			fmt.Fprint(w, dep)
+		}
+	}
+	if len(pkg.Sources) > 0 {
+		fmt.Fprintf(w, "Sources:\n")
+		for _, src := range manifest {
+			segs := strings.Split(src, ":")
+			name := strings.TrimPrefix(segs[0], pkg.C.Origin+"/")
+			version := segs[1]
+			fmt.Fprintf(w, "\t%s\t%s\n", name, version)
+		}
 	}
 }
 

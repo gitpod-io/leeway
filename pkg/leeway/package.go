@@ -213,6 +213,7 @@ func loadComponent(workspace *Workspace, path string, args Arguments) (Component
 
 		// add component BUILD file and additional sources to package sources
 		completeSources := make(map[string]struct{})
+		completeSources[path] = struct{}{}
 		for _, src := range pkg.Sources {
 			completeSources[src] = struct{}{}
 		}
@@ -314,8 +315,7 @@ type Package struct {
 	versionCache string
 
 	packageInternal
-	Config  PackageConfig `yaml:"config"`
-	rawYAML []byte
+	Config PackageConfig `yaml:"config"`
 
 	dependencies []*Package
 }
@@ -378,10 +378,6 @@ func (p *Package) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 	var buf yaml.MapSlice
 	err = unmarshal(&buf)
-	if err != nil {
-		return err
-	}
-	p.rawYAML, err = yaml.Marshal(buf)
 	if err != nil {
 		return err
 	}
@@ -715,10 +711,6 @@ func (p *Package) Version() (string, error) {
 	}
 
 	h := sha1.New()
-	_, err = h.Write(p.rawYAML)
-	if err != nil {
-		return "", err
-	}
 	_, err = io.WriteString(h, strings.Join(manifest, "\n"))
 	if err != nil {
 		return "", err
