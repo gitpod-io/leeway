@@ -1,8 +1,10 @@
 package cmd
 
 import (
-	log "github.com/sirupsen/logrus"
+	"io/ioutil"
+	"os"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/typefox/gitpod/leeway/pkg/leeway"
 )
@@ -35,13 +37,30 @@ var buildCmd = &cobra.Command{
 		}
 
 		cacheMode, _ := cmd.Flags().GetString("cache")
-		cache := getRemoteCache()
+		log.WithField("cacheMode", cacheMode).Debug("configuring caches")
+		remoteCache := getRemoteCache()
 		if cacheMode != "remote" {
-			cache = leeway.NoRemoteCache{}
+			remoteCache = leeway.NoRemoteCache{}
 		}
-		useLocalCache := cacheMode != "none"
+		var localCacheLoc string
+		if cacheMode == "none" {
+			localCacheLoc, err = ioutil.TempDir("", "leeway")
+			if err != nil {
+				log.Fatal(err)
+			}
+		} else {
+			localCacheLoc = os.Getenv(leeway.EnvvarCacheDir)
+			if localCacheLoc == "" {
+				localCacheLoc = os.TempDir()
+			}
+		}
+		log.WithField("location", localCacheLoc).Debug("set up local cache")
+		localCache, err := leeway.NewFilesystemCache(localCacheLoc)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-		err = leeway.Build(pkg, useLocalCache, cache)
+		err = leeway.Build(pkg, localCache, remoteCache)
 		if err != nil {
 			log.Fatal(err)
 		}
