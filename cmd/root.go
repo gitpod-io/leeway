@@ -20,6 +20,37 @@ const (
 	EnvvarRemoteCacheBucket = "LEEWAY_REMOTE_CACHE_BUCKET"
 )
 
+const (
+	bashCompletionFunc = `__leeway_parse_get()
+{
+    local leeway_output out
+    if leeway_output=$(leeway collect 2>/dev/null); then
+        out=($(echo "${leeway_output}" | awk '{print $1}'))
+        COMPREPLY=( $( compgen -W "${out[*]}" -- "$cur" ) )
+    fi
+}
+
+__leeway_get_resource()
+{
+    __leeway_parse_get
+    if [[ $? -eq 0 ]]; then
+        return 0
+    fi
+}
+
+__leeway_custom_func() {
+    case ${last_command} in
+        leeway_build | leeway_describe)
+            __leeway_get_resource
+            return
+            ;;
+        *)
+            ;;
+    esac
+}
+`
+)
+
 var (
 	workspace string
 	buildArgs []string
@@ -56,6 +87,7 @@ variables have an effect on leeway:
 			log.SetLevel(log.DebugLevel)
 		}
 	},
+	BashCompletionFunction: bashCompletionFunc,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
