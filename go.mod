@@ -1,4 +1,4 @@
-module github.com/typefox/gitpod/leeway
+module github.com/typefox/leeway
 
 go 1.12
 
