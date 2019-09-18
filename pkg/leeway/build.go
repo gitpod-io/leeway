@@ -294,6 +294,8 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	pkgdir = strings.Replace(pkgdir, "/", "-", -1)
 	pkgdir = strings.Replace(pkgdir, ":", "--", -1)
 	pkgdir = pkgdir + "." + version
+	// components in the workspace root would otherwise start with -- which breaks a lot of shell commands
+	pkgdir = strings.TrimPrefix(pkgdir, "--")
 
 	builddir := filepath.Join(buildctx.BuildDir(), pkgdir)
 	if _, err := os.Stat(builddir); !os.IsNotExist(err) {
