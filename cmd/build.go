@@ -61,7 +61,7 @@ var buildCmd = &cobra.Command{
 			log.Fatal(err)
 		}
 
-		err = leeway.Build(pkg, localCache, remoteCache)
+		err = leeway.Build(pkg, localCache, remoteCache, leeway.NewConsoleReporter())
 		if err != nil {
 			log.Fatal(err)
 		}
