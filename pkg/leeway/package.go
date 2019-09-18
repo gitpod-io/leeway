@@ -213,7 +213,6 @@ func loadComponent(workspace *Workspace, path string, args Arguments) (Component
 
 		// add component BUILD file and additional sources to package sources
 		completeSources := make(map[string]struct{})
-		completeSources[path] = struct{}{}
 		for _, src := range pkg.Sources {
 			completeSources[src] = struct{}{}
 		}
@@ -315,7 +314,8 @@ type Package struct {
 	versionCache string
 
 	packageInternal
-	Config PackageConfig `yaml:"config"`
+	Config  PackageConfig `yaml:"config"`
+	rawYAML []byte
 
 	dependencies []*Package
 }
@@ -376,6 +376,16 @@ func (p *Package) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	*p = Package{packageInternal: tpe}
 
+	var buf yaml.MapSlice
+	err = unmarshal(&buf)
+	if err != nil {
+		return err
+	}
+	p.rawYAML, err = yaml.Marshal(buf)
+	if err != nil {
+		return err
+	}
+
 	cfg, err := unmarshalTypeDependentConfig(tpe.Type, unmarshal)
 	if err != nil {
 		return err
@@ -394,12 +404,24 @@ func unmarshalTypeDependentConfig(tpe PackageType, unmarshal func(interface{}) e
 		if err := unmarshal(&cfg); err != nil {
 			return nil, err
 		}
+		if cfg.Config.Packaging == "" {
+			cfg.Config.Packaging = TypescriptApp
+		}
+		if err := cfg.Config.Validate(); err != nil {
+			return nil, err
+		}
 		return cfg.Config, nil
 	case GoPackage:
 		var cfg struct {
 			Config GoPkgConfig `yaml:"config"`
 		}
 		if err := unmarshal(&cfg); err != nil {
+			return nil, err
+		}
+		if cfg.Config.Packaging == "" {
+			cfg.Config.Packaging = GoApp
+		}
+		if err := cfg.Config.Validate(); err != nil {
 			return nil, err
 		}
 		return cfg.Config, nil
@@ -435,11 +457,39 @@ type PackageConfig interface {
 
 // TypescriptPkgConfig configures a typescript package
 type TypescriptPkgConfig struct {
-	YarnLock string   `yaml:"yarnLock,omitempty"`
-	TSConfig string   `yaml:"tsconfig"`
-	Library  bool     `yaml:"library,omitempty"`
-	BuildCmd []string `yaml:"buildCommand,omitempty"`
+	YarnLock  string              `yaml:"yarnLock,omitempty"`
+	TSConfig  string              `yaml:"tsconfig"`
+	Packaging TypescriptPackaging `yaml:"packaging,omitempty"`
+	Commands  struct {
+		Install []string `yaml:"install,omitempty"`
+		Build   []string `yaml:"build,omitempty"`
+	} `yaml:"commands,omitempty"`
 }
+
+// Validate ensures this config can be acted upon/is valid
+func (cfg TypescriptPkgConfig) Validate() error {
+	switch cfg.Packaging {
+	case TypescriptLibrary:
+	case TypescriptOfflineMirror:
+	case TypescriptApp:
+	default:
+		return xerrors.Errorf("unknown packaging: %s", cfg.Packaging)
+	}
+
+	return nil
+}
+
+// TypescriptPackaging configures the packaging method of a typescript package
+type TypescriptPackaging string
+
+const (
+	// TypescriptLibrary means the package will be created using `yarn pack`
+	TypescriptLibrary TypescriptPackaging = "library"
+	// TypescriptOfflineMirror means that the package will become a yarn offline mirror
+	TypescriptOfflineMirror TypescriptPackaging = "offline-mirror"
+	// TypescriptApp simply tars the build directory
+	TypescriptApp TypescriptPackaging = "app"
+)
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
 func (cfg TypescriptPkgConfig) AdditionalSources() []string {
@@ -455,12 +505,34 @@ func (cfg TypescriptPkgConfig) AdditionalSources() []string {
 
 // GoPkgConfig configures a Go package
 type GoPkgConfig struct {
-	Library        bool     `yaml:"library,omitempty"`
-	Generate       bool     `yaml:"generate,omitempty"`
-	DontTest       bool     `yaml:"dontTest,omitempty"`
-	DontCheckGoFmt bool     `yaml:"dontCheckGoFmt,omitempty"`
-	BuildFlags     []string `yaml:"buildFlags,omitempty"`
+	Packaging      GoPackaging `yaml:"packaging,omitempty"`
+	Generate       bool        `yaml:"generate,omitempty"`
+	DontTest       bool        `yaml:"dontTest,omitempty"`
+	DontCheckGoFmt bool        `yaml:"dontCheckGoFmt,omitempty"`
+	BuildFlags     []string    `yaml:"buildFlags,omitempty"`
 }
+
+// Validate ensures this config can be acted upon/is valid
+func (cfg GoPkgConfig) Validate() error {
+	switch cfg.Packaging {
+	case GoLibrary:
+	case GoApp:
+	default:
+		return xerrors.Errorf("unknown packaging: %s", cfg.Packaging)
+	}
+
+	return nil
+}
+
+// GoPackaging configures the packaging method of a Go package
+type GoPackaging string
+
+const (
+	// GoLibrary means the package can be imported in another package
+	GoLibrary GoPackaging = "library"
+	// GoApp runs go build and tars the build directory
+	GoApp GoPackaging = "app"
+)
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
 func (cfg GoPkgConfig) AdditionalSources() []string {
@@ -508,6 +580,16 @@ const (
 // FullName returns the packages fully qualified name (component:package)
 func (p *Package) FullName() string {
 	return fmt.Sprintf("%s:%s", p.C.Name, p.Name)
+}
+
+// FilesystemSafeName returns a string that is safe to use in a Unix filesystem as directory or filename
+func (p *Package) FilesystemSafeName() string {
+	pkgdir := p.FullName()
+	pkgdir = strings.Replace(pkgdir, "/", "-", -1)
+	pkgdir = strings.Replace(pkgdir, ":", "--", -1)
+	// components in the workspace root would otherwise start with -- which breaks a lot of shell commands
+	pkgdir = strings.TrimPrefix(pkgdir, "--")
+	return pkgdir
 }
 
 // resolveSources resolves any glob expression in the source list
@@ -633,6 +715,14 @@ func (p *Package) Version() (string, error) {
 	}
 
 	h := sha1.New()
+	_, err = h.Write(p.rawYAML)
+	if err != nil {
+		return "", err
+	}
+	_, err = io.WriteString(h, strings.Join(manifest, "\n"))
+	if err != nil {
+		return "", err
+	}
 	_, err = io.WriteString(h, strings.Join(manifest, "\n"))
 	if err != nil {
 		return "", err

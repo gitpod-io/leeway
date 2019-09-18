@@ -305,13 +305,7 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		log.WithField("package", p.FullName()).WithField("version", version).Info("build succeded")
 	}()
 
-	pkgdir := p.FullName()
-	pkgdir = strings.Replace(pkgdir, "/", "-", -1)
-	pkgdir = strings.Replace(pkgdir, ":", "--", -1)
-	pkgdir = pkgdir + "." + version
-	// components in the workspace root would otherwise start with -- which breaks a lot of shell commands
-	pkgdir = strings.TrimPrefix(pkgdir, "--")
-
+	pkgdir := p.FilesystemSafeName() + "." + version
 	builddir := filepath.Join(buildctx.BuildDir(), pkgdir)
 	if _, err := os.Stat(builddir); !os.IsNotExist(err) {
 		err := os.RemoveAll(builddir)
@@ -324,14 +318,16 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		return err
 	}
 
-	cpargs := []string{"--parents"}
-	for _, src := range p.Sources {
-		cpargs = append(cpargs, strings.TrimPrefix(src, p.C.Origin+"/"))
-	}
-	cpargs = append(cpargs, builddir)
-	err = run(getRunPrefix(p), nil, p.C.Origin, "cp", cpargs...)
-	if err != nil {
-		return err
+	if len(p.Sources) > 0 {
+		cpargs := []string{"--parents"}
+		for _, src := range p.Sources {
+			cpargs = append(cpargs, strings.TrimPrefix(src, p.C.Origin+"/"))
+		}
+		cpargs = append(cpargs, builddir)
+		err = run(getRunPrefix(p), nil, p.C.Origin, "cp", cpargs...)
+		if err != nil {
+			return err
+		}
 	}
 
 	result, _ := buildctx.LocalCache.Location(p)
@@ -386,6 +382,13 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		commands = append(commands, []string{"cp", filepath.Join(p.C.Origin, cfg.TSConfig), "."})
 	}
 
+	if cfg.Packaging == TypescriptOfflineMirror {
+		commands = append(commands, [][]string{
+			{"mkdir", "_mirror"},
+			{"sh", "-c", "echo yarn-offline-mirror \"./_mirror\" > .yarnrc"},
+		}...)
+	}
+
 	pkgYarnLock := "pkg-yarn.lock"
 	for _, deppkg := range p.GetTransitiveDependencies() {
 		builtpkg, ok := buildctx.LocalCache.Location(deppkg)
@@ -393,16 +396,22 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 			return PkgNotBuiltErr{deppkg}
 		}
 
+		tgt := deppkg.FilesystemSafeName()
+		if cfg.Packaging == TypescriptOfflineMirror {
+			fn := fmt.Sprintf("%s.tar.gz", tgt)
+			commands = append(commands, []string{"cp", builtpkg, filepath.Join("_mirror", fn)})
+			builtpkg = filepath.Join(wd, "_mirror", fn)
+		}
+
 		if deppkg.Type == TypescriptPackage {
 			cfg, ok := deppkg.Config.(TypescriptPkgConfig)
-			if !ok || !cfg.Library {
-				return xerrors.Errorf("cannot depend on typescript application packages: %s", deppkg.FullName())
+			if !ok || cfg.Packaging != TypescriptLibrary {
+				return xerrors.Errorf("can only depend on typescript libraries: %s", deppkg.FullName())
 			}
 
 			// make previously built package availabe through yarn lock
 			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("tar Ozfx %s package/%s | sed '/resolved /c\\  resolved \"file://%s\"' >> yarn.lock", builtpkg, pkgYarnLock, builtpkg)})
 		} else {
-			tgt := strings.Replace(deppkg.FullName(), "/", "-", -1)
 			commands = append(commands, [][]string{
 				{"mkdir", tgt},
 				{"tar", "xfz", builtpkg, "-C", tgt},
@@ -410,7 +419,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		}
 	}
 
-	if cfg.Library {
+	if cfg.Packaging == TypescriptLibrary {
 		// We can't modify the `yarn pack` generated tar file without runnign the risk of yarn blocking when attempting to unpack it again. Thus, we must include the pkgYarnLock in the npm
 		// package we're building. To this end, we modify the package.json of the source package.
 		pkgJSONFilename := filepath.Join(wd, "package.json")
@@ -452,14 +461,27 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		yarnMutex = "network"
 	}
 	yarnCache := filepath.Join(buildctx.BuildDir(), "yarn-cache")
-	commands = append(commands, []string{"yarn", "install", "--mutex", yarnMutex, "--cache-folder", yarnCache})
-	if len(cfg.BuildCmd) == 0 {
+	if len(cfg.Commands.Install) == 0 {
+		commands = append(commands, []string{"yarn", "install", "--mutex", yarnMutex, "--cache-folder", yarnCache})
+	} else {
+		commands = append(commands, cfg.Commands.Install)
+	}
+	if len(cfg.Commands.Build) == 0 {
 		commands = append(commands, []string{"npx", "tsc"})
 	} else {
-		commands = append(commands, cfg.BuildCmd)
+		commands = append(commands, cfg.Commands.Build)
 	}
 
-	if cfg.Library {
+	if cfg.Packaging == TypescriptOfflineMirror {
+		dst := filepath.Join("_mirror", fmt.Sprintf("%s.tar.gz", p.FilesystemSafeName()))
+		commands = append(commands, [][]string{
+			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://./%s > _mirror/content_yarn.lock", dst)},
+			{"sh", "-c", "cat yarn.lock >> _mirror/content_yarn.lock"},
+			{"yarn", "pack", "--filename", dst},
+			{"sh", "-c", "#!/bin/bash\n" + `echo cd \$\(dirname \"\${BASH_SOURCE[0]}\"\) \&\& sed \'s?resolved \"file://.\*\/?resolved \"file:\/\/\'\$\(pwd\)\'\/?g\' content_yarn.lock > _mirror/get_yarn_lock.sh`},
+			{"tar", "cfz", result, "-C", "_mirror", "."},
+		}...)
+	} else if cfg.Packaging == TypescriptLibrary {
 		commands = append(commands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://%s > %s", result, pkgYarnLock)},
 			{"yarn", "pack", "--filename", result},
@@ -491,7 +513,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 				return PkgNotBuiltErr{dep}
 			}
 
-			tgt := filepath.Join("_deps", strings.Replace(dep.FullName(), "/", "-", -1))
+			tgt := filepath.Join("_deps", dep.FilesystemSafeName())
 			commands = append(commands, [][]string{
 				{"mkdir", tgt},
 				{"tar", "xfz", builtpkg, "-C", tgt},
@@ -518,7 +540,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 	if !cfg.DontCheckGoFmt {
 		commands = append(commands, []string{"sh", "-c", `if [ ! $(go fmt ./... | wc -l) -eq 0 ]; then echo; echo; echo please gofmt your code; echo; echo; exit 1; fi`})
 	}
-	if !cfg.Library {
+	if cfg.Packaging == GoApp {
 		cmd := []string{"go", "build"}
 		cmd = append(cmd, cfg.BuildFlags...)
 		cmd = append(cmd, ".")
@@ -554,7 +576,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 			return PkgNotBuiltErr{dep}
 		}
 
-		tgt := strings.Replace(dep.FullName(), "/", "-", -1)
+		tgt := dep.FilesystemSafeName()
 		commands = append(commands, [][]string{
 			{"mkdir", tgt},
 			{"tar", "xfz", fn, "-C", tgt},
@@ -619,7 +641,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 			return PkgNotBuiltErr{dep}
 		}
 
-		tgt := strings.Replace(dep.FullName(), "/", "-", -1)
+		tgt := dep.FilesystemSafeName()
 		commands = append(commands, [][]string{
 			{"mkdir", tgt},
 			{"tar", "xfz", fn, "-C", tgt},

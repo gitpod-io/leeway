@@ -3,6 +3,7 @@ package cmd
 import (
 	"io/ioutil"
 	"os"
+	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -51,7 +52,7 @@ var buildCmd = &cobra.Command{
 		} else {
 			localCacheLoc = os.Getenv(leeway.EnvvarCacheDir)
 			if localCacheLoc == "" {
-				localCacheLoc = os.TempDir()
+				localCacheLoc = filepath.Join(os.TempDir(), "cache")
 			}
 		}
 		log.WithField("location", localCacheLoc).Debug("set up local cache")
