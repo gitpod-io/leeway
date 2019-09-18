@@ -15,6 +15,7 @@ import (
 )
 
 var printDepTree bool
+var printDepGraph bool
 
 // describeCmd represents the describe command
 var describeCmd = &cobra.Command{
@@ -22,6 +23,10 @@ var describeCmd = &cobra.Command{
 	Short: "Describes a single component or package",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		if printDepTree && printDepGraph {
+			log.Fatal("--tree and --dot are exclusive. Choose one or the other.")
+		}
+
 		workspace, err := getWorkspace()
 		if err != nil {
 			log.Fatal(err)
@@ -50,6 +55,12 @@ var describeCmd = &cobra.Command{
 					log.Fatal(err)
 				}
 				return
+			} else if printDepGraph {
+				err = printDependencyGraph(pkg)
+				if err != nil {
+					log.Fatal(err)
+				}
+				return
 			}
 			describePackage(pkg)
 		} else {
@@ -60,6 +71,9 @@ var describeCmd = &cobra.Command{
 			}
 
 			if printDepTree {
+				log.Fatal("--tree only makes sense for packages")
+			}
+			if printDepGraph {
 				log.Fatal("--tree only makes sense for packages")
 			}
 			describeComponent(comp)
@@ -80,6 +94,36 @@ func printDependencyTree(pkg *leeway.Package) error {
 	print(tree, pkg)
 	_, err := fmt.Println(tree.Print())
 	return err
+}
+
+func printDependencyGraph(pkg *leeway.Package) error {
+	allpkg := append(pkg.GetTransitiveDependencies(), pkg)
+
+	fmt.Println("digraph G {")
+	for _, p := range allpkg {
+		ver, err := p.Version()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("  p%s [label=\"%s\"];\n", ver, p.FullName())
+	}
+	for _, p := range allpkg {
+		ver, err := p.Version()
+		if err != nil {
+			return err
+		}
+
+		for _, dep := range p.GetDependencies() {
+			depver, err := dep.Version()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("  p%s -> p%s;\n", ver, depver)
+		}
+	}
+	fmt.Println("}")
+
+	return nil
 }
 
 func describePackage(pkg *leeway.Package) {
@@ -158,4 +202,5 @@ func describeConfig(cfg leeway.PackageConfig) string {
 func init() {
 	rootCmd.AddCommand(describeCmd)
 	describeCmd.Flags().BoolVar(&printDepTree, "tree", false, "print the dependency tree of a package")
+	describeCmd.Flags().BoolVar(&printDepGraph, "dot", false, "print the dependency graph as Graphviz DOT")
 }
