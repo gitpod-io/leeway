@@ -65,6 +65,11 @@ const (
 	// EnvvarBuildDir names the environment variable we take the build dir location from
 	EnvvarBuildDir = "LEEWAY_BUILD_DIR"
 
+	// EnvvarYarnMutex configures the mutex flag leeway will pass to yarn.
+	// See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
+	// Defaults to "network".
+	EnvvarYarnMutex = "LEEWAY_YARN_MUTEX"
+
 	// dockerImageNamesFiles is the name of the file store in poushed Docker build artifacts
 	// which contains the names of the Docker images we just pushed
 	dockerImageNamesFiles = "imgnames.txt"
@@ -162,7 +167,7 @@ func Build(pkg *Package, localCache Cache, remoteCache RemoteCache) error {
 	allpkg := append(requirements, pkg)
 
 	ctx, err := newBuildContext(localCache)
-	var errs []string
+	unresolvedArgs := make(map[string][]string)
 	for _, dep := range allpkg {
 		_, exists := ctx.LocalCache.Location(dep)
 		if exists {
@@ -171,14 +176,24 @@ func Build(pkg *Package, localCache Cache, remoteCache RemoteCache) error {
 
 		ua, err := FindUnresolvedArguments(dep)
 		if err != nil {
-			errs = append(errs, err.Error())
+			return err
 		}
-		if len(ua) != 0 {
-			errs = append(errs, fmt.Sprintf("%s: cannot build with unresolved arguments: %s", dep.FullName(), strings.Join(ua, ", ")))
+		for _, arg := range ua {
+			pkgs, ok := unresolvedArgs[arg]
+			if !ok {
+				pkgs = []string{}
+			}
+			pkgs = append(pkgs, dep.FullName())
+			unresolvedArgs[arg] = pkgs
 		}
 	}
-	if len(errs) != 0 {
-		return xerrors.Errorf(strings.Join(errs, "\n"))
+	if len(unresolvedArgs) != 0 {
+		var msg string
+		for arg, pkgs := range unresolvedArgs {
+			cleanArg := strings.TrimSuffix(strings.TrimPrefix(arg, "${"), "}")
+			msg += fmt.Sprintf("cannot build with unresolved argument \"%s\": use -D%s=value to set the argument\n\t%s appears in %s\n\n", arg, cleanArg, arg, strings.Join(pkgs, ", "))
+		}
+		return xerrors.Errorf(msg)
 	}
 
 	err = remoteCache.Download(ctx.LocalCache, requirements)
@@ -431,7 +446,11 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 
 	// The yarn cache cannot handly conccurency proplery and needs to be looked.
 	// Make sure that all our yarn install calls lock the yarn cache.
-	yarnMutex := "file://" + filepath.Join(buildctx.BuildDir(), "yarn-mutex")
+	yarnMutex := os.Getenv(EnvvarYarnMutex)
+	if yarnMutex == "" {
+		log.Debug("%s is not set, defaulting to \"network\"", EnvvarYarnMutex)
+		yarnMutex = "network"
+	}
 	yarnCache := filepath.Join(buildctx.BuildDir(), "yarn-cache")
 	commands = append(commands, []string{"yarn", "install", "--mutex", yarnMutex, "--cache-folder", yarnCache})
 	if len(cfg.BuildCmd) == 0 {

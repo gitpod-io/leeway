@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/leeway"
@@ -29,7 +30,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "leeway",
 	Short: "A caching meta-build system",
-	Long: `Leeway is a heavily caching build system for Go, Typescript and Docker projects. It knows three core concepts:
+	Long: color.Render(`<light_yellow>Leeway is a heavily caching build system</> for Go, Typescript and Docker projects. It knows three core concepts:
   Workspace: the workspace is the root of all operations. All component names are relative to this path. No relevant
              file must be placed outside the workspace. The workspace root is marked with a WORKSPACE file.
   Component: a component is single piece of standalone software. Every folder in the workspace which contains a BUILD file
@@ -37,17 +38,19 @@ var rootCmd = &cobra.Command{
   Package:   packages are the buildable unit in leeway. Every component can define multiple packages in its build file.
              Packages are identified by their name prefixed with the component name, e.g. some-component:pkg
 
-Configuration
+<white>Configuration</>
 Leeway is configured exclusively through the WORKSPACE/BUILD files and environment variables. The following environment
 variables have an effect on leeway:
-  LEEWAY_WORKSPACE_ROOT       Contains the path where to look for a WORKSPACE file. Can also be set using --workspace.
-  LEEWAY_REMOTE_CACHE_BUCKET  Enables remote caching using GCP buckets. Set this variable to the bucket name used for caching.
+       <light_blue>LEEWAY_WORKSPACE_ROOT</>  Contains the path where to look for a WORKSPACE file. Can also be set using --workspace.
+  <light_blue>LEEWAY_REMOTE_CACHE_BUCKET</>  Enables remote caching using GCP buckets. Set this variable to the bucket name used for caching.
                               When this variable is set, leeway expects "gsutil" in the path configured and authenticated so
-							  that it can work with the bucket.
-  LEEWAY_CACHE_DIR            Location of the local build cache. The directory does not have to exist yet.
-  LEEWAY_BUILD_DIR            Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O
+                              that it can work with the bucket.
+            <light_blue>LEEWAY_CACHE_DIR</>  Location of the local build cache. The directory does not have to exist yet.
+            <light_blue>LEEWAY_BUILD_DIR</>  Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O
                               which makes it advisable to place this on a fast SSD or in RAM.
-`,
+           <light_blue>LEEWAY_YARN_MUTEX</>  Configures the mutex flag leeway will pass to yarn. Defaults to "network".
+                              See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
+`),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if verbose {
 			log.SetLevel(log.DebugLevel)
