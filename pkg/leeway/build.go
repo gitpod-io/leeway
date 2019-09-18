@@ -7,13 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
-	"text/tabwriter"
 
-	"github.com/gookit/color"
-	"github.com/segmentio/textio"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 )
@@ -48,6 +44,7 @@ type packageDuringBuild struct {
 
 type buildContext struct {
 	LocalCache Cache
+	Reporter   Reporter
 
 	buildDir string
 
@@ -75,7 +72,7 @@ const (
 	dockerImageNamesFiles = "imgnames.txt"
 )
 
-func newBuildContext(localCache Cache) (ctx *buildContext, err error) {
+func newBuildContext(localCache Cache, reporter Reporter) (ctx *buildContext, err error) {
 	buildDir := os.Getenv(EnvvarBuildDir)
 	if buildDir == "" {
 		buildDir = filepath.Join(os.TempDir(), "build")
@@ -83,6 +80,7 @@ func newBuildContext(localCache Cache) (ctx *buildContext, err error) {
 
 	ctx = &buildContext{
 		LocalCache:         localCache,
+		Reporter:           reporter,
 		buildDir:           buildDir,
 		newlyBuiltPackages: make(map[string]*Package),
 		pkgLockCond:        sync.NewCond(&sync.Mutex{}),
@@ -131,7 +129,6 @@ func (c *buildContext) ReleaseBuildLock(p *Package) {
 	c.pkgLockCond.L.Lock()
 	delete(c.pkgLocks, key)
 	c.pkgLockCond.Broadcast()
-	log.WithField("package", key).Info("package build done")
 	c.pkgLockCond.L.Unlock()
 }
 
@@ -162,14 +159,27 @@ func (c *buildContext) GetNewlyBuiltPackages() []*Package {
 
 // Build builds the packages in the order they're given. It's the callers responsibility to ensure the dependencies are built
 // in order.
-func Build(pkg *Package, localCache Cache, remoteCache RemoteCache) error {
+func Build(pkg *Package, localCache Cache, remoteCache RemoteCache, reporter Reporter) (err error) {
+	ctx, err := newBuildContext(localCache, reporter)
+
 	requirements := pkg.GetTransitiveDependencies()
 	allpkg := append(requirements, pkg)
 
-	ctx, err := newBuildContext(localCache)
+	err = remoteCache.Download(ctx.LocalCache, requirements)
+	if err != nil {
+		return err
+	}
+
+	pkgstatus := make(map[*Package]PackageBuildStatus)
 	unresolvedArgs := make(map[string][]string)
 	for _, dep := range allpkg {
 		_, exists := ctx.LocalCache.Location(dep)
+		if exists {
+			pkgstatus[dep] = PackageBuilt
+		} else {
+			pkgstatus[dep] = PackageNotBuiltYet
+		}
+
 		if exists {
 			continue
 		}
@@ -187,6 +197,11 @@ func Build(pkg *Package, localCache Cache, remoteCache RemoteCache) error {
 			unresolvedArgs[arg] = pkgs
 		}
 	}
+	reporter.BuildStarted(pkg, pkgstatus)
+	defer func(err *error) {
+		reporter.BuildFinished(pkg, *err)
+	}(&err)
+
 	if len(unresolvedArgs) != 0 {
 		var msg string
 		for arg, pkgs := range unresolvedArgs {
@@ -195,27 +210,6 @@ func Build(pkg *Package, localCache Cache, remoteCache RemoteCache) error {
 		}
 		return xerrors.Errorf(msg)
 	}
-
-	err = remoteCache.Download(ctx.LocalCache, requirements)
-	if err != nil {
-		return err
-	}
-
-	// now that the local cache is warm, we can print the list of work we have to do
-	lines := make([]string, len(allpkg))
-	for i, dep := range allpkg {
-		_, exists := ctx.LocalCache.Location(dep)
-		format := "%s\t%s\n"
-		if exists {
-			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📦\tcached"), dep.FullName())
-		} else {
-			lines[i] = fmt.Sprintf(format, color.Yellow.Sprint("🔧\tbuild"), dep.FullName())
-		}
-	}
-	sort.Slice(lines, func(i, j int) bool { return lines[i] < lines[j] })
-	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, strings.Join(lines, ""))
-	tw.Flush()
 
 	err = pkg.build(ctx)
 	if err != nil {
@@ -267,7 +261,13 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	if alreadyBuilt {
 		// some package types still need to do work even if we find their prior build artifact in the cache.
 		if p.Type == DockerPackage {
-			err = p.rebuildDocker(filepath.Dir(artifact), artifact)
+			doBuild := buildctx.ObtainBuildLock(p)
+			if !doBuild {
+				return nil
+			}
+			defer buildctx.ReleaseBuildLock(p)
+
+			err = p.rebuildDocker(buildctx, filepath.Dir(artifact), artifact)
 			if err != nil {
 				log.WithError(err).Warn("cannot re-use prior build artifact - building afresh.")
 			} else {
@@ -295,15 +295,10 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		return err
 	}
 
-	log.WithField("package", p.FullName()).Info("building")
-	defer func() {
-		if err != nil {
-			log.WithField("package", p.FullName()).WithError(err).Error("build failed")
-			return
-		}
-
-		log.WithField("package", p.FullName()).WithField("version", version).Info("build succeded")
-	}()
+	buildctx.Reporter.PackageBuildStarted(p)
+	defer func(err *error) {
+		buildctx.Reporter.PackageBuildFinished(p, *err)
+	}(&err)
 
 	pkgdir := p.FilesystemSafeName() + "." + version
 	builddir := filepath.Join(buildctx.BuildDir(), pkgdir)
@@ -324,7 +319,7 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 			cpargs = append(cpargs, strings.TrimPrefix(src, p.C.Origin+"/"))
 		}
 		cpargs = append(cpargs, builddir)
-		err = run(getRunPrefix(p), nil, p.C.Origin, "cp", cpargs...)
+		err = run(buildctx.Reporter, p, nil, p.C.Origin, "cp", cpargs...)
 		if err != nil {
 			return err
 		}
@@ -457,7 +452,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 	// Make sure that all our yarn install calls lock the yarn cache.
 	yarnMutex := os.Getenv(EnvvarYarnMutex)
 	if yarnMutex == "" {
-		log.Debug("%s is not set, defaulting to \"network\"", EnvvarYarnMutex)
+		log.Debugf("%s is not set, defaulting to \"network\"", EnvvarYarnMutex)
 		yarnMutex = "network"
 	}
 	yarnCache := filepath.Join(buildctx.BuildDir(), "yarn-cache")
@@ -490,7 +485,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		commands = append(commands, []string{"tar", "cfz", result, "."})
 	}
 
-	return executeCommandsForPackage(p, wd, commands)
+	return executeCommandsForPackage(buildctx, p, wd, commands)
 }
 
 func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error) {
@@ -551,7 +546,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 		{"tar", "cfz", result, "."},
 	}...)
 
-	return executeCommandsForPackage(p, wd, commands)
+	return executeCommandsForPackage(buildctx, p, wd, commands)
 }
 
 func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err error) {
@@ -619,7 +614,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 		commands = append(commands, []string{"tar", "cfz", result, dockerImageNamesFiles})
 	}
 
-	return executeCommandsForPackage(p, wd, commands)
+	return executeCommandsForPackage(buildctx, p, wd, commands)
 }
 
 func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err error) {
@@ -631,7 +626,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 	// shortcut: no command == empty package
 	if len(cfg.Command) == 0 {
 		log.WithField("package", p.FullName()).Debug("package has no commands - creating empty tar")
-		return run(getRunPrefix(p), nil, wd, "tar", "cfz", result, "--files-from", "/dev/null")
+		return run(buildctx.Reporter, p, nil, wd, "tar", "cfz", result, "--files-from", "/dev/null")
 	}
 
 	var commands [][]string
@@ -651,13 +646,13 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 	commands = append(commands, cfg.Command)
 	commands = append(commands, []string{"tar", "cfz", result, "."})
 
-	return executeCommandsForPackage(p, wd, commands)
+	return executeCommandsForPackage(buildctx, p, wd, commands)
 }
 
 // rebuildDocker is called when we already have the build artifact for this package (and version)
 // in the build cache. This function makes sure that if the build arguments changed the name of the
 // Docker image this build time, we just re-tag the image.
-func (p *Package) rebuildDocker(wd, prev string) (err error) {
+func (p *Package) rebuildDocker(buildctx *buildContext, wd, prev string) (err error) {
 	cfg, ok := p.Config.(DockerPkgConfig)
 	if !ok {
 		return xerrors.Errorf("package should have Docker config")
@@ -709,22 +704,17 @@ func (p *Package) rebuildDocker(wd, prev string) (err error) {
 		return
 	}
 
-	err = executeCommandsForPackage(p, wd, commands)
+	err = executeCommandsForPackage(buildctx, p, wd, commands)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func getRunPrefix(p *Package) string {
-	return fmt.Sprintf("[%s] ", p.FullName())
-}
-
-func executeCommandsForPackage(p *Package, wd string, commands [][]string) error {
-	prefix := getRunPrefix(p)
+func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, commands [][]string) error {
 	env := append(os.Environ(), p.Environment...)
 	for _, cmd := range commands {
-		err := run(prefix, env, wd, cmd[0], cmd[1:]...)
+		err := run(buildctx.Reporter, p, env, wd, cmd[0], cmd[1:]...)
 		if err != nil {
 			return err
 		}
@@ -732,15 +722,12 @@ func executeCommandsForPackage(p *Package, wd string, commands [][]string) error
 	return nil
 }
 
-func run(prefix string, env []string, cwd, name string, args ...string) error {
+func run(rep Reporter, p *Package, env []string, cwd, name string, args ...string) error {
 	log.WithField("command", strings.Join(append([]string{name}, args...), " ")).Debug("running")
 
-	stdout := textio.NewPrefixWriter(os.Stdout, prefix)
-	stderr := textio.NewPrefixWriter(os.Stderr, prefix)
-
 	cmd := exec.Command(name, args...)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	cmd.Stdout = &reporterStream{R: rep, P: p, IsErr: false}
+	cmd.Stderr = &reporterStream{R: rep, P: p, IsErr: true}
 	cmd.Dir = cwd
 	cmd.Env = env
 	err := cmd.Run()
@@ -750,4 +737,15 @@ func run(prefix string, env []string, cwd, name string, args ...string) error {
 	}
 
 	return nil
+}
+
+type reporterStream struct {
+	R     Reporter
+	P     *Package
+	IsErr bool
+}
+
+func (s *reporterStream) Write(buf []byte) (n int, err error) {
+	s.R.PackageBuildLog(s.P, s.IsErr, buf)
+	return len(buf), nil
 }
