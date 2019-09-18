@@ -1,6 +1,6 @@
 package main
 
-import "github.com/typefox/gitpod/leeway/cmd"
+import "github.com/typefox/leeway/cmd"
 
 func main() {
 	cmd.Execute()
