@@ -47,9 +47,8 @@ type packageDuringBuild struct {
 }
 
 type buildContext struct {
-	UseLocalCache bool
+	LocalCache Cache
 
-	cacheDir string
 	buildDir string
 
 	mu                 sync.Mutex
@@ -71,38 +70,25 @@ const (
 	dockerImageNamesFiles = "imgnames.txt"
 )
 
-func newBuildContext(useLocalCache bool) (ctx *buildContext, err error) {
-	cacheDir := os.Getenv(EnvvarCacheDir)
-	if cacheDir == "" {
-		cacheDir = filepath.Join(os.TempDir(), "cache")
-	}
+func newBuildContext(localCache Cache) (ctx *buildContext, err error) {
 	buildDir := os.Getenv(EnvvarBuildDir)
 	if buildDir == "" {
 		buildDir = filepath.Join(os.TempDir(), "build")
 	}
 
 	ctx = &buildContext{
-		UseLocalCache:      useLocalCache,
-		cacheDir:           cacheDir,
+		LocalCache:         localCache,
 		buildDir:           buildDir,
 		newlyBuiltPackages: make(map[string]*Package),
 		pkgLockCond:        sync.NewCond(&sync.Mutex{}),
 		pkgLocks:           make(map[string]struct{}),
 	}
 
-	err = os.MkdirAll(cacheDir, 0755)
-	if err != nil {
-		return nil, err
-	}
 	err = os.MkdirAll(buildDir, 0755)
 	if err != nil {
 		return nil, err
 	}
 	return ctx, nil
-}
-
-func (c *buildContext) CacheDir() string {
-	return c.cacheDir
 }
 
 func (c *buildContext) BuildDir() string {
@@ -157,57 +143,31 @@ func (c *buildContext) RegisterNewlyBuilt(p *Package) error {
 	return nil
 }
 
-func (c *buildContext) GetNewlyBuiltCacheKeys() []string {
-	res := make([]string, len(c.newlyBuiltPackages))
+func (c *buildContext) GetNewlyBuiltPackages() []*Package {
+	res := make([]*Package, len(c.newlyBuiltPackages))
 	i := 0
 	c.mu.Lock()
-	for key := range c.newlyBuiltPackages {
-		res[i] = fmt.Sprintf("%s.tar.gz", key)
+	for _, pkg := range c.newlyBuiltPackages {
+		res[i] = pkg
 		i++
 	}
 	c.mu.Unlock()
 	return res
 }
 
-// PackageBuildResult computes the name of a packages build result artifact.
-// Returns ok == true if that build artifact actually exists.
-func (c *buildContext) PackageBuildResult(p *Package) (filename string, ok bool) {
-	version, err := p.Version()
-	if err != nil {
-		return "", false
-	}
-
-	fn := filepath.Join(c.CacheDir(), fmt.Sprintf("%s.tar.gz", version))
-	if _, err := os.Stat(fn); os.IsNotExist(err) {
-		return fn, false
-	}
-
-	return fn, true
-}
-
 // Build builds the packages in the order they're given. It's the callers responsibility to ensure the dependencies are built
 // in order.
-func Build(pkg *Package, useLocalCache bool, cache RemoteCache) error {
-	ua, err := FindUnresolvedArguments(pkg)
-	if err != nil {
-		return err
-	}
-	if len(ua) != 0 {
-		return xerrors.Errorf("%s: cannot build with unresolved arguments: %s", pkg.FullName(), strings.Join(ua, ", "))
-	}
-
+func Build(pkg *Package, localCache Cache, remoteCache RemoteCache) error {
 	requirements := pkg.GetTransitiveDependencies()
+	allpkg := append(requirements, pkg)
 
-	ctx, err := newBuildContext(useLocalCache)
-	keys := make([]string, len(requirements))
+	ctx, err := newBuildContext(localCache)
 	var errs []string
-	for i, dep := range requirements {
-		fn, exists := ctx.PackageBuildResult(dep)
+	for _, dep := range allpkg {
+		_, exists := ctx.LocalCache.Location(dep)
 		if exists {
 			continue
 		}
-
-		keys[i] = filepath.Base(fn)
 
 		ua, err := FindUnresolvedArguments(dep)
 		if err != nil {
@@ -220,16 +180,16 @@ func Build(pkg *Package, useLocalCache bool, cache RemoteCache) error {
 	if len(errs) != 0 {
 		return xerrors.Errorf(strings.Join(errs, "\n"))
 	}
-	err = cache.Get(ctx.CacheDir(), keys)
+
+	err = remoteCache.Download(ctx.LocalCache, requirements)
 	if err != nil {
 		return err
 	}
 
 	// now that the local cache is warm, we can print the list of work we have to do
-	allpkg := append(requirements, pkg)
 	lines := make([]string, len(allpkg))
 	for i, dep := range allpkg {
-		_, exists := ctx.PackageBuildResult(dep)
+		_, exists := ctx.LocalCache.Location(dep)
 		format := "%s\t%s\n"
 		if exists {
 			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📦\tcached"), dep.FullName())
@@ -247,7 +207,7 @@ func Build(pkg *Package, useLocalCache bool, cache RemoteCache) error {
 		return err
 	}
 
-	err = cache.Put(ctx.CacheDir(), ctx.GetNewlyBuiltCacheKeys())
+	err = remoteCache.Upload(ctx.LocalCache, ctx.GetNewlyBuiltPackages())
 	if err != nil {
 		return err
 	}
@@ -288,8 +248,8 @@ func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
 }
 
 func (p *Package) build(buildctx *buildContext) (err error) {
-	artifact, alreadyBuilt := buildctx.PackageBuildResult(p)
-	if alreadyBuilt && buildctx.UseLocalCache {
+	artifact, alreadyBuilt := buildctx.LocalCache.Location(p)
+	if alreadyBuilt {
 		// some package types still need to do work even if we find their prior build artifact in the cache.
 		if p.Type == DockerPackage {
 			err = p.rebuildDocker(filepath.Dir(artifact), artifact)
@@ -357,7 +317,7 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		return err
 	}
 
-	result, _ := buildctx.PackageBuildResult(p)
+	result, _ := buildctx.LocalCache.Location(p)
 
 	switch p.Type {
 	case TypescriptPackage:
@@ -411,7 +371,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 
 	pkgYarnLock := "pkg-yarn.lock"
 	for _, deppkg := range p.GetTransitiveDependencies() {
-		builtpkg, ok := buildctx.PackageBuildResult(deppkg)
+		builtpkg, ok := buildctx.LocalCache.Location(deppkg)
 		if !ok {
 			return PkgNotBuiltErr{deppkg}
 		}
@@ -505,7 +465,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 		commands = append(commands, []string{"mkdir", "_deps"})
 
 		for _, dep := range p.dependencies {
-			builtpkg, ok := buildctx.PackageBuildResult(dep)
+			builtpkg, ok := buildctx.LocalCache.Location(dep)
 			if !ok {
 				return PkgNotBuiltErr{dep}
 			}
@@ -568,7 +528,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 	var commands [][]string
 	commands = append(commands, []string{"cp", dockerfile, "Dockerfile"})
 	for _, dep := range p.GetDependencies() {
-		fn, exists := buildctx.PackageBuildResult(dep)
+		fn, exists := buildctx.LocalCache.Location(dep)
 		if !exists {
 			return PkgNotBuiltErr{dep}
 		}
@@ -633,7 +593,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 
 	var commands [][]string
 	for _, dep := range p.GetDependencies() {
-		fn, exists := buildctx.PackageBuildResult(dep)
+		fn, exists := buildctx.LocalCache.Location(dep)
 		if !exists {
 			return PkgNotBuiltErr{dep}
 		}
