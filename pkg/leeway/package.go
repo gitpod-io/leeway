@@ -718,7 +718,7 @@ func (p *Package) Version() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, err = io.WriteString(h, strings.Join(manifest, "\n"))
+	_, err = fmt.Fprintf(h, "buildProcessVersion: %d\n", buildProcessVersions[p.Type])
 	if err != nil {
 		return "", err
 	}

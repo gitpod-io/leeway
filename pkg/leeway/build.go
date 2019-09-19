@@ -72,6 +72,15 @@ const (
 	dockerImageNamesFiles = "imgnames.txt"
 )
 
+// buildProcessVersions contain the current version of the respective build processes.
+// Increment this value if you change any of the build procedures.
+var buildProcessVersions = map[PackageType]int{
+	TypescriptPackage: 2,
+	GoPackage:         1,
+	DockerPackage:     1,
+	GenericPackage:    1,
+}
+
 func newBuildContext(localCache Cache, reporter Reporter) (ctx *buildContext, err error) {
 	buildDir := os.Getenv(EnvvarBuildDir)
 	if buildDir == "" {
@@ -414,6 +423,8 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	return err
 }
 
+// buildTypescript implements the build process for Typescript packages.
+// If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
 func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (err error) {
 	cfg, ok := p.Config.(TypescriptPkgConfig)
 	if !ok {
@@ -430,6 +441,11 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 	}
 	if !ok {
 		return xerrors.Errorf("%s: typescript packages must have a package.json", p.FullName())
+	}
+
+	version, err := p.Version()
+	if err != nil {
+		return err
 	}
 
 	var commands [][]string
@@ -487,6 +503,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 	if err != nil {
 		return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
 	}
+	var modifiedPackageJSON bool
 	if cfg.Packaging == TypescriptLibrary {
 		// We can't modify the `yarn pack` generated tar file without runnign the risk of yarn blocking when attempting to unpack it again. Thus, we must include the pkgYarnLock in the npm
 		// package we're building. To this end, we modify the package.json of the source package.
@@ -501,6 +518,18 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		}
 		packageJSONFiles = append(packageJSONFiles, pkgYarnLock)
 		packageJSON["files"] = packageJSONFiles
+
+		modifiedPackageJSON = true
+	}
+	if cfg.Packaging == TypescriptApp {
+		// We have to give this package a unique version to make sure we do not "poison" the yarn cache with this particular application version.
+		// The yarn package name and leeway package name do not have to be the same which makes it possible to "reuse" the npm package name for
+		// different things. This yarn cache can't handle that.
+		packageJSON["version"] = fmt.Sprintf("0.0.0-%s", version)
+
+		modifiedPackageJSON = true
+	}
+	if modifiedPackageJSON {
 		fc, err = json.Marshal(packageJSON)
 		if err != nil {
 			return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
@@ -560,8 +589,8 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 			{"yarn", "pack", "--filename", pkg},
 			{"mkdir", "_pkg"},
 			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
-			{"sh", "-c", fmt.Sprintf(`echo '{"name":"local","version":"%s","license":"UNLICENSED","dependencies":{"%s":"%s"}}' > _pkg/package.json`, pkgversion, pkgname, pkgversion)},
-			{"yarn", "--cwd", "_pkg", "install", "--frozen-lockfile"},
+			{"sh", "-c", fmt.Sprintf(`echo '{"name":"local","version":"%s","license":"UNLICENSED","dependencies":{"%s":"%s"}}' > _pkg/package.json`, version, pkgname, pkgversion)},
+			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
 			{"tar", "cfz", result, "-C", "_pkg", "."},
 		}...)
 	} else if cfg.Packaging == TypescriptArchive {
@@ -573,6 +602,8 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 	return executeCommandsForPackage(buildctx, p, wd, commands)
 }
 
+// buildGo implements the build process for Go packages.
+// If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
 func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error) {
 	cfg, ok := p.Config.(GoPkgConfig)
 	if !ok {
@@ -634,6 +665,8 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 	return executeCommandsForPackage(buildctx, p, wd, commands)
 }
 
+// buildDocker implements the build process for Docker packages.
+// If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
 func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err error) {
 	cfg, ok := p.Config.(DockerPkgConfig)
 	if !ok {
@@ -702,6 +735,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 	return executeCommandsForPackage(buildctx, p, wd, commands)
 }
 
+// buildGeneric implements the build process for generic packages.
+// If you change anything in this process that's not backwards compatible, make sure you increment BuildGenericProccessVersion.
 func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err error) {
 	cfg, ok := p.Config.(GenericPkgConfig)
 	if !ok {
