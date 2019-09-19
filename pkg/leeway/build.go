@@ -75,7 +75,7 @@ const (
 // buildProcessVersions contain the current version of the respective build processes.
 // Increment this value if you change any of the build procedures.
 var buildProcessVersions = map[PackageType]int{
-	TypescriptPackage: 2,
+	TypescriptPackage: 4,
 	GoPackage:         1,
 	DockerPackage:     1,
 	GenericPackage:    1,
@@ -423,6 +423,25 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	return err
 }
 
+const (
+	getYarnLockScript = `#!/bin/bash
+export DIR=$(dirname "${BASH_SOURCE[0]}")
+
+sed 's?resolved "file://.*/?resolved "file://'$DIR'/?g' $DIR/content_yarn.lock
+`
+
+	installScript = `#!/bin/bash
+
+export DIR=$(dirname "${BASH_SOURCE[0]}")
+
+cp $DIR/installer-package.json package.json
+$DIR/get_yarn_lock.sh > yarn.lock
+
+yarn install --frozenlockfile --prod`
+
+	installerPackageJSONTemplate = `{"name":"local","version":"%s","license":"UNLICENSED","dependencies":{"%s":"%s"}}`
+)
+
 // buildTypescript implements the build process for Typescript packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
 func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (err error) {
@@ -457,8 +476,12 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 	}
 
 	if cfg.Packaging == TypescriptOfflineMirror {
+		err := os.Mkdir(filepath.Join(wd, "_mirror"), 0755)
+		if err != nil {
+			return err
+		}
+
 		commands = append(commands, [][]string{
-			{"mkdir", "_mirror"},
 			{"sh", "-c", "echo yarn-offline-mirror \"./_mirror\" > .yarnrc"},
 		}...)
 	}
@@ -539,6 +562,14 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 			return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
 		}
 	}
+	pkgname, ok := packageJSON["name"].(string)
+	if !ok {
+		return xerrors.Errorf("name is not a string, but :v", pkgname)
+	}
+	pkgversion := packageJSON["version"]
+	if pkgname == "" || pkgversion == "" {
+		return xerrors.Errorf("name or version in package.json must not be empty")
+	}
 
 	// The yarn cache cannot handly conccurency proplery and needs to be looked.
 	// Make sure that all our yarn install calls lock the yarn cache.
@@ -560,12 +591,23 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 	}
 
 	if cfg.Packaging == TypescriptOfflineMirror {
+		builtinScripts := map[string]string{
+			"get_yarn_lock.sh":       getYarnLockScript,
+			"install.sh":             installScript,
+			"installer-package.json": fmt.Sprintf(installerPackageJSONTemplate, version, pkgname, pkgversion),
+		}
+		for fn, script := range builtinScripts {
+			err = ioutil.WriteFile(filepath.Join(wd, "_mirror", fn), []byte(script), 0755)
+			if err != nil {
+				return err
+			}
+		}
+
 		dst := filepath.Join("_mirror", fmt.Sprintf("%s.tar.gz", p.FilesystemSafeName()))
 		commands = append(commands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://./%s > _mirror/content_yarn.lock", dst)},
 			{"sh", "-c", "cat yarn.lock >> _mirror/content_yarn.lock"},
 			{"yarn", "pack", "--filename", dst},
-			{"sh", "-c", "#!/bin/bash\n" + `echo cd \$\(dirname \"\${BASH_SOURCE[0]}\"\) \&\& sed \'s?resolved \"file://.\*\/?resolved \"file:\/\/\'\$\(pwd\)\'\/?g\' content_yarn.lock > _mirror/get_yarn_lock.sh`},
 			{"tar", "cfz", result, "-C", "_mirror", "."},
 		}...)
 	} else if cfg.Packaging == TypescriptLibrary {
@@ -574,13 +616,13 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 			{"yarn", "pack", "--filename", result},
 		}...)
 	} else if cfg.Packaging == TypescriptApp {
-		pkgname, ok := packageJSON["name"].(string)
-		if !ok {
-			return xerrors.Errorf("name is not a string, but :v", pkgname)
+		err := os.Mkdir(filepath.Join(wd, "_pkg"), 0755)
+		if err != nil {
+			return err
 		}
-		pkgversion := packageJSON["version"]
-		if pkgname == "" || pkgversion == "" {
-			return xerrors.Errorf("name or version in package.json must not be empty")
+		err = ioutil.WriteFile(filepath.Join(wd, "_pkg", "package.json"), []byte(fmt.Sprintf(installerPackageJSONTemplate, version, pkgname, pkgversion)), 0755)
+		if err != nil {
+			return err
 		}
 
 		pkg := filepath.Join(wd, "package.tar.tz")
@@ -589,7 +631,6 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 			{"yarn", "pack", "--filename", pkg},
 			{"mkdir", "_pkg"},
 			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
-			{"sh", "-c", fmt.Sprintf(`echo '{"name":"local","version":"%s","license":"UNLICENSED","dependencies":{"%s":"%s"}}' > _pkg/package.json`, version, pkgname, pkgversion)},
 			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
 			{"tar", "cfz", result, "-C", "_pkg", "."},
 		}...)
