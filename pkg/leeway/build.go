@@ -629,7 +629,6 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		commands = append(commands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://%s > %s", pkg, pkgYarnLock)},
 			{"yarn", "pack", "--filename", pkg},
-			{"mkdir", "_pkg"},
 			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
 			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
 			{"tar", "cfz", result, "-C", "_pkg", "."},
