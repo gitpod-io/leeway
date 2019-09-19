@@ -157,15 +157,72 @@ func (c *buildContext) GetNewlyBuiltPackages() []*Package {
 	return res
 }
 
+type buildOptions struct {
+	LocalCache  Cache
+	RemoteCache RemoteCache
+	Reporter    Reporter
+	DryRun      bool
+}
+
+// BuildOption configures the build behaviour
+type BuildOption func(*buildOptions) error
+
+// WithLocalCache configures the local cache
+func WithLocalCache(cache Cache) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.LocalCache = cache
+		return nil
+	}
+}
+
+// WithLocalCache configures the local cache
+func WithRemoteCache(cache RemoteCache) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.RemoteCache = cache
+		return nil
+	}
+}
+
+// WithReporter sets the reporter which is notified about the build progress
+func WithReporter(reporter Reporter) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.Reporter = reporter
+		return nil
+	}
+}
+
+// WithDryRun marks this build as dry run
+func WithDryRun(dryrun bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DryRun = dryrun
+		return nil
+	}
+}
+
 // Build builds the packages in the order they're given. It's the callers responsibility to ensure the dependencies are built
 // in order.
-func Build(pkg *Package, localCache Cache, remoteCache RemoteCache, reporter Reporter) (err error) {
-	ctx, err := newBuildContext(localCache, reporter)
+func Build(pkg *Package, opts ...BuildOption) (err error) {
+	options := buildOptions{
+		Reporter:    NewConsoleReporter(),
+		RemoteCache: &NoRemoteCache{},
+		DryRun:      false,
+	}
+	for _, opt := range opts {
+		err := opt(&options)
+		if err != nil {
+			return err
+		}
+	}
+	if options.LocalCache == nil {
+		return xerrors.Errorf("cannot build without local cache. Use WithLocalCache() to configure one")
+	}
+
+	ctx, err := newBuildContext(options.LocalCache, options.Reporter)
 
 	requirements := pkg.GetTransitiveDependencies()
 	allpkg := append(requirements, pkg)
 
-	err = remoteCache.Download(ctx.LocalCache, requirements)
+	err = options.RemoteCache.Download(ctx.LocalCache, requirements)
 	if err != nil {
 		return err
 	}
@@ -197,9 +254,9 @@ func Build(pkg *Package, localCache Cache, remoteCache RemoteCache, reporter Rep
 			unresolvedArgs[arg] = pkgs
 		}
 	}
-	reporter.BuildStarted(pkg, pkgstatus)
+	options.Reporter.BuildStarted(pkg, pkgstatus)
 	defer func(err *error) {
-		reporter.BuildFinished(pkg, *err)
+		options.Reporter.BuildFinished(pkg, *err)
 	}(&err)
 
 	if len(unresolvedArgs) != 0 {
@@ -211,12 +268,17 @@ func Build(pkg *Package, localCache Cache, remoteCache RemoteCache, reporter Rep
 		return xerrors.Errorf(msg)
 	}
 
+	if options.DryRun {
+		// This is a dry-run. We've prepared everything for the build but do not execute the build itself.
+		return nil
+	}
+
 	err = pkg.build(ctx)
 	if err != nil {
 		return err
 	}
 
-	err = remoteCache.Upload(ctx.LocalCache, ctx.GetNewlyBuiltPackages())
+	err = options.RemoteCache.Upload(ctx.LocalCache, ctx.GetNewlyBuiltPackages())
 	if err != nil {
 		return err
 	}

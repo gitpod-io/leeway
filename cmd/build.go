@@ -61,7 +61,16 @@ var buildCmd = &cobra.Command{
 			log.Fatal(err)
 		}
 
-		err = leeway.Build(pkg, localCache, remoteCache, leeway.NewConsoleReporter())
+		dryrun, err := cmd.Flags().GetBool("dry-run")
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		err = leeway.Build(pkg,
+			leeway.WithLocalCache(localCache),
+			leeway.WithRemoteCache(remoteCache),
+			leeway.WithDryRun(dryrun),
+		)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -71,4 +80,5 @@ var buildCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(buildCmd)
 	buildCmd.Flags().StringP("cache", "c", "remote", "Configures the caching behaviour: none=no caching, local=local caching only, remote=use all configured caches")
+	buildCmd.Flags().Bool("dry-run", false, "don't actually build but stop after showing what would need to be built")
 }
