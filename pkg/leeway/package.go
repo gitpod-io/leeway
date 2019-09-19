@@ -483,7 +483,7 @@ const (
 	TypescriptLibrary TypescriptPackaging = "library"
 	// TypescriptOfflineMirror means that the package will become a yarn offline mirror
 	TypescriptOfflineMirror TypescriptPackaging = "offline-mirror"
-	// TypescriptApp simply tars the build directory
+	// TypescriptApp installs the package using an empty package.json and tars the resulting node_modules/
 	TypescriptApp TypescriptPackaging = "app"
 )
 

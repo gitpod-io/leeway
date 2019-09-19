@@ -175,7 +175,7 @@ func WithLocalCache(cache Cache) BuildOption {
 	}
 }
 
-// WithLocalCache configures the local cache
+// WithRemoteCache configures the remote cache
 func WithRemoteCache(cache RemoteCache) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.RemoteCache = cache
@@ -477,19 +477,19 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		}
 	}
 
+	pkgJSONFilename := filepath.Join(wd, "package.json")
+	var packageJSON map[string]interface{}
+	fc, err := ioutil.ReadFile(pkgJSONFilename)
+	if err != nil {
+		return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
+	}
+	err = json.Unmarshal(fc, &packageJSON)
+	if err != nil {
+		return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
+	}
 	if cfg.Packaging == TypescriptLibrary {
 		// We can't modify the `yarn pack` generated tar file without runnign the risk of yarn blocking when attempting to unpack it again. Thus, we must include the pkgYarnLock in the npm
 		// package we're building. To this end, we modify the package.json of the source package.
-		pkgJSONFilename := filepath.Join(wd, "package.json")
-		var packageJSON map[string]interface{}
-		fc, err := ioutil.ReadFile(pkgJSONFilename)
-		if err != nil {
-			return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
-		}
-		err = json.Unmarshal(fc, &packageJSON)
-		if err != nil {
-			return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
-		}
 		var packageJSONFiles []interface{}
 		if rfs, ok := packageJSON["files"]; ok {
 			fs, ok := rfs.([]interface{})
@@ -544,8 +544,28 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://%s > %s", result, pkgYarnLock)},
 			{"yarn", "pack", "--filename", result},
 		}...)
+	} else if cfg.Packaging == TypescriptApp {
+		pkgname, ok := packageJSON["name"].(string)
+		if !ok {
+			return xerrors.Errorf("name is not a string, but :v", pkgname)
+		}
+		pkgversion := packageJSON["version"]
+		if pkgname == "" || pkgversion == "" {
+			return xerrors.Errorf("name or version in package.json must not be empty")
+		}
+
+		pkg := filepath.Join(wd, "package.tar.tz")
+		commands = append(commands, [][]string{
+			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://%s > %s", pkg, pkgYarnLock)},
+			{"yarn", "pack", "--filename", pkg},
+			{"mkdir", "_pkg"},
+			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
+			{"sh", "-c", fmt.Sprintf(`echo '{"name":"local","version":"%s","license":"UNLICENSED","dependencies":{"%s":"%s"}}' > _pkg/package.json`, pkgversion, pkgname, pkgversion)},
+			{"yarn", "--cwd", "_pkg", "install", "--frozen-lockfile"},
+			{"tar", "cfz", result, "-C", "_pkg", "."},
+		}...)
 	} else {
-		commands = append(commands, []string{"tar", "cfz", result, "."})
+		return xerrors.Errorf("unknown Typescript packaging: %s", cfg.Packaging)
 	}
 
 	return executeCommandsForPackage(buildctx, p, wd, commands)
