@@ -273,14 +273,15 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return nil
 	}
 
-	err = pkg.build(ctx)
-	if err != nil {
-		return err
-	}
+	buildErr := pkg.build(ctx)
+	cacheErr := options.RemoteCache.Upload(ctx.LocalCache, ctx.GetNewlyBuiltPackages())
 
-	err = options.RemoteCache.Upload(ctx.LocalCache, ctx.GetNewlyBuiltPackages())
-	if err != nil {
-		return err
+	if buildErr != nil {
+		// We deliberately swallow the target pacakge build error as that will have already been reported using the reporter.
+		return xerrors.Errorf("build failed")
+	}
+	if cacheErr != nil {
+		return cacheErr
 	}
 
 	return nil
