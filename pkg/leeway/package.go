@@ -97,10 +97,10 @@ func FindUnresolvedArguments(pkg *Package) ([]string, error) {
 	return res, nil
 }
 
-// FindWorkspace looks for a WORKSPACE file within the path. If multiple such files are found,
+// FindWorkspace looks for a WORKSPACE.yaml file within the path. If multiple such files are found,
 // an error is returned.
 func FindWorkspace(path string, args Arguments) (Workspace, error) {
-	root := filepath.Join(path, "WORKSPACE")
+	root := filepath.Join(path, "WORKSPACE.yaml")
 	fc, err := ioutil.ReadFile(root)
 	if err != nil {
 		return Workspace{}, err
@@ -159,7 +159,7 @@ func FindWorkspace(path string, args Arguments) (Workspace, error) {
 // discoverComponents discovers components in a workspace
 func discoverComponents(workspace *Workspace, args Arguments) ([]Component, error) {
 	path := workspace.Origin
-	pths, err := doublestar.Glob(filepath.Join(path, "**/BUILD"))
+	pths, err := doublestar.Glob(filepath.Join(path, "**/BUILD.yaml"))
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +181,7 @@ func discoverComponents(workspace *Workspace, args Arguments) ([]Component, erro
 	return comps, nil
 }
 
-// loadComponent loads a component from a BUILD file
+// loadComponent loads a component from a BUILD.yaml file
 func loadComponent(workspace *Workspace, path string, args Arguments) (Component, error) {
 	var comp Component
 
