@@ -564,6 +564,8 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 			{"yarn", "--cwd", "_pkg", "install", "--frozen-lockfile"},
 			{"tar", "cfz", result, "-C", "_pkg", "."},
 		}...)
+	} else if cfg.Packaging == TypescriptArchive {
+		commands = append(commands, []string{"tar", "cfz", result, "."})
 	} else {
 		return xerrors.Errorf("unknown Typescript packaging: %s", cfg.Packaging)
 	}

@@ -468,6 +468,7 @@ func (cfg TypescriptPkgConfig) Validate() error {
 	case TypescriptLibrary:
 	case TypescriptOfflineMirror:
 	case TypescriptApp:
+	case TypescriptArchive:
 	default:
 		return xerrors.Errorf("unknown packaging: %s", cfg.Packaging)
 	}
@@ -485,6 +486,8 @@ const (
 	TypescriptOfflineMirror TypescriptPackaging = "offline-mirror"
 	// TypescriptApp installs the package using an empty package.json and tars the resulting node_modules/
 	TypescriptApp TypescriptPackaging = "app"
+	// TypescriptArchive simply tars the build directory
+	TypescriptArchive TypescriptPackaging = "archive"
 )
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
