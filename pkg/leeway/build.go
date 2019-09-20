@@ -75,7 +75,7 @@ const (
 // buildProcessVersions contain the current version of the respective build processes.
 // Increment this value if you change any of the build procedures.
 var buildProcessVersions = map[PackageType]int{
-	TypescriptPackage: 4,
+	TypescriptPackage: 5,
 	GoPackage:         1,
 	DockerPackage:     1,
 	GenericPackage:    1,
@@ -437,7 +437,9 @@ export DIR=$(dirname "${BASH_SOURCE[0]}")
 cp $DIR/installer-package.json package.json
 $DIR/get_yarn_lock.sh > yarn.lock
 
-yarn install --frozenlockfile --prod`
+yarn install --frozenlockfile --prod
+rm yarn.lock
+`
 
 	installerPackageJSONTemplate = `{"name":"local","version":"%s","license":"UNLICENSED","dependencies":{"%s":"%s"}}`
 )
