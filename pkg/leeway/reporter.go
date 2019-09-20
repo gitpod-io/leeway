@@ -150,3 +150,43 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, err error) {
 func getRunPrefix(p *Package) string {
 	return color.Gray.Render(fmt.Sprintf("[%s] ", p.FullName()))
 }
+
+// CompositeReporter multiplexes reporter events to multiple reporters
+type CompositeReporter struct {
+	Children []Reporter
+}
+
+// BuildStarted is called when the build of a package is started by the user.
+func (c *CompositeReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {
+	for _, r := range c.Children {
+		r.BuildStarted(pkg, status)
+	}
+}
+
+// BuildFinished is called when the build of a package whcih was started by the user has finished.
+func (c *CompositeReporter) BuildFinished(pkg *Package, err error) {
+	for _, r := range c.Children {
+		r.BuildFinished(pkg, err)
+	}
+}
+
+// PackageBuildStarted is called when a package build actually gets underway.
+func (c *CompositeReporter) PackageBuildStarted(pkg *Package) {
+	for _, r := range c.Children {
+		r.PackageBuildStarted(pkg)
+	}
+}
+
+// PackageBuildLog is called during a package build whenever a build command produced some output.
+func (c *CompositeReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {
+	for _, r := range c.Children {
+		r.PackageBuildLog(pkg, isErr, buf)
+	}
+}
+
+// PackageBuildFinished is called when the package build has finished.
+func (c *CompositeReporter) PackageBuildFinished(pkg *Package, err error) {
+	for _, r := range c.Children {
+		r.PackageBuildFinished(pkg, err)
+	}
+}
