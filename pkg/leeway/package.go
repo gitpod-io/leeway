@@ -14,6 +14,7 @@ import (
 
 	"github.com/bmatcuk/doublestar"
 	"github.com/minio/highwayhash"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v2"
 )
@@ -24,7 +25,8 @@ type Arguments map[string]string
 // Workspace is the root container of all compoments. All components are named relative
 // to the origin of this workspace.
 type Workspace struct {
-	DefaultTarget string `yaml:"defaultTarget,omitempty"`
+	DefaultTarget    string            `yaml:"defaultTarget,omitempty"`
+	ArgumentDefaults map[string]string `yaml:"defaultArgs,omitempty"`
 
 	Origin     string
 	Components map[string]Component
@@ -121,6 +123,20 @@ func FindWorkspace(path string, args Arguments) (Workspace, error) {
 		ignores = strings.Split(string(fc), "\n")
 	}
 	workspace.ignores = ignores
+
+	log.WithField("defaultArgs", workspace.ArgumentDefaults).Debug("applying workspace defaults")
+	for key, val := range workspace.ArgumentDefaults {
+		if args == nil {
+			args = make(map[string]string)
+		}
+
+		_, alreadySet := args[key]
+		if alreadySet {
+			continue
+		}
+
+		args[key] = val
+	}
 
 	comps, err := discoverComponents(&workspace, args)
 	if err != nil {

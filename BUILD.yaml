@@ -5,5 +5,10 @@ packages:
   - "**/*.go"
   - go.mod
   - go.sum
+  argdeps:
+  - version
   config:
+    buildArgs:
+    - -ldflags
+    - -X main.version=${version}
     library: false

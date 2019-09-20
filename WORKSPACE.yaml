@@ -1,1 +1,3 @@
 defaultTarget: ":app"
+defaultArgs:
+  version: dev
