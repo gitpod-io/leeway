@@ -7,123 +7,86 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/disiqueira/gotree"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/leeway"
 	"gopkg.in/yaml.v2"
 )
 
-var printDepTree bool
-var printDepGraph bool
-
 // describeCmd represents the describe command
 var describeCmd = &cobra.Command{
 	Use:   "describe <component|package>",
 	Short: "Describes a single component or package",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  cobra.MaximumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		if printDepTree && printDepGraph {
-			log.Fatal("--tree and --dot are exclusive. Choose one or the other.")
-		}
-
-		workspace, err := getWorkspace()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		var target string
-		if len(args) == 0 {
-			target = workspace.DefaultTarget
-		} else {
-			target = args[0]
-		}
-		if target == "" {
-			log.Fatal("no target")
-		}
-
-		if isPkg := strings.Contains(target, ":"); isPkg {
-			pkg, exists := workspace.Packages[target]
-			if !exists {
-				log.Fatalf("package \"%s\" does not exist", target)
-				return
+		if len(args) == 2 {
+			cmdname := args[0]
+			var subcmd *cobra.Command
+			for _, c := range cmd.Commands() {
+				if c.Name() == cmdname {
+					cmd = c
+					break
+				}
 			}
 
-			if printDepTree {
-				err = printDependencyTree(pkg)
-				if err != nil {
-					log.Fatal(err)
-				}
-				return
-			} else if printDepGraph {
-				err = printDependencyGraph(pkg)
-				if err != nil {
-					log.Fatal(err)
-				}
-				return
+			if subcmd == nil {
+				log.Fatalf("unknown command %s", cmdname)
 			}
+
+			subcmd.SetArgs(args[1:])
+			err := subcmd.Execute()
+			if err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+
+		comp, pkg, exists := getTarget(args[0])
+		if !exists {
+			return
+		}
+		if pkg != nil {
 			describePackage(pkg)
-		} else {
-			comp, exists := workspace.Components[target]
-			if !exists {
-				log.Fatalf("component \"%s\" does not exist", target)
-				return
-			}
-
-			if printDepTree {
-				log.Fatal("--tree only makes sense for packages")
-			}
-			if printDepGraph {
-				log.Fatal("--tree only makes sense for packages")
-			}
-			describeComponent(comp)
+			return
 		}
+
+		describeComponent(comp)
 	},
 }
 
-func printDependencyTree(pkg *leeway.Package) error {
-	var print func(parent gotree.Tree, pkg *leeway.Package)
-	print = func(parent gotree.Tree, pkg *leeway.Package) {
-		n := parent.Add(pkg.FullName())
-		for _, dep := range pkg.GetDependencies() {
-			print(n, dep)
+func getTarget(name string) (comp leeway.Component, pkg *leeway.Package, exists bool) {
+	workspace, err := getWorkspace()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.WithField("origin", workspace.Origin).Debug("found workspace")
+
+	var target string
+	if name == "" {
+		target = workspace.DefaultTarget
+	} else {
+		target = name
+	}
+	if target == "" {
+		log.Fatal("no target")
+		return
+	}
+
+	if isPkg := strings.Contains(target, ":"); isPkg {
+		pkg, exists = workspace.Packages[target]
+		if !exists {
+			log.Fatalf("package \"%s\" does not exist", target)
+			return
+		}
+	} else {
+		comp, exists = workspace.Components[target]
+		if !exists {
+			log.Fatalf("component \"%s\" does not exist", target)
+			return
 		}
 	}
 
-	tree := gotree.New("WORKSPACE")
-	print(tree, pkg)
-	_, err := fmt.Println(tree.Print())
-	return err
-}
-
-func printDependencyGraph(pkg *leeway.Package) error {
-	allpkg := append(pkg.GetTransitiveDependencies(), pkg)
-
-	fmt.Println("digraph G {")
-	for _, p := range allpkg {
-		ver, err := p.Version()
-		if err != nil {
-			return err
-		}
-		fmt.Printf("  p%s [label=\"%s\"];\n", ver, p.FullName())
-	}
-	for _, p := range allpkg {
-		ver, err := p.Version()
-		if err != nil {
-			return err
-		}
-
-		for _, dep := range p.GetDependencies() {
-			depver, err := dep.Version()
-			if err != nil {
-				return err
-			}
-			fmt.Printf("  p%s -> p%s;\n", ver, depver)
-		}
-	}
-	fmt.Println("}")
-
-	return nil
+	return
 }
 
 func describePackage(pkg *leeway.Package) {
@@ -171,7 +134,7 @@ func describePackage(pkg *leeway.Package) {
 		fmt.Fprintf(w, "Sources:\n")
 		for _, src := range manifest {
 			segs := strings.Split(src, ":")
-			name := strings.TrimPrefix(segs[0], pkg.C.Origin+"/")
+			name := segs[0]
 			version := segs[1]
 			fmt.Fprintf(w, "\t%s\t%s\n", name, version)
 		}
@@ -211,6 +174,5 @@ func describeConfig(cfg leeway.PackageConfig) string {
 
 func init() {
 	rootCmd.AddCommand(describeCmd)
-	describeCmd.Flags().BoolVar(&printDepTree, "tree", false, "print the dependency tree of a package")
-	describeCmd.Flags().BoolVar(&printDepGraph, "dot", false, "print the dependency graph as Graphviz DOT")
+	describeCmd.Flags().StringP("format", "f", "default", "the description format. Valid choices are: default, tree, dot, manifest")
 }

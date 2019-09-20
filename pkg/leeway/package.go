@@ -14,7 +14,6 @@ import (
 
 	"github.com/bmatcuk/doublestar"
 	"github.com/minio/highwayhash"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v2"
 )
@@ -229,7 +228,6 @@ func loadComponent(workspace *Workspace, path string, args Arguments) (Component
 				continue
 			}
 
-			log.WithField("package", pkg.FullName()).WithField("file", src).Debug("file not listed as package source, adding to sources")
 			completeSources[fn] = struct{}{}
 		}
 		pkg.Sources = make([]string, len(completeSources))
@@ -619,6 +617,22 @@ func (p *Package) resolveSources() error {
 }
 
 func (p *Package) resolveBuiltinVariables() error {
+	ur, err := FindUnresolvedArguments(p)
+	if err != nil {
+		return err
+	}
+	var found bool
+	for _, n := range ur {
+		if n == BuiltinArgPackageVersion {
+			found = true
+			break
+		}
+	}
+	if !found {
+		// no unresolved builtin args in there - nothing to do
+		return nil
+	}
+
 	version, err := p.Version()
 	if err != nil {
 		return err
@@ -688,7 +702,8 @@ func (p *Package) ContentManifest() ([]string, error) {
 			return nil, err
 		}
 
-		res[i] = fmt.Sprintf("%s:%s", src, hex.EncodeToString(hash.Sum(nil)))
+		name := strings.TrimPrefix(src, p.C.W.Origin+"/")
+		res[i] = fmt.Sprintf("%s:%s", name, hex.EncodeToString(hash.Sum(nil)))
 	}
 
 	sort.Slice(res, func(i, j int) bool {
@@ -698,45 +713,60 @@ func (p *Package) ContentManifest() ([]string, error) {
 	return res, nil
 }
 
+// WriteVersionManifest writes the manifest whoose hash is the version of this package (see Version())
+func (p *Package) WriteVersionManifest(out io.Writer) error {
+	if p.dependencies == nil {
+		return xerrors.Errorf("package is not linked")
+	}
+
+	manifest, err := p.ContentManifest()
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(out, "buildProcessVersion: %d\n", buildProcessVersions[p.Type])
+	if err != nil {
+		return err
+	}
+	for _, argdep := range p.ArgumentDependencies {
+		_, err = fmt.Fprintf(out, "arg %s\n", argdep)
+		if err != nil {
+			return err
+		}
+	}
+	for _, dep := range p.dependencies {
+		ver, err := dep.Version()
+		if err != nil {
+			return xerrors.Errorf("%s: %w", dep.FullName(), err)
+		}
+		_, err = fmt.Fprintf(out, "%s.%s\n", dep.FullName(), ver)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = io.WriteString(out, strings.Join(manifest, "\n"))
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Version computes the Package version based on the content hash of the sources
 func (p *Package) Version() (string, error) {
 	if p.versionCache != "" {
 		return p.versionCache, nil
 	}
 
-	if p.dependencies == nil {
-		return "", xerrors.Errorf("package is not linked")
-	}
-
-	manifest, err := p.ContentManifest()
-	if err != nil {
-		return "", err
-	}
-
 	h := sha1.New()
-	_, err = io.WriteString(h, strings.Join(manifest, "\n"))
+	err := p.WriteVersionManifest(h)
 	if err != nil {
 		return "", err
-	}
-	_, err = fmt.Fprintf(h, "buildProcessVersion: %d\n", buildProcessVersions[p.Type])
-	if err != nil {
-		return "", err
-	}
-	for _, argdep := range p.ArgumentDependencies {
-		_, err = fmt.Fprintf(h, "arg %s\n", argdep)
-		if err != nil {
-			return "", err
-		}
-	}
-	for _, dep := range p.dependencies {
-		ver, err := dep.Version()
-		if err != nil {
-			return "", xerrors.Errorf("%s: %w", dep.FullName(), err)
-		}
-		_, err = fmt.Fprintf(h, "%s.%s\n", dep.FullName(), ver)
-		if err != nil {
-			return "", err
-		}
 	}
 	p.versionCache = hex.EncodeToString(h.Sum(nil))
 
