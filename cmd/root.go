@@ -18,6 +18,9 @@ const (
 
 	// EnvvarRemoteCacheBucket configures a GCP bucket name. This enables the use of GSUtilRemoteStorage
 	EnvvarRemoteCacheBucket = "LEEWAY_REMOTE_CACHE_BUCKET"
+
+	// EnvvarRemoteReporter makes leeway send events to a remote reporter on the location given in this envvar
+	EnvvarRemoteReporter = "LEEWAY_REMOTE_REPORTER"
 )
 
 const (

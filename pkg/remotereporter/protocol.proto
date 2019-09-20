@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package remotereporter;
+
+service Reporter {
+    rpc BuildStarted(BuildStartedEvent) returns (BuildStartedResponse) {}
+    rpc BuildFinished(BuildFinishedEvent) returns (NoResponse) {}
+    rpc PackageBuildStarted(PackageBuildStartedEvent) returns (NoResponse) {}
+    rpc PackageBuildLog(stream PackageBuildLogEvent) returns (NoResponse) {}
+    rpc PackageBuildFinished(PackageBuildFinishedEvent) returns (NoResponse) {}
+}
+
+message BuildStartedEvent {
+    Package package = 1;
+}
+
+message BuildStartedResponse {
+    string session = 1;
+}
+
+message PackageMetadata {
+    string fullname = 1;
+    string version = 2;
+    PackageStatus status = 3;
+}
+
+enum PackageStatus {
+    Unknown = 0;
+    NotBuilt = 1;
+    Building = 2;
+    Built = 3;
+}
+
+message Package {
+    PackageMetadata metadata = 1;
+    repeated Package dependencies = 2;
+}
+
+message BuildFinishedEvent {
+    string session = 1;
+    PackageMetadata package = 2;
+    bool successful = 3;
+    string message = 4;
+}
+
+message PackageBuildStartedEvent {
+    string session = 1;
+    PackageMetadata package = 2;
+}
+
+message PackageBuildLogEvent {
+    string session = 1;
+    PackageMetadata package = 2;
+    bytes data = 3;
+}
+
+message PackageBuildFinishedEvent {
+    string session = 1;
+    PackageMetadata package = 2;
+    bool successful = 3;
+    string message = 4;
+}
+
+message NoResponse {}

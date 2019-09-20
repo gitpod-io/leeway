@@ -8,6 +8,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/typefox/leeway/pkg/remotereporter"
+	"google.golang.org/grpc"
 )
 
 // buildCmd represents the build command
@@ -55,10 +57,26 @@ var buildCmd = &cobra.Command{
 
 		log.Debugf("this is leeway version %s", version)
 
+		var reporter leeway.Reporter = leeway.NewConsoleReporter()
+		if rrep := os.Getenv(EnvvarRemoteReporter); rrep != "" {
+			remoterep, err := remotereporter.NewRemoteReporter(rrep, grpc.WithInsecure())
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			reporter = &leeway.CompositeReporter{
+				Children: []leeway.Reporter{
+					reporter,
+					remoterep,
+				},
+			}
+		}
+
 		err = leeway.Build(pkg,
 			leeway.WithLocalCache(localCache),
 			leeway.WithRemoteCache(remoteCache),
 			leeway.WithDryRun(dryrun),
+			leeway.WithReporter(reporter),
 		)
 		if err != nil {
 			log.Fatal(err)

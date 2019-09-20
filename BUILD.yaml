@@ -1,5 +1,5 @@
 packages:
-- name: app
+- name: dev-app
   type: go
   srcs:
   - "**/*.go"
@@ -12,3 +12,19 @@ packages:
     - -ldflags
     - -X main.version=${version}
     library: false
+- name: release
+  type: generic
+  srcs:
+  - "**/*.go"
+  - go.mod
+  - go.sum
+  - ".git/**"
+  - ".goreleaser.yml"
+  deps:
+  - pkg/remotereporter:go-protocol
+  config:
+    commands:
+    - ["cp", "pkg-remotereporter--go-protocol/go/protocol.pb.go", "pkg/remotereporter"]
+    - ["curl", "-OL", "https://github.com/goreleaser/goreleaser/releases/download/v0.118.0/goreleaser_Linux_x86_64.tar.gz"]
+    - ["tar", "xzf", "goreleaser_Linux_x86_64.tar.gz"]
+    - ["./goreleaser"]
