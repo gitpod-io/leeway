@@ -786,7 +786,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 	}
 
 	// shortcut: no command == empty package
-	if len(cfg.Command) == 0 {
+	if len(cfg.Commands) == 0 {
 		log.WithField("package", p.FullName()).Debug("package has no commands - creating empty tar")
 		return run(buildctx.Reporter, p, nil, wd, "tar", "cfz", result, "--files-from", "/dev/null")
 	}
@@ -805,7 +805,9 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 		}...)
 	}
 
-	commands = append(commands, cfg.Command)
+	for _, c := range cfg.Commands {
+		commands = append(commands, c)
+	}
 	commands = append(commands, []string{"tar", "cfz", result, "."})
 
 	return executeCommandsForPackage(buildctx, p, wd, commands)
@@ -876,6 +878,10 @@ func (p *Package) rebuildDocker(buildctx *buildContext, wd, prev string) (err er
 func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, commands [][]string) error {
 	env := append(os.Environ(), p.Environment...)
 	for _, cmd := range commands {
+		if len(cmd) == 0 {
+			return xerrors.Errorf("empty command")
+		}
+
 		err := run(buildctx.Reporter, p, env, wd, cmd[0], cmd[1:]...)
 		if err != nil {
 			return err
