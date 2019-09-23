@@ -111,7 +111,10 @@ func FindWorkspace(path string, args Arguments) (Workspace, error) {
 	if err != nil {
 		return Workspace{}, err
 	}
-	workspace.Origin = filepath.Dir(root)
+	workspace.Origin, err = filepath.Abs(filepath.Dir(root))
+	if err != nil {
+		return Workspace{}, err
+	}
 
 	var ignores []string
 	ignoresFile := filepath.Join(workspace.Origin, ".leewayignore")

@@ -12,7 +12,7 @@ var describeManifestCmd = &cobra.Command{
 	Use:   "manifest",
 	Short: "Prints the version manifest (input for the version hash) of a package",
 	Run: func(cmd *cobra.Command, args []string) {
-		_, pkg, _ := getTarget(args[0])
+		_, pkg, _ := getTarget(args)
 		if pkg == nil {
 			log.Fatal("manifest needs a package")
 		}

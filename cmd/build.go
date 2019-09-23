@@ -16,25 +16,9 @@ var buildCmd = &cobra.Command{
 	Short: "Builds a package",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		workspace, err := getWorkspace()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		var target string
-		if len(args) == 0 {
-			target = workspace.DefaultTarget
-		} else {
-			target = args[0]
-		}
-		if target == "" {
-			log.Fatal("no target")
-		}
-
-		pkg, exists := workspace.Packages[target]
-		if !exists {
-			log.Fatalf("package \"%s\" not found", target)
-			return
+		_, pkg, _ := getTarget(args)
+		if pkg == nil {
+			log.Fatal("tree needs a package")
 		}
 
 		cacheMode, _ := cmd.Flags().GetString("cache")
@@ -43,7 +27,10 @@ var buildCmd = &cobra.Command{
 		if cacheMode != "remote" {
 			remoteCache = leeway.NoRemoteCache{}
 		}
-		var localCacheLoc string
+		var (
+			localCacheLoc string
+			err           error
+		)
 		if cacheMode == "none" {
 			localCacheLoc, err = ioutil.TempDir("", "leeway")
 			if err != nil {

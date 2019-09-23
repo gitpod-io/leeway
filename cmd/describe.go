@@ -41,7 +41,7 @@ var describeCmd = &cobra.Command{
 			return
 		}
 
-		comp, pkg, exists := getTarget(args[0])
+		comp, pkg, exists := getTarget(args)
 		if !exists {
 			return
 		}
@@ -54,7 +54,7 @@ var describeCmd = &cobra.Command{
 	},
 }
 
-func getTarget(name string) (comp leeway.Component, pkg *leeway.Package, exists bool) {
+func getTarget(args []string) (comp leeway.Component, pkg *leeway.Package, exists bool) {
 	workspace, err := getWorkspace()
 	if err != nil {
 		log.Fatal(err)
@@ -62,14 +62,25 @@ func getTarget(name string) (comp leeway.Component, pkg *leeway.Package, exists 
 	log.WithField("origin", workspace.Origin).Debug("found workspace")
 
 	var target string
-	if name == "" {
+	if len(args) == 0 {
 		target = workspace.DefaultTarget
 	} else {
-		target = name
+		target = args[0]
 	}
 	if target == "" {
 		log.Fatal("no target")
 		return
+	}
+
+	if strings.HasPrefix(target, ".:") {
+		wd, err := os.Getwd()
+		if err != nil {
+			log.Fatal(err)
+		}
+		wd += "/"
+
+		origin := workspace.Origin + "/"
+		target = fmt.Sprintf("%s:%s", strings.TrimPrefix(wd, origin), strings.TrimPrefix(target, ".:"))
 	}
 
 	if isPkg := strings.Contains(target, ":"); isPkg {
