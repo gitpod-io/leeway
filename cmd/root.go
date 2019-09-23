@@ -52,6 +52,9 @@ __leeway_custom_func() {
 )
 
 var (
+	// version is set during the build using ldflags
+	version string = "unknown"
+
 	workspace string
 	buildArgs []string
 	verbose   bool

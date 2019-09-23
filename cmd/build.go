@@ -66,6 +66,8 @@ var buildCmd = &cobra.Command{
 			log.Fatal(err)
 		}
 
+		log.Debugf("this is leeway version %s", version)
+
 		err = leeway.Build(pkg,
 			leeway.WithLocalCache(localCache),
 			leeway.WithRemoteCache(remoteCache),
