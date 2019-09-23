@@ -61,11 +61,16 @@ func (r *ConsoleReporter) BuildStarted(pkg *Package, status map[*Package]Package
 	lines := make([]string, len(status))
 	i := 0
 	for pkg, status := range status {
-		format := "%s\t%s\n"
+		version, err := pkg.Version()
+		if err != nil {
+			version = "unknown"
+		}
+
+		format := "%s\t%s\t%s\n"
 		if status == PackageBuilt {
-			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📦\tcached"), pkg.FullName())
+			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📦\tcached"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
 		} else {
-			lines[i] = fmt.Sprintf(format, color.Yellow.Sprint("🔧\tbuild"), pkg.FullName())
+			lines[i] = fmt.Sprintf(format, color.Yellow.Sprint("🔧\tbuild"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
 		}
 		i++
 	}
@@ -95,7 +100,12 @@ func (r *ConsoleReporter) PackageBuildStarted(pkg *Package) {
 	r.writer[nme] = out
 	r.mu.Unlock()
 
-	io.WriteString(out, color.Yellow.Render("build started\n"))
+	version, err := pkg.Version()
+	if err != nil {
+		version = "unknown"
+	}
+
+	io.WriteString(out, color.Sprintf("<fg=yellow>build started</> <gray>(version %s)</>\n", version))
 }
 
 // PackageBuildLog is called during a package build whenever a build command produced some output.
@@ -118,7 +128,7 @@ func (r *ConsoleReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) 
 
 // PackageBuildFinished is called when the package build has finished.
 func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, err error) {
-	msg := color.Render("<green>package build succeded</>")
+	msg := color.Render("<green>package build succeded</>\n")
 	if err != nil {
 		msg = color.Sprintf("<red>package build failed</>\n<white>Reason:</> %s\n", err)
 	}
