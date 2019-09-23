@@ -639,6 +639,7 @@ func (p *Package) resolveBuiltinVariables() error {
 	}
 	var found bool
 	for _, n := range ur {
+		n = strings.TrimSuffix(strings.TrimPrefix(n, "${"), "}")
 		if n == BuiltinArgPackageVersion {
 			found = true
 			break
