@@ -1,0 +1,41 @@
+{
+    "name": "d3-and-react",
+    "version": "1.0.0",
+    "main": "index.js",
+    "license": "MIT",
+    "private": true,
+    "scripts": {
+        "serve": "curl lama.sh | sh",
+        "build": "webpack --mode=development && cp -rf public/* dist/ && cp node_modules/xterm/css/xterm.css dist/",
+        "watch": "webpack -w",
+        "generate-protocol": "g() { export PATH=$PATH:$PWD/../pkg-ui--protoc-gen-grpc-web; mkdir -p $2; protoc $1 protocol.proto ui-protocol.proto --js_out=import_style=commonjs:$2 --grpc-web_out=import_style=commonjs+dts,mode=grpcwebtext:$2; }; g"
+    },
+    "dependencies": {
+        "d3": "^5.12.0",
+        "d3-dag": "^0.3.0",
+        "dagre-d3": "^0.6.3",
+        "elkjs": "^0.4.1",
+        "google-protobuf": "^3.10.0-rc.1",
+        "grpc-web": "^1.0.6",
+        "react": "^16.9.0",
+        "react-dom": "^16.9.0",
+        "semantic-ui-css": "^2.4.1",
+        "semantic-ui-react": "^0.88.1",
+        "xterm": "^4.0.1",
+        "xterm-addon-fit": "^0.2.1"
+    },
+    "devDependencies": {
+        "@types/d3": "^5.7.2",
+        "@types/dagre-d3": "^0.4.39",
+        "@types/react": "^16.9.2",
+        "@types/react-dom": "^16.9.0",
+        "css-loader": "^3.2.0",
+        "file-loader": "^4.2.0",
+        "style-loader": "^1.0.0",
+        "ts-loader": "^6.1.0",
+        "typescript": "^3.6.3",
+        "webpack": "^4.40.2",
+        "webpack-bundle-analyzer": "^3.5.1",
+        "webpack-cli": "^3.3.9"
+    }
+}

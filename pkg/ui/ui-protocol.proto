@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package uiprotocol;
+
+import "protocol.proto";
+
+service BuildEventSource {
+    rpc Register(RegisterReq) returns (stream BuildEvent);
+}
+
+message RegisterReq {}
+
+message BuildEvent {
+    oneof event {
+        remotereporter.BuildStartedEvent build_started = 1;
+        remotereporter.BuildFinishedEvent build_finished = 2;
+        remotereporter.PackageBuildStartedEvent package_build_started = 3;
+        remotereporter.PackageBuildLogEvent build_log = 4;
+        remotereporter.PackageBuildFinishedEvent package_build_finished = 5;
+    }
+}

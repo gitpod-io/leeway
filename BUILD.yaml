@@ -12,6 +12,11 @@ packages:
     - -ldflags
     - -X main.version=${version}
     library: false
+- name: dev-init
+  type: generic
+  deps:
+  - pkg/remotereporter:dev-init
+  - pkg/ui:dev-init
 - name: release
   type: generic
   srcs:

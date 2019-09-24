@@ -1,0 +1,33 @@
+packages:
+- name: protoc-gen-grpc-web
+  type: generic
+  config:
+    commands:
+    - ["curl", "-OL", "https://github.com/grpc/grpc-web/releases/download/1.0.6/protoc-gen-grpc-web-1.0.6-linux-x86_64"]
+    - ["mv", "protoc-gen-grpc-web-1.0.6-linux-x86_64", "protoc-gen-grpc-web"]
+    - ["chmod", "+x", "protoc-gen-grpc-web"]
+- name: protocol
+  type: generic
+  srcs:
+  - ui-protocol.proto
+  - frontend/package.json
+  deps:
+  - :protoc-gen-grpc-web
+  - pkg/remotereporter:protocol
+  config:
+    commands:
+    - ["yarn", "--cwd", "frontend", "install"]
+    - ["yarn", "--cwd", "frontend", "generate-protocol", " -I=../pkg-remotereporter--protocol -I=..", "../out/ts"]
+    - ["go", "get", "-u", "github.com/golang/protobuf/protoc-gen-go"]
+    - ["mkdir", "-p", "out/go"]
+    - ["protoc", "-I=pkg-remotereporter--protocol", "-I=.", "--go_out=plugins=grpc:out/go", "ui-protocol.proto"]
+    - ["sh", "-c", "ls | grep -v out | xargs rm -rf"]
+- name: dev-init
+  type: generic
+  deps:
+  - :protocol
+  config:
+    commands:
+    - ["mkdir", "-p", "${target}/pkg/ui/frontend/protocol", "${target}/pkg/ui/backend/uiprotocol"]
+    - ["sh", "-c", "cp pkg-ui--protocol/out/ts/* ${target}/pkg/ui/frontend/protocol"]
+    - ["sh", "-c", "cp pkg-ui--protocol/out/go/* ${target}/pkg/ui/backend/uiprotocol"]

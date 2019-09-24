@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -59,7 +60,7 @@ var buildCmd = &cobra.Command{
 
 		var reporter leeway.Reporter = leeway.NewConsoleReporter()
 		if rrep := os.Getenv(EnvvarRemoteReporter); rrep != "" {
-			remoterep, err := remotereporter.NewRemoteReporter(rrep, grpc.WithInsecure())
+			remoterep, err := remotereporter.NewRemoteReporter(rrep, grpc.WithInsecure(), grpc.WithTimeout(5*time.Second))
 			if err != nil {
 				log.Fatal(err)
 			}

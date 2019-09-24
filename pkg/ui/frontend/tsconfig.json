@@ -1,0 +1,23 @@
+{
+    "compilerOptions": {
+        // Set React as the JSX factory
+        "jsx": "react",
+        // Target ES6 for more modern browsers
+        "target": "es6",
+        // Include typings from built-in lib declarations
+        "lib": [
+            "es2016",
+            "dom",
+            "dom.iterable"
+        ],
+        // Include module source maps for debugging
+        "sourceMap": true,
+
+        "typeRoots": [
+            "node_modules/@types",
+            "typings"
+        ],
+
+        "module": "commonjs",
+    },
+}

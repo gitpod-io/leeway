@@ -79,6 +79,7 @@ recv:
 		case eventPackageBuildStarted:
 			msg := evt.Msg.(*PackageBuildStartedEvent)
 			msg.Session = r.session
+
 			_, err = r.client.PackageBuildStarted(ctx, msg)
 		case eventPackageBuildLog:
 			if logstream != nil {
@@ -118,18 +119,20 @@ func toRPCPackage(pkg *leeway.Package, status map[*leeway.Package]leeway.Package
 	if err != nil {
 		return nil, err
 	}
+	res := &Package{
+		Metadata:     meta,
+		Dependencies: deps,
+		Status:   PackageStatus_Unknown,
+	}
 	if stat, ok := status[pkg]; ok {
 		translation := map[leeway.PackageBuildStatus]PackageStatus{
 			leeway.PackageNotBuiltYet: PackageStatus_NotBuilt,
 			leeway.PackageBuilding:    PackageStatus_Building,
 			leeway.PackageBuilt:       PackageStatus_Built,
 		}
-		meta.Status = translation[stat]
+		res.Status = translation[stat]
 	}
-	return &Package{
-		Metadata:     meta,
-		Dependencies: deps,
-	}, nil
+	return res, nil
 }
 
 func toRPCPackageMetadata(pkg *leeway.Package) (*PackageMetadata, error) {
@@ -141,7 +144,6 @@ func toRPCPackageMetadata(pkg *leeway.Package) (*PackageMetadata, error) {
 	return &PackageMetadata{
 		Fullname: pkg.FullName(),
 		Version:  version,
-		Status:   PackageStatus_Unknown,
 	}, nil
 }
 

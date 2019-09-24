@@ -1,0 +1,5 @@
+frontend/protocol/
+frontend/dist/
+backend/uiprotocol/
+node_modules/
+yarn-error.log

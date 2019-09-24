@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package remotereporter;
+option go_package = "github.com/typefox/leeway/pkg/remotereporter";
 
 service Reporter {
     rpc BuildStarted(BuildStartedEvent) returns (BuildStartedResponse) {}
@@ -21,7 +22,6 @@ message BuildStartedResponse {
 message PackageMetadata {
     string fullname = 1;
     string version = 2;
-    PackageStatus status = 3;
 }
 
 enum PackageStatus {
@@ -34,6 +34,7 @@ enum PackageStatus {
 message Package {
     PackageMetadata metadata = 1;
     repeated Package dependencies = 2;
+    PackageStatus status = 3;
 }
 
 message BuildFinishedEvent {

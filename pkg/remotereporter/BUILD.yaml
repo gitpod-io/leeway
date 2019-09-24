@@ -8,13 +8,20 @@ packages:
     - ["go", "get", "-u", "github.com/golang/protobuf/protoc-gen-go"]
     - ["mkdir", "go"]
     - ["protoc", "-I=.", "--go_out=plugins=grpc:go", "protocol.proto"]
+- name: protocol
+  type: generic
+  srcs:
+  - protocol.proto
+  config:
+    commands:
+    - ["echo"]
 - name: dev-init
   type: generic
   deps:
   - :go-protocol
   config:
     commands:
-    - ["cp", "pkg-remotereporter--go-protocol/go/protocol.pb.go", "${target}/pkg/remotereporter"]
+    - ["cp", "pkg-remotereporter--go-protocol/go/github.com/typefox/leeway/pkg/remotereporter/protocol.pb.go", "${target}/pkg/remotereporter"]
 - name: lots-of-output
   type: generic
   config:

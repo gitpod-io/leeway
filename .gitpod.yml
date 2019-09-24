@@ -12,7 +12,7 @@ ports:
 tasks:
 - init: |
    go get -v ./... &&
-   go run main.go build pkg/remotereporter:dev-init -c none -Dtarget=$PWD -v
+   go run main.go build :dev-init -c none -Dtarget=$PWD -v
 
 vscode:
   extensions:
