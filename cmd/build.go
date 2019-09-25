@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 
+	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/leeway"
@@ -63,11 +67,38 @@ var buildCmd = &cobra.Command{
 		if err != nil {
 			log.Fatal(err)
 		}
+
+		serve, _ := cmd.Flags().GetString("serve")
+		if serve != "" {
+			br, exists := localCache.Location(pkg)
+			if !exists {
+				log.Fatal("build result is not in local cache despite just being built. Something's wrong with the cache.")
+			}
+
+			tmp, err := ioutil.TempDir("", "leeway_serve")
+			if err != nil {
+				log.WithError(err).Fatal("cannot serve build result")
+			}
+
+			cmd := exec.Command("tar", "xzf", br)
+			cmd.Dir = tmp
+			_, err = cmd.CombinedOutput()
+			if err != nil {
+				log.WithError(err).Fatal("cannot serve build result")
+			}
+
+			fmt.Printf("\n📢  serving build result on %s\n", color.Cyan.Render(serve))
+			err = http.ListenAndServe(serve, http.FileServer(http.Dir(tmp)))
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(buildCmd)
 	buildCmd.Flags().StringP("cache", "c", "remote", "Configures the caching behaviour: none=no caching, local=local caching only, remote=use all configured caches")
-	buildCmd.Flags().Bool("dry-run", false, "don't actually build but stop after showing what would need to be built")
+	buildCmd.Flags().Bool("dry-run", false, "Don't actually build but stop after showing what would need to be built")
+	buildCmd.Flags().String("serve", "", "After a successful build this starts a webserver on the given address serving the build result (e.g. --serve localhost:8080)")
 }
