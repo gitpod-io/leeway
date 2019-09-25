@@ -11,7 +11,6 @@ import (
 
 	"github.com/gookit/color"
 	"github.com/segmentio/textio"
-	log "github.com/sirupsen/logrus"
 )
 
 // Reporter provides feedback about the build progress to the user.
@@ -48,11 +47,48 @@ type ConsoleReporter struct {
 	mu     sync.RWMutex
 }
 
+// exclusiveWriter makes a write an exclusive resource by protecting Write calls with a mutex.
+type exclusiveWriter struct {
+	O  io.Writer
+	mu sync.Mutex
+}
+
+func (w *exclusiveWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.O.Write(p)
+}
+
 // NewConsoleReporter produces a new console logger
 func NewConsoleReporter() *ConsoleReporter {
 	return &ConsoleReporter{
 		writer: make(map[string]io.Writer),
 	}
+}
+
+func (r *ConsoleReporter) getWriter(pkg *Package) io.Writer {
+	name := pkg.FullName()
+
+	r.mu.RLock()
+	res, ok := r.writer[name]
+	r.mu.RUnlock()
+
+	if !ok {
+		r.mu.Lock()
+		res, ok = r.writer[name]
+		if ok {
+			// someone else was quicker in the meantime and created a new writer.
+			r.mu.Unlock()
+			return res
+		}
+
+		res = &exclusiveWriter{O: textio.NewPrefixWriter(os.Stdout, getRunPrefix(pkg))}
+		r.writer[name] = res
+		r.mu.Unlock()
+	}
+
+	return res
 }
 
 // BuildStarted is called when the build of a package is started by the user.
@@ -92,13 +128,7 @@ func (r *ConsoleReporter) BuildFinished(pkg *Package, err error) {
 
 // PackageBuildStarted is called when a package build actually gets underway.
 func (r *ConsoleReporter) PackageBuildStarted(pkg *Package) {
-	nme := pkg.FullName()
-
-	out := textio.NewPrefixWriter(os.Stdout, getRunPrefix(pkg))
-
-	r.mu.Lock()
-	r.writer[nme] = out
-	r.mu.Unlock()
+	out := r.getWriter(pkg)
 
 	version, err := pkg.Version()
 	if err != nil {
@@ -110,19 +140,7 @@ func (r *ConsoleReporter) PackageBuildStarted(pkg *Package) {
 
 // PackageBuildLog is called during a package build whenever a build command produced some output.
 func (r *ConsoleReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {
-	nme := pkg.FullName()
-
-	r.mu.RLock()
-	out, ok := r.writer[nme]
-	r.mu.RUnlock()
-	if !ok {
-		r.mu.Lock()
-		out = textio.NewPrefixWriter(os.Stdout, getRunPrefix(pkg))
-		r.writer[nme] = out
-		log.WithField("package", nme).Debug("saw build log output before the build started")
-		r.mu.Unlock()
-	}
-
+	out := r.getWriter(pkg)
 	out.Write(buf)
 }
 
@@ -134,17 +152,13 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, err error) {
 	}
 
 	nme := pkg.FullName()
-	r.mu.RLock()
-	out, ok := r.writer[nme]
-	r.mu.RUnlock()
 
-	if !ok {
-		out = textio.NewPrefixWriter(os.Stdout, getRunPrefix(pkg))
-	}
-
+	out := r.getWriter(pkg)
 	io.WriteString(out, msg)
 
+	r.mu.Lock()
 	delete(r.writer, nme)
+	r.mu.Unlock()
 }
 
 func getRunPrefix(p *Package) string {
