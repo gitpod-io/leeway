@@ -77,10 +77,15 @@ func getTarget(args []string) (comp leeway.Component, pkg *leeway.Package, exist
 		if err != nil {
 			log.Fatal(err)
 		}
-		wd += "/"
 
-		origin := workspace.Origin + "/"
-		target = fmt.Sprintf("%s:%s", strings.TrimPrefix(wd, origin), strings.TrimPrefix(target, ".:"))
+		// This uses seperate trims and is not part of origin to support BUILD files in the workspace root.
+		// In that case there's no "/" left over at the origin.
+		cn := strings.TrimPrefix(wd, workspace.Origin)
+		cn = strings.TrimPrefix(cn, "/")
+
+		pn := strings.TrimPrefix(target, ".:")
+
+		target = fmt.Sprintf("%s:%s", cn, pn)
 	}
 
 	if isPkg := strings.Contains(target, ":"); isPkg {
