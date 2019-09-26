@@ -569,7 +569,7 @@ func (cfg DockerPkgConfig) AdditionalSources() []string {
 
 // GenericPkgConfig configures a generic package
 type GenericPkgConfig struct {
-	Command []string `yaml:"command"`
+	Commands [][]string `yaml:"commands"`
 }
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration

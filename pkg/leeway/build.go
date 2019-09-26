@@ -786,7 +786,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 	}
 
 	// shortcut: no command == empty package
-	if len(cfg.Command) == 0 {
+	if len(cfg.Commands) == 0 {
 		log.WithField("package", p.FullName()).Debug("package has no commands - creating empty tar")
 		return run(buildctx.Reporter, p, nil, wd, "tar", "cfz", result, "--files-from", "/dev/null")
 	}
@@ -805,7 +805,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 		}...)
 	}
 
-	commands = append(commands, cfg.Command)
+	commands = append(commands, cfg.Commands...)
 	commands = append(commands, []string{"tar", "cfz", result, "."})
 
 	return executeCommandsForPackage(buildctx, p, wd, commands)
