@@ -14,6 +14,13 @@ import (
 	"github.com/typefox/leeway/pkg/leeway"
 )
 
+const (
+	cacheNone       = "none"
+	cacheLocal      = "local"
+	cacheRemote     = "remote"
+	cacheRemotePush = "remote-push"
+)
+
 // buildCmd represents the build command
 var buildCmd = &cobra.Command{
 	Use:   "build [targetPackage]",
@@ -28,14 +35,17 @@ var buildCmd = &cobra.Command{
 		cacheMode, _ := cmd.Flags().GetString("cache")
 		log.WithField("cacheMode", cacheMode).Debug("configuring caches")
 		remoteCache := getRemoteCache()
-		if cacheMode != "remote" {
+		if cacheMode == cacheNone || cacheMode == cacheLocal {
 			remoteCache = leeway.NoRemoteCache{}
+		}
+		if cacheMode == cacheRemotePush {
+			remoteCache = &pushOnlyRemoteCache{C: remoteCache}
 		}
 		var (
 			localCacheLoc string
 			err           error
 		)
-		if cacheMode == "none" {
+		if cacheMode == cacheNone {
 			localCacheLoc, err = ioutil.TempDir("", "leeway")
 			if err != nil {
 				log.Fatal(err)
@@ -98,7 +108,19 @@ var buildCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(buildCmd)
-	buildCmd.Flags().StringP("cache", "c", "remote", "Configures the caching behaviour: none=no caching, local=local caching only, remote=use all configured caches")
+	buildCmd.Flags().StringP("cache", "c", "remote", "Configures the caching behaviour: none=no caching, local=local caching only, push-remote=push to remote cache only but don't download, remote=use all configured caches")
 	buildCmd.Flags().Bool("dry-run", false, "Don't actually build but stop after showing what would need to be built")
 	buildCmd.Flags().String("serve", "", "After a successful build this starts a webserver on the given address serving the build result (e.g. --serve localhost:8080)")
+}
+
+type pushOnlyRemoteCache struct {
+	C leeway.RemoteCache
+}
+
+func (c *pushOnlyRemoteCache) Download(dst leeway.Cache, pkgs []*leeway.Package) error {
+	return nil
+}
+
+func (c *pushOnlyRemoteCache) Upload(src leeway.Cache, pkgs []*leeway.Package) error {
+	return c.Upload(src, pkgs)
 }
