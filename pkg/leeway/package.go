@@ -201,18 +201,34 @@ func discoverComponents(workspace *Workspace, args Arguments) ([]Component, erro
 
 // loadComponent loads a component from a BUILD.yaml file
 func loadComponent(workspace *Workspace, path string, args Arguments) (Component, error) {
-	var comp Component
-
 	fc, err := ioutil.ReadFile(path)
 	if err != nil {
-		return comp, err
+		return Component{}, err
+	}
+
+	// we attempt to load the constants of a component first so that we can add it to the args
+	var compconst struct {
+		Constants Arguments `yaml:"const"`
+	}
+	err = yaml.Unmarshal(fc, &compconst)
+	if err != nil {
+		return Component{}, err
+	}
+	compargs := make(Arguments)
+	for k, v := range args {
+		compargs[k] = v
+	}
+	for k, v := range compconst.Constants {
+		// constants overwrite args
+		compargs[k] = v
 	}
 
 	// replace build args
 	if len(args) > 0 {
-		fc = replaceBuildArguments(fc, args)
+		fc = replaceBuildArguments(fc, compargs)
 	}
 
+	var comp Component
 	err = yaml.Unmarshal(fc, &comp)
 	if err != nil {
 		return comp, err
@@ -303,7 +319,8 @@ type Component struct {
 	// Name is the name of the Component as computed from its location in the workspace
 	Name string
 
-	Packages []*Package `yaml:"packages"`
+	Constants Arguments  `yaml:"const"`
+	Packages  []*Package `yaml:"packages"`
 }
 
 // PackageNotFoundErr is used when something references a package we don't know about
