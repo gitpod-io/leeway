@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -78,6 +79,33 @@ var buildCmd = &cobra.Command{
 			log.Fatal(err)
 		}
 
+		save, _ := cmd.Flags().GetString("save")
+		if save != "" {
+			br, exists := localCache.Location(pkg)
+			if !exists {
+				log.Fatal("build result is not in local cache despite just being built. Something's wrong with the cache.")
+			}
+
+			fout, err := os.OpenFile(save, os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				log.WithError(err).Fatal("cannot open result file for writing")
+			}
+			fin, err := os.OpenFile(br, os.O_RDONLY, 0644)
+			if err != nil {
+				fout.Close()
+				log.WithError(err).Fatal("cannot copy build result")
+			}
+
+			_, err = io.Copy(fout, fin)
+			fout.Close()
+			fin.Close()
+			if err != nil {
+				log.WithError(err).Fatal("cannot copy build result")
+			}
+
+			fmt.Printf("\n💾  saving build result to %s\n", color.Cyan.Render(save))
+		}
+
 		serve, _ := cmd.Flags().GetString("serve")
 		if serve != "" {
 			br, exists := localCache.Location(pkg)
@@ -111,6 +139,7 @@ func init() {
 	buildCmd.Flags().StringP("cache", "c", "remote", "Configures the caching behaviour: none=no caching, local=local caching only, push-remote=push to remote cache only but don't download, remote=use all configured caches")
 	buildCmd.Flags().Bool("dry-run", false, "Don't actually build but stop after showing what would need to be built")
 	buildCmd.Flags().String("serve", "", "After a successful build this starts a webserver on the given address serving the build result (e.g. --serve localhost:8080)")
+	buildCmd.Flags().String("save", "", "After a successful build this saves the build result as tar.gz file in the local filesystem (e.g. --save build-result.tar.gz)")
 }
 
 type pushOnlyRemoteCache struct {
