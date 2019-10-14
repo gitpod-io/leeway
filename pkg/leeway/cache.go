@@ -80,7 +80,7 @@ type GSUtilRemoteCache struct {
 
 // Download makes a best-effort attempt at downloading previously cached build artifacts
 func (rs GSUtilRemoteCache) Download(dst Cache, pkgs []*Package) error {
-	log.Info("Checking remote cache for past build artifacts")
+	fmt.Printf("☁️  checking remote cache for past build artifacts\n")
 	var (
 		files []string
 		dest  string
