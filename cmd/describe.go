@@ -163,6 +163,12 @@ func describeComponent(comp leeway.Component) {
 
 	fmt.Fprintf(w, "Name:\t%s\n", comp.Name)
 	fmt.Fprintf(w, "Origin:\t%s\n", comp.Origin)
+	if len(comp.Constants) > 0 {
+		fmt.Fprintf(w, "Constants:\t\n")
+		for k, v := range comp.Constants {
+			fmt.Fprintf(w, "\t%s:\t%s\n", k, v)
+		}
+	}
 	fmt.Fprintf(w, "Packages:\t\n")
 	for _, pkg := range comp.Packages {
 		fmt.Fprintf(w, "\t%s\n", pkg.Name)
