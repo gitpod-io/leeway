@@ -152,3 +152,18 @@ variables have an effect on leeway:
 
 # Debugging
 When a build fails, or to get an idea of how leeway assembles dependencies, run your build with `leeway build -c local` (local cache only) and inspect your `$LEEWAY_BUILD_DIR`.
+
+# CLI tips
+
+## How can I build a package in the current component/folder?
+`leeway build .:package-name`
+
+## Is there bash autocompletion?
+Yes, run `. <(leeway bash-completion)` to enable it. If you place this line in `.bashrc` you'll have autocompletion every time.
+
+## How can I print a component constant?
+`leeway describe const some/component/name` prints all constants of a component.
+
+`leeway describe const -n someName some/component/name` prints the value of the `someName` constant of `some/component/name`.
+
+`leeway describe const -n someName .` prints the value of the `someName` constant of the component in the current working directory.
