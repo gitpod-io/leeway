@@ -161,9 +161,15 @@ When a build fails, or to get an idea of how leeway assembles dependencies, run 
 ## Is there bash autocompletion?
 Yes, run `. <(leeway bash-completion)` to enable it. If you place this line in `.bashrc` you'll have autocompletion every time.
 
-## How can I print a component constant?
+## How can I print a component constant (since v0.6.0)?
 `leeway describe const some/component/name` prints all constants of a component.
 
 `leeway describe const -n someName some/component/name` prints the value of the `someName` constant of `some/component/name`.
 
 `leeway describe const -n someName .` prints the value of the `someName` constant of the component in the current working directory.
+
+## How can I find all packages in a workspace (since v0.6.0)?
+`leeway collect`
+
+## How can I find all components with a particular constant (since v0.6.0)?
+`leeway collect --components -l someConstant`
