@@ -70,10 +70,26 @@ var buildCmd = &cobra.Command{
 
 		log.Debugf("this is leeway version %s", version)
 
+		var planOutlet io.Writer
+		if plan, _ := cmd.Flags().GetString("dump-plan"); plan != "" {
+			if plan == "-" {
+				planOutlet = os.Stderr
+			} else {
+				f, err := os.OpenFile(plan, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+				if err != nil {
+					log.Fatal(err)
+				}
+				defer f.Close()
+
+				planOutlet = f
+			}
+		}
+
 		err = leeway.Build(pkg,
 			leeway.WithLocalCache(localCache),
 			leeway.WithRemoteCache(remoteCache),
 			leeway.WithDryRun(dryrun),
+			leeway.WithBuildPlan(planOutlet),
 		)
 		if err != nil {
 			log.Fatal(err)
@@ -140,6 +156,7 @@ func init() {
 	buildCmd.Flags().Bool("dry-run", false, "Don't actually build but stop after showing what would need to be built")
 	buildCmd.Flags().String("serve", "", "After a successful build this starts a webserver on the given address serving the build result (e.g. --serve localhost:8080)")
 	buildCmd.Flags().String("save", "", "After a successful build this saves the build result as tar.gz file in the local filesystem (e.g. --save build-result.tar.gz)")
+	buildCmd.Flags().String("dump-plan", "", "Writes the build plan as JSON to a file. Use \"-\" to write the build plan to stderr.")
 }
 
 type pushOnlyRemoteCache struct {

@@ -3,6 +3,7 @@ package leeway
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -171,6 +172,7 @@ type buildOptions struct {
 	RemoteCache RemoteCache
 	Reporter    Reporter
 	DryRun      bool
+	BuildPlan   io.Writer
 }
 
 // BuildOption configures the build behaviour
@@ -204,6 +206,14 @@ func WithReporter(reporter Reporter) BuildOption {
 func WithDryRun(dryrun bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.DryRun = dryrun
+		return nil
+	}
+}
+
+// WithBuildPlan writes the build plan as JSON to the writer
+func WithBuildPlan(out io.Writer) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.BuildPlan = out
 		return nil
 	}
 }
@@ -277,6 +287,14 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return xerrors.Errorf(msg)
 	}
 
+	if options.BuildPlan != nil {
+		log.Debug("writing build plan")
+		err = writeBuildPlan(options.BuildPlan, pkg, pkgstatus)
+		if err != nil {
+			return err
+		}
+	}
+
 	if options.DryRun {
 		// This is a dry-run. We've prepared everything for the build but do not execute the build itself.
 		return nil
@@ -291,6 +309,52 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 	if cacheErr != nil {
 		return cacheErr
+	}
+
+	return nil
+}
+
+func writeBuildPlan(out io.Writer, pkg *Package, status map[*Package]PackageBuildStatus) error {
+	// BuildStep is a list of packages that can be built in parallel
+	type BuildStep []string
+
+	var walk func(pkg *Package, idx map[*Package]int, depth int)
+	walk = func(pkg *Package, idx map[*Package]int, depth int) {
+		if status[pkg] == PackageBuilt {
+			return
+		}
+
+		td := depth
+		if idx[pkg] > td {
+			td = idx[pkg]
+		}
+		idx[pkg] = td
+
+		for _, dep := range pkg.GetDependencies() {
+			walk(dep, idx, depth+1)
+		}
+	}
+
+	idx := make(map[*Package]int)
+	walk(pkg, idx, 0)
+
+	var md int
+	for _, d := range idx {
+		if d > md {
+			md = d
+		}
+	}
+	log.WithField("maxDepth", md).Debug("built plan")
+	steps := make([]BuildStep, md+1)
+	for pkg, depth := range idx {
+		steps[md-depth] = append(steps[md-depth], pkg.FullName())
+	}
+
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	err := enc.Encode(steps)
+	if err != nil {
+		return err
 	}
 
 	return nil
