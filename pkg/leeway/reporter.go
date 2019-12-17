@@ -164,3 +164,52 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, err error) {
 func getRunPrefix(p *Package) string {
 	return color.Gray.Render(fmt.Sprintf("[%s] ", p.FullName()))
 }
+
+// NewWerftReporter craetes a new werft compatible reporter
+func NewWerftReporter() *WerftReporter {
+	return &WerftReporter{
+		ConsoleReporter: NewConsoleReporter(),
+	}
+}
+
+// WerftReporter works like the console reporter but adds werft output
+type WerftReporter struct {
+	*ConsoleReporter
+}
+
+// BuildStarted is called when the build of a package is started by the user.
+func (r *WerftReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {
+	r.ConsoleReporter.BuildStarted(pkg, status)
+
+	for p, s := range status {
+		if s != PackageNotBuiltYet {
+			continue
+		}
+
+		fmt.Printf("[%s|START] will be built\n", p.FullName())
+	}
+}
+
+// PackageBuildFinished is called when the package build has finished.
+func (r *WerftReporter) PackageBuildFinished(pkg *Package, err error) {
+	r.ConsoleReporter.PackageBuildFinished(pkg, err)
+
+	if cfg, ok := pkg.Config.(DockerPkgConfig); ok && pkg.Type == DockerPackage {
+		for _, img := range cfg.Image {
+			fmt.Printf("[docker|RESULT] %s\n", img)
+		}
+	}
+
+	var (
+		status string
+		msg    string
+	)
+	if err == nil {
+		status = "DONE"
+		msg = "build succeeded"
+	} else {
+		status = "FAIL"
+		msg = err.Error()
+	}
+	fmt.Printf("[%s|%s] %s\n", pkg.FullName(), status, msg)
+}
