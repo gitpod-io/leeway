@@ -85,11 +85,23 @@ var buildCmd = &cobra.Command{
 			}
 		}
 
+		werftlog, err := cmd.Flags().GetBool("werft")
+		if err != nil {
+			log.Fatal(err)
+		}
+		var reporter leeway.Reporter
+		if werftlog {
+			reporter = leeway.NewWerftReporter()
+		} else {
+			reporter = leeway.NewConsoleReporter()
+		}
+
 		err = leeway.Build(pkg,
 			leeway.WithLocalCache(localCache),
 			leeway.WithRemoteCache(remoteCache),
 			leeway.WithDryRun(dryrun),
 			leeway.WithBuildPlan(planOutlet),
+			leeway.WithReporter(reporter),
 		)
 		if err != nil {
 			log.Fatal(err)
@@ -157,6 +169,7 @@ func init() {
 	buildCmd.Flags().String("serve", "", "After a successful build this starts a webserver on the given address serving the build result (e.g. --serve localhost:8080)")
 	buildCmd.Flags().String("save", "", "After a successful build this saves the build result as tar.gz file in the local filesystem (e.g. --save build-result.tar.gz)")
 	buildCmd.Flags().String("dump-plan", "", "Writes the build plan as JSON to a file. Use \"-\" to write the build plan to stderr.")
+	buildCmd.Flags().Bool("werft", false, "Produce werft CI compatible output")
 }
 
 type pushOnlyRemoteCache struct {
