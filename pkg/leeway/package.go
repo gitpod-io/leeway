@@ -625,8 +625,8 @@ func (p *Package) FilesystemSafeName() string {
 	pkgdir := p.FullName()
 	pkgdir = strings.Replace(pkgdir, "/", "-", -1)
 	pkgdir = strings.Replace(pkgdir, ":", "--", -1)
-	// components in the workspace root would otherwise start with -- which breaks a lot of shell commands
-	pkgdir = strings.TrimPrefix(pkgdir, "--")
+	// components in the workspace root would otherwise start with - which breaks a lot of shell commands
+	pkgdir = strings.TrimLeft(pkgdir, "-")
 	return pkgdir
 }
 
