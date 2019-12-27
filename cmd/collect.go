@@ -26,11 +26,13 @@ var collectCmd = &cobra.Command{
 		componentsOnly, _ := cmd.Flags().GetBool("components")
 
 		selectStr, _ := cmd.Flags().GetString("select")
-		selector := func(c leeway.Component) bool {
-			return true
-		}
+		var selector func(c leeway.Component) bool
 		segs := strings.Split(selectStr, "=")
-		if len(segs) == 1 {
+		if len(selectStr) == 0 {
+			selector = func(c leeway.Component) bool {
+				return true
+			}
+		} else if len(segs) == 1 {
 			selector = func(c leeway.Component) bool {
 				_, ok := c.Constants[segs[0]]
 				return ok
