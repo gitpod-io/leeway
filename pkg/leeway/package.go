@@ -234,8 +234,13 @@ func loadComponent(workspace *Workspace, path string, args Arguments) (Component
 		return comp, err
 	}
 
+	name := strings.TrimPrefix(strings.TrimPrefix(filepath.Dir(path), workspace.Origin), "/")
+	if name == "" {
+		name = "//"
+	}
+
 	comp.W = workspace
-	comp.Name = strings.TrimPrefix(strings.TrimPrefix(filepath.Dir(path), workspace.Origin), "/")
+	comp.Name = name
 	comp.Origin = filepath.Dir(path)
 	for _, pkg := range comp.Packages {
 		pkg.C = &comp
