@@ -489,12 +489,15 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 
 const (
 	getYarnLockScript = `#!/bin/bash
+set -Eeuo pipefail
+
 export DIR=$(dirname "${BASH_SOURCE[0]}")
 
 sed 's?resolved "file://.*/?resolved "file://'$DIR'/?g' $DIR/content_yarn.lock
 `
 
 	installScript = `#!/bin/bash
+set -Eeuo pipefail
 
 export DIR=$(dirname "${BASH_SOURCE[0]}")
 
@@ -929,6 +932,11 @@ func (p *Package) rebuildDocker(buildctx *buildContext, wd, prev string) (err er
 		log.WithField("package", p.FullName()).Debug("already built")
 		return
 	}
+
+	buildctx.Reporter.PackageBuildStarted(p)
+	defer func(err *error) {
+		buildctx.Reporter.PackageBuildFinished(p, *err)
+	}(&err)
 
 	err = executeCommandsForPackage(buildctx, p, wd, commands)
 	if err != nil {
