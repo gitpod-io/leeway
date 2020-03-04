@@ -814,6 +814,9 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
 	}
+	if cfg.Squash {
+		buildcmd = append(buildcmd, "--squash")
+	}
 	buildcmd = append(buildcmd, ".")
 	commands = append(commands, buildcmd)
 
