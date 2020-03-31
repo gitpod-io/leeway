@@ -57,7 +57,7 @@ name: must-not-contain-spaces
 type: generic
 # Sources list all sources of this package. Entries can be double-star globs and are relative to the component root.
 # Avoid listing sources outside the component folder.
-sources:
+srcs:
 - "**/*.yaml"
 - "glob/**/path"
 # Deps list dependencies to other packages which must be built prior to building this package. How these dependencies are made
@@ -110,10 +110,13 @@ config:
   # packaging method. See https://godoc.org/github.com/TypeFox/leeway/pkg/leeway#TypescriptPackaging for details.
   # Defaults to library
   packaging: library
+  # If true disables `yarn test`
+  dontTest: false
   # commands overrides the default commands executed during build
   commands:
-    install: yarn install
-    build: npx tsc
+    install: ["yarn", "install"]
+    build: ["npx", "tsc"]
+    test: ["yarn", "test"]
 ```
 
 ### Docker packages

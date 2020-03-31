@@ -495,9 +495,11 @@ type TypescriptPkgConfig struct {
 	YarnLock  string              `yaml:"yarnLock,omitempty"`
 	TSConfig  string              `yaml:"tsconfig"`
 	Packaging TypescriptPackaging `yaml:"packaging,omitempty"`
+	DontTest  bool                `yaml:"dontTest,omitempty"`
 	Commands  struct {
 		Install []string `yaml:"install,omitempty"`
 		Build   []string `yaml:"build,omitempty"`
+		Test    []string `yaml:"test,omitempty"`
 	} `yaml:"commands,omitempty"`
 }
 

@@ -658,6 +658,13 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 	} else {
 		commands = append(commands, cfg.Commands.Build)
 	}
+	if !cfg.DontTest {
+		if len(cfg.Commands.Test) == 0 {
+			commands = append(commands, []string{"yarn", "test"})
+		} else {
+			commands = append(commands, cfg.Commands.Test)
+		}
+	}
 
 	if cfg.Packaging == TypescriptOfflineMirror {
 		builtinScripts := map[string]string{
