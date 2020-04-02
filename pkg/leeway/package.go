@@ -643,15 +643,23 @@ type CacheLevel string
 const (
 	// CacheUnspecified allows all downloads/uploads/caching operations
 	CacheUnspecified CacheLevel = ""
+
 	// CacheNone means no caching happens at all
 	CacheNone CacheLevel = "none"
+
 	// CacheLocal means a package is only cached locally
 	CacheLocal CacheLevel = "local"
+
 	// CacheRemote means a package is downloaded from and uploaded to a remote cache
 	CacheRemote CacheLevel = "remote"
-	// CacheRemotePush means a package is cached locally and possibly downloaded from a remote cache,
-	// but it will never be uploaded to a remote cache.
+
+	// CacheRemotePush means a package is cached locally and possibly uploaded to a remote cache,
+	// but it will never be downloaded from a remote cache.
 	CacheRemotePush CacheLevel = "remote-push"
+
+	// CacheRemotePull means a package is cached locally and possibly downloaded from a remote cache,
+	// but it will never be uploaded to a remote cache.
+	CacheRemotePull CacheLevel = "remote-pull"
 )
 
 // UnmarshalYAML unmarshals and validates a package type
@@ -673,7 +681,7 @@ func (c *CacheLevel) UnmarshalYAML(unmarshal func(interface{}) error) (err error
 
 // RemoteDownload returns true if this cache level permitts local download
 func (c CacheLevel) RemoteDownload() bool {
-	return c == CacheUnspecified || c == CacheRemote
+	return c == CacheUnspecified || c == CacheRemote || c == CacheRemotePull
 }
 
 // RemoteUpload retruns true if the cache level permitts remote upload

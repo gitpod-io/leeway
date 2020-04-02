@@ -104,6 +104,7 @@ func (rs GSUtilRemoteCache) Download(dst Cache, pkgs []*Package) error {
 
 // Upload makes a best effort to upload the build arfitacts to a remote cache
 func (rs GSUtilRemoteCache) Upload(src Cache, pkgs []*Package) error {
+	fmt.Printf("☁️  uploading build artifacts to remote cache\n")
 	var files []string
 	for _, pkg := range pkgs {
 		file, exists := src.Location(pkg)
