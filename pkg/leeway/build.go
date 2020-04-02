@@ -491,7 +491,7 @@ const (
 	getYarnLockScript = `#!/bin/bash
 set -Eeuo pipefail
 
-export DIR=$(dirname "${BASH_SOURCE[0]}")
+export DIR=$(realpath $(dirname "${BASH_SOURCE[0]}"))
 
 sed 's?resolved "file://.*/?resolved "file://'$DIR'/?g' $DIR/content_yarn.lock
 `
