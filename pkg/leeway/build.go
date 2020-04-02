@@ -155,13 +155,14 @@ func (c *buildContext) RegisterNewlyBuilt(p *Package) error {
 	return nil
 }
 
-func (c *buildContext) GetNewlyBuiltPackages() []*Package {
-	res := make([]*Package, len(c.newlyBuiltPackages))
-	i := 0
+func (c *buildContext) GetNewPackagesForCache() []*Package {
+	res := make([]*Package, 0, len(c.newlyBuiltPackages))
 	c.mu.Lock()
 	for _, pkg := range c.newlyBuiltPackages {
-		res[i] = pkg
-		i++
+		if !pkg.CacheLevel.RemoteUpload() {
+			continue
+		}
+		res = append(res, pkg)
 	}
 	c.mu.Unlock()
 	return res
@@ -241,7 +242,17 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	requirements := pkg.GetTransitiveDependencies()
 	allpkg := append(requirements, pkg)
 
-	err = options.RemoteCache.Download(ctx.LocalCache, requirements)
+	// respect per-package cache level when downloading from remote cache
+	remotelyCachedReq := make([]*Package, 0, len(requirements))
+	for _, req := range requirements {
+		if !req.CacheLevel.RemoteDownload() {
+			continue
+		}
+
+		remotelyCachedReq = append(remotelyCachedReq, req)
+	}
+
+	err = options.RemoteCache.Download(ctx.LocalCache, remotelyCachedReq)
 	if err != nil {
 		return err
 	}
@@ -250,7 +261,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	unresolvedArgs := make(map[string][]string)
 	for _, dep := range allpkg {
 		_, exists := ctx.LocalCache.Location(dep)
-		if exists {
+		if exists && pkg.CacheLevel != CacheNone {
 			pkgstatus[dep] = PackageBuilt
 		} else {
 			pkgstatus[dep] = PackageNotBuiltYet
@@ -301,7 +312,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	buildErr := pkg.build(ctx)
-	cacheErr := options.RemoteCache.Upload(ctx.LocalCache, ctx.GetNewlyBuiltPackages())
+	cacheErr := options.RemoteCache.Upload(ctx.LocalCache, ctx.GetNewPackagesForCache())
 
 	if buildErr != nil {
 		// We deliberately swallow the target pacakge build error as that will have already been reported using the reporter.

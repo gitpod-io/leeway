@@ -15,13 +15,6 @@ import (
 	"github.com/typefox/leeway/pkg/leeway"
 )
 
-const (
-	cacheNone       = "none"
-	cacheLocal      = "local"
-	cacheRemote     = "remote"
-	cacheRemotePush = "remote-push"
-)
-
 // buildCmd represents the build command
 var buildCmd = &cobra.Command{
 	Use:   "build [targetPackage]",
@@ -33,20 +26,22 @@ var buildCmd = &cobra.Command{
 			log.Fatal("tree needs a package")
 		}
 
-		cacheMode, _ := cmd.Flags().GetString("cache")
-		log.WithField("cacheMode", cacheMode).Debug("configuring caches")
+		cm, _ := cmd.Flags().GetString("cache")
+		log.WithField("cacheMode", cm).Debug("configuring caches")
+		cacheLevel := leeway.CacheLevel(cm)
+
 		remoteCache := getRemoteCache()
-		if cacheMode == cacheNone || cacheMode == cacheLocal {
+		if cacheLevel == leeway.CacheNone || cacheLevel == leeway.CacheLocal {
 			remoteCache = leeway.NoRemoteCache{}
 		}
-		if cacheMode == cacheRemotePush {
+		if cacheLevel == leeway.CacheRemotePush {
 			remoteCache = &pushOnlyRemoteCache{C: remoteCache}
 		}
 		var (
 			localCacheLoc string
 			err           error
 		)
-		if cacheMode == cacheNone {
+		if cacheLevel == leeway.CacheNone {
 			localCacheLoc, err = ioutil.TempDir("", "leeway")
 			if err != nil {
 				log.Fatal(err)

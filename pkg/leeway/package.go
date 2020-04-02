@@ -344,6 +344,7 @@ type packageInternal struct {
 	Dependencies         []string    `yaml:"deps"`
 	ArgumentDependencies []string    `yaml:"argdeps"`
 	Environment          []string    `yaml:"env"`
+	CacheLevel           CacheLevel  `yaml:"cache"`
 }
 
 // Package is a single buildable artifact within a component
@@ -608,6 +609,7 @@ type PackageType string
 const (
 	// TypescriptPackage runs tsc in a package and produces a yarn offline mirror
 	TypescriptPackage PackageType = "typescript"
+
 	// GoPackage runs go build and produces a binary file
 	GoPackage PackageType = "go"
 
@@ -617,6 +619,67 @@ const (
 	// GenericPackage runs an arbitary shell command
 	GenericPackage PackageType = "generic"
 )
+
+// UnmarshalYAML unmarshals and validates a package type
+func (p *PackageType) UnmarshalYAML(unmarshal func(interface{}) error) (err error) {
+	var val string
+	err = unmarshal(&val)
+	if err != nil {
+		return
+	}
+
+	*p = PackageType(val)
+	switch *p {
+	case TypescriptPackage, GoPackage, DockerPackage, GenericPackage:
+	default:
+		return fmt.Errorf("invalid package type: %s", err)
+	}
+	return
+}
+
+// CacheLevel describes a level of package cache
+type CacheLevel string
+
+const (
+	// CacheUnspecified allows all downloads/uploads/caching operations
+	CacheUnspecified CacheLevel = ""
+	// CacheNone means no caching happens at all
+	CacheNone CacheLevel = "none"
+	// CacheLocal means a package is only cached locally
+	CacheLocal CacheLevel = "local"
+	// CacheRemote means a package is downloaded from and uploaded to a remote cache
+	CacheRemote CacheLevel = "remote"
+	// CacheRemotePush means a package is cached locally and possibly downloaded from a remote cache,
+	// but it will never be uploaded to a remote cache.
+	CacheRemotePush CacheLevel = "remote-push"
+)
+
+// UnmarshalYAML unmarshals and validates a package type
+func (c *CacheLevel) UnmarshalYAML(unmarshal func(interface{}) error) (err error) {
+	var val string
+	err = unmarshal(&val)
+	if err != nil {
+		return
+	}
+
+	*c = CacheLevel(val)
+	switch *c {
+	case CacheUnspecified, CacheNone, CacheLocal, CacheRemote, CacheRemotePush:
+	default:
+		return fmt.Errorf("invalid package type: %s", err)
+	}
+	return
+}
+
+// RemoteDownload returns true if this cache level permitts local download
+func (c CacheLevel) RemoteDownload() bool {
+	return c == CacheUnspecified || c == CacheRemote
+}
+
+// RemoteUpload retruns true if the cache level permitts remote upload
+func (c CacheLevel) RemoteUpload() bool {
+	return c == CacheUnspecified || c == CacheRemote || c == CacheRemotePush
+}
 
 // FullName returns the packages fully qualified name (component:package)
 func (p *Package) FullName() string {
