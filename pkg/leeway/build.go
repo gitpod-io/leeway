@@ -569,12 +569,14 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 			builtpkg = filepath.Join(wd, "_mirror", fn)
 		}
 
+		var isTSLibrary bool
 		if deppkg.Type == TypescriptPackage {
 			cfg, ok := deppkg.Config.(TypescriptPkgConfig)
-			if !ok || cfg.Packaging != TypescriptLibrary {
-				return xerrors.Errorf("can only depend on typescript libraries: %s", deppkg.FullName())
+			if ok && cfg.Packaging == TypescriptLibrary {
+				isTSLibrary = true
 			}
-
+		}
+		if isTSLibrary {
 			// make previously built package availabe through yarn lock
 			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("tar Ozfx %s package/%s | sed '/resolved /c\\  resolved \"file://%s\"' >> yarn.lock", builtpkg, pkgYarnLock, builtpkg)})
 		} else {
