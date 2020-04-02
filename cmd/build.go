@@ -158,8 +158,13 @@ var buildCmd = &cobra.Command{
 }
 
 func init() {
+	cacheDefault := os.Getenv("LEEWAY_DEFAULT_CACHE_LEVEL")
+	if cacheDefault == "" {
+		cacheDefault = "remote"
+	}
+
 	rootCmd.AddCommand(buildCmd)
-	buildCmd.Flags().StringP("cache", "c", "remote", "Configures the caching behaviour: none=no caching, local=local caching only, push-remote=push to remote cache only but don't download, remote=use all configured caches")
+	buildCmd.Flags().StringP("cache", "c", cacheDefault, "Configures the caching behaviour: none=no caching, local=local caching only, push-remote=push to remote cache only but don't download, remote=use all configured caches")
 	buildCmd.Flags().Bool("dry-run", false, "Don't actually build but stop after showing what would need to be built")
 	buildCmd.Flags().String("serve", "", "After a successful build this starts a webserver on the given address serving the build result (e.g. --serve localhost:8080)")
 	buildCmd.Flags().String("save", "", "After a successful build this saves the build result as tar.gz file in the local filesystem (e.g. --save build-result.tar.gz)")
