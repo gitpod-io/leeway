@@ -1,12 +1,20 @@
 const:
   foo: bar
 packages:
+- name: helloworld
+  type: generic
+  ephemeral: true
+  config:
+    commands:
+    - ["echo", "hello world"]
 - name: app
   type: go
   srcs:
   - "**/*.go"
   - go.mod
   - go.sum
+  deps:
+  - :helloworld
   argdeps:
   - version
   config:

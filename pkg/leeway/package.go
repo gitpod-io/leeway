@@ -344,7 +344,7 @@ type packageInternal struct {
 	Dependencies         []string    `yaml:"deps"`
 	ArgumentDependencies []string    `yaml:"argdeps"`
 	Environment          []string    `yaml:"env"`
-	CacheLevel           CacheLevel  `yaml:"cache"`
+	Ephemeral            bool        `yaml:"ephemeral"`
 }
 
 // Package is a single buildable artifact within a component

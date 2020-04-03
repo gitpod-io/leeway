@@ -159,7 +159,7 @@ func (c *buildContext) GetNewPackagesForCache() []*Package {
 	res := make([]*Package, 0, len(c.newlyBuiltPackages))
 	c.mu.Lock()
 	for _, pkg := range c.newlyBuiltPackages {
-		if !pkg.CacheLevel.RemoteUpload() {
+		if !pkg.Ephemeral {
 			continue
 		}
 		res = append(res, pkg)
@@ -245,10 +245,6 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	// respect per-package cache level when downloading from remote cache
 	remotelyCachedReq := make([]*Package, 0, len(requirements))
 	for _, req := range requirements {
-		if !req.CacheLevel.RemoteDownload() {
-			continue
-		}
-
 		remotelyCachedReq = append(remotelyCachedReq, req)
 	}
 
@@ -261,7 +257,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	unresolvedArgs := make(map[string][]string)
 	for _, dep := range allpkg {
 		_, exists := ctx.LocalCache.Location(dep)
-		if exists && pkg.CacheLevel != CacheNone {
+		if exists && !pkg.Ephemeral {
 			pkgstatus[dep] = PackageBuilt
 		} else {
 			pkgstatus[dep] = PackageNotBuiltYet
@@ -566,8 +562,26 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		}...)
 	}
 
+	// We don't check if ephemeral packages in the transitive dependency tree have been built,
+	// as they may be too far down the tree to trigger a build (e.g. their parent may be built already).
+	// Hence, we need to ensure all direct dependencies on ephemeral packages have been built.
+	for _, deppkg := range p.GetDependencies() {
+		if !deppkg.Ephemeral {
+			continue
+		}
+		_, ok := buildctx.LocalCache.Location(deppkg)
+		if ok {
+			continue
+		}
+		return PkgNotBuiltErr{deppkg}
+	}
+
 	pkgYarnLock := "pkg-yarn.lock"
 	for _, deppkg := range p.GetTransitiveDependencies() {
+		if deppkg.Ephemeral {
+			continue
+		}
+
 		builtpkg, ok := buildctx.LocalCache.Location(deppkg)
 		if !ok {
 			return PkgNotBuiltErr{deppkg}
