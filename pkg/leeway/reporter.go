@@ -193,6 +193,9 @@ func (r *WerftReporter) BuildStarted(pkg *Package, status map[*Package]PackageBu
 		if s != PackageNotBuiltYet {
 			continue
 		}
+		if p.Ephemeral {
+			continue
+		}
 
 		fmt.Printf("[%s|START] will be built\n", p.FullName())
 	}
