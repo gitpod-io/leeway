@@ -138,6 +138,9 @@ func describePackage(pkg *leeway.Package) {
 
 	fmt.Fprintf(w, "Name:\t%s\n", pkg.FullName())
 	fmt.Fprintf(w, "Version:\t%s\t\n", version)
+	if pkg.Ephemeral {
+		fmt.Fprintf(w, "Ephemeral:\ttrue\t\n")
+	}
 	fmt.Fprintf(w, "Configuration:\n%s", describeConfig(pkg.Config))
 	if len(pkg.ArgumentDependencies) > 0 {
 		fmt.Fprintf(w, "Version Relevant Arguments:\n")

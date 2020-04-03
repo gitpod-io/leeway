@@ -159,7 +159,7 @@ func (c *buildContext) GetNewPackagesForCache() []*Package {
 	res := make([]*Package, 0, len(c.newlyBuiltPackages))
 	c.mu.Lock()
 	for _, pkg := range c.newlyBuiltPackages {
-		if !pkg.Ephemeral {
+		if pkg.Ephemeral {
 			continue
 		}
 		res = append(res, pkg)
@@ -257,7 +257,10 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	unresolvedArgs := make(map[string][]string)
 	for _, dep := range allpkg {
 		_, exists := ctx.LocalCache.Location(dep)
-		if exists && !pkg.Ephemeral {
+		if dep.Ephemeral {
+			// ephemeral packages are never built at the begining of a build
+			pkgstatus[dep] = PackageNotBuiltYet
+		} else if exists {
 			pkgstatus[dep] = PackageBuilt
 		} else {
 			pkgstatus[dep] = PackageNotBuiltYet
@@ -401,7 +404,9 @@ func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
 
 func (p *Package) build(buildctx *buildContext) (err error) {
 	artifact, alreadyBuilt := buildctx.LocalCache.Location(p)
-	if alreadyBuilt {
+	if p.Ephemeral {
+		// ephemeral packages always require a rebuild
+	} else if alreadyBuilt {
 		// some package types still need to do work even if we find their prior build artifact in the cache.
 		if p.Type == DockerPackage {
 			doBuild := buildctx.ObtainBuildLock(p)
@@ -566,14 +571,10 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 	// as they may be too far down the tree to trigger a build (e.g. their parent may be built already).
 	// Hence, we need to ensure all direct dependencies on ephemeral packages have been built.
 	for _, deppkg := range p.GetDependencies() {
-		if !deppkg.Ephemeral {
-			continue
-		}
 		_, ok := buildctx.LocalCache.Location(deppkg)
-		if ok {
-			continue
+		if deppkg.Ephemeral && !ok {
+			return PkgNotBuiltErr{deppkg}
 		}
-		return PkgNotBuiltErr{deppkg}
 	}
 
 	pkgYarnLock := "pkg-yarn.lock"
