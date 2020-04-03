@@ -187,7 +187,7 @@ func (c *pushOnlyRemoteCache) Download(dst leeway.Cache, pkgs []*leeway.Package)
 }
 
 func (c *pushOnlyRemoteCache) Upload(src leeway.Cache, pkgs []*leeway.Package) error {
-	return c.Upload(src, pkgs)
+	return c.C.Upload(src, pkgs)
 }
 
 type pullOnlyRemoteCache struct {
