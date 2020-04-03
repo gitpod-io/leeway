@@ -44,9 +44,7 @@ type packageDuringBuild struct {
 }
 
 type buildContext struct {
-	LocalCache Cache
-	Reporter   Reporter
-
+	buildOptions
 	buildDir string
 
 	mu                 sync.Mutex
@@ -82,15 +80,14 @@ var buildProcessVersions = map[PackageType]int{
 	GenericPackage:    1,
 }
 
-func newBuildContext(localCache Cache, reporter Reporter) (ctx *buildContext, err error) {
+func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 	buildDir := os.Getenv(EnvvarBuildDir)
 	if buildDir == "" {
 		buildDir = filepath.Join(os.TempDir(), "build")
 	}
 
 	ctx = &buildContext{
-		LocalCache:         localCache,
-		Reporter:           reporter,
+		buildOptions:       options,
 		buildDir:           buildDir,
 		newlyBuiltPackages: make(map[string]*Package),
 		pkgLockCond:        sync.NewCond(&sync.Mutex{}),
@@ -174,6 +171,7 @@ type buildOptions struct {
 	Reporter    Reporter
 	DryRun      bool
 	BuildPlan   io.Writer
+	DontTest    bool
 }
 
 // BuildOption configures the build behaviour
@@ -219,6 +217,14 @@ func WithBuildPlan(out io.Writer) BuildOption {
 	}
 }
 
+// WithDontTest disables package-level tests
+func WithDontTest(dontTest bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DontTest = dontTest
+		return nil
+	}
+}
+
 // Build builds the packages in the order they're given. It's the callers responsibility to ensure the dependencies are built
 // in order.
 func Build(pkg *Package, opts ...BuildOption) (err error) {
@@ -237,7 +243,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return xerrors.Errorf("cannot build without local cache. Use WithLocalCache() to configure one")
 	}
 
-	ctx, err := newBuildContext(options.LocalCache, options.Reporter)
+	ctx, err := newBuildContext(options)
 
 	requirements := pkg.GetTransitiveDependencies()
 	allpkg := append(requirements, pkg)
@@ -686,7 +692,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 	} else {
 		commands = append(commands, cfg.Commands.Build)
 	}
-	if !cfg.DontTest {
+	if !cfg.DontTest && !buildctx.DontTest {
 		if len(cfg.Commands.Test) == 0 {
 			commands = append(commands, []string{"yarn", "test"})
 		} else {
@@ -785,7 +791,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 	if cfg.Generate {
 		commands = append(commands, []string{"go", "generate", "-v", "./..."})
 	}
-	if !cfg.DontTest {
+	if !cfg.DontTest && !buildctx.DontTest {
 		commands = append(commands, [][]string{
 			// we build the test binaries in addition to running the tests regularly, so that downstream packages can run the tests in different environments
 			{"sh", "-c", "mkdir _tests; for i in $(go list ./...); do go test -c $i; [ -e $(basename $i).test ] && mv $(basename $i).test _tests; true; done"},

@@ -97,12 +97,18 @@ var buildCmd = &cobra.Command{
 			reporter = leeway.NewConsoleReporter()
 		}
 
+		dontTest, err := cmd.Flags().GetBool("dont-test")
+		if err != nil {
+			log.Fatal(err)
+		}
+
 		err = leeway.Build(pkg,
 			leeway.WithLocalCache(localCache),
 			leeway.WithRemoteCache(remoteCache),
 			leeway.WithDryRun(dryrun),
 			leeway.WithBuildPlan(planOutlet),
 			leeway.WithReporter(reporter),
+			leeway.WithDontTest(dontTest),
 		)
 		if err != nil {
 			log.Fatal(err)
@@ -176,6 +182,7 @@ func init() {
 	buildCmd.Flags().String("save", "", "After a successful build this saves the build result as tar.gz file in the local filesystem (e.g. --save build-result.tar.gz)")
 	buildCmd.Flags().String("dump-plan", "", "Writes the build plan as JSON to a file. Use \"-\" to write the build plan to stderr.")
 	buildCmd.Flags().Bool("werft", false, "Produce werft CI compatible output")
+	buildCmd.Flags().Bool("dont-test", false, "Disable all package-level tests (defaults to false)")
 }
 
 type pushOnlyRemoteCache struct {
