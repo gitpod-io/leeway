@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"text/tabwriter"
+	"time"
 
 	"github.com/gookit/color"
 	"github.com/segmentio/textio"
@@ -44,6 +45,7 @@ type Reporter interface {
 // ConsoleReporter reports build progress by printing to stdout/stderr
 type ConsoleReporter struct {
 	writer map[string]io.Writer
+	times  map[string]time.Time
 	mu     sync.RWMutex
 }
 
@@ -64,6 +66,7 @@ func (w *exclusiveWriter) Write(p []byte) (n int, err error) {
 func NewConsoleReporter() *ConsoleReporter {
 	return &ConsoleReporter{
 		writer: make(map[string]io.Writer),
+		times:  make(map[string]time.Time),
 	}
 }
 
@@ -135,6 +138,10 @@ func (r *ConsoleReporter) PackageBuildStarted(pkg *Package) {
 		version = "unknown"
 	}
 
+	r.mu.Lock()
+	r.times[pkg.FullName()] = time.Now()
+	r.mu.Unlock()
+
 	io.WriteString(out, color.Sprintf("<fg=yellow>build started</> <gray>(version %s)</>\n", version))
 }
 
@@ -146,19 +153,20 @@ func (r *ConsoleReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) 
 
 // PackageBuildFinished is called when the package build has finished.
 func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, err error) {
-	msg := color.Render("<green>package build succeded</>\n")
+	nme := pkg.FullName()
+	out := r.getWriter(pkg)
+
+	r.mu.Lock()
+	dur := time.Since(r.times[nme])
+	delete(r.writer, nme)
+	delete(r.times, nme)
+	r.mu.Unlock()
+
+	msg := color.Sprintf("<green>package build succeded</> <gray>(%.2fs)</>\n", dur.Seconds())
 	if err != nil {
 		msg = color.Sprintf("<red>package build failed</>\n<white>Reason:</> %s\n", err)
 	}
-
-	nme := pkg.FullName()
-
-	out := r.getWriter(pkg)
 	io.WriteString(out, msg)
-
-	r.mu.Lock()
-	delete(r.writer, nme)
-	r.mu.Unlock()
 }
 
 func getRunPrefix(p *Package) string {
