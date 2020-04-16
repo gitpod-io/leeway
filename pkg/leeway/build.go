@@ -851,7 +851,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 		return err
 	}
 
-	buildcmd := []string{"docker", "build", "-t", version}
+	buildcmd := []string{"docker", "build", "--pull", "-t", version}
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
 	}
