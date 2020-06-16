@@ -8,11 +8,13 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar"
+	"github.com/imdario/mergo"
 	"github.com/minio/highwayhash"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
@@ -65,7 +67,12 @@ const (
 
 // FindUnresolvedArguments finds any still unresolved build arguments in a set of packages
 func FindUnresolvedArguments(pkg *Package) ([]string, error) {
-	meta, err := yaml.Marshal(pkg.packageInternal)
+	// re-marshal packageInternal without the variants. Their unresolved arguments do not matter.
+	// Only when a variant becomes selected do its argumnents play a role, at which point they'll
+	// show up during the config/env re-marshalling.
+	pi := pkg.packageInternal
+	pi.Variants = []PackageVariant{}
+	meta, err := yaml.Marshal(pi)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +107,7 @@ func FindUnresolvedArguments(pkg *Package) ([]string, error) {
 
 // FindWorkspace looks for a WORKSPACE.yaml file within the path. If multiple such files are found,
 // an error is returned.
-func FindWorkspace(path string, args Arguments) (Workspace, error) {
+func FindWorkspace(path string, args Arguments, variant string) (Workspace, error) {
 	root := filepath.Join(path, "WORKSPACE.yaml")
 	fc, err := ioutil.ReadFile(root)
 	if err != nil {
@@ -141,7 +148,7 @@ func FindWorkspace(path string, args Arguments) (Workspace, error) {
 		args[key] = val
 	}
 
-	comps, err := discoverComponents(&workspace, args)
+	comps, err := discoverComponents(&workspace, args, variant)
 	if err != nil {
 		return workspace, err
 	}
@@ -175,7 +182,7 @@ func FindWorkspace(path string, args Arguments) (Workspace, error) {
 }
 
 // discoverComponents discovers components in a workspace
-func discoverComponents(workspace *Workspace, args Arguments) ([]Component, error) {
+func discoverComponents(workspace *Workspace, args Arguments, variant string) ([]Component, error) {
 	path := workspace.Origin
 	pths, err := doublestar.Glob(filepath.Join(path, "**/BUILD.yaml"))
 	if err != nil {
@@ -188,7 +195,7 @@ func discoverComponents(workspace *Workspace, args Arguments) ([]Component, erro
 			continue
 		}
 
-		comp, err := loadComponent(workspace, pth, args)
+		comp, err := loadComponent(workspace, pth, args, variant)
 		if err != nil {
 			return nil, err
 		}
@@ -200,7 +207,7 @@ func discoverComponents(workspace *Workspace, args Arguments) ([]Component, erro
 }
 
 // loadComponent loads a component from a BUILD.yaml file
-func loadComponent(workspace *Workspace, path string, args Arguments) (Component, error) {
+func loadComponent(workspace *Workspace, path string, args Arguments, variant string) (Component, error) {
 	fc, err := ioutil.ReadFile(path)
 	if err != nil {
 		return Component{}, err
@@ -245,9 +252,17 @@ func loadComponent(workspace *Workspace, path string, args Arguments) (Component
 	for _, pkg := range comp.Packages {
 		pkg.C = &comp
 
-		err := pkg.resolveSources()
+		pkg.Sources, err = resolveSources(pkg, pkg.Sources)
 		if err != nil {
 			return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+		}
+
+		// select variant
+		for _, v := range pkg.Variants {
+			if v.Name == variant {
+				pkg.variant = &v
+				break
+			}
 		}
 
 		// add component BUILD file and additional sources to package sources
@@ -269,6 +284,24 @@ func loadComponent(workspace *Workspace, path string, args Arguments) (Component
 			}
 
 			completeSources[fn] = struct{}{}
+		}
+		if pkg.variant != nil {
+			incl, err := resolveSources(pkg, pkg.variant.Sources.Include)
+			if err != nil {
+				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+			}
+			for _, i := range incl {
+				completeSources[i] = struct{}{}
+			}
+
+			excl, err := resolveSources(pkg, pkg.variant.Sources.Exclude)
+			if err != nil {
+				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+			}
+			for _, i := range excl {
+				delete(completeSources, i)
+			}
+			log.WithField("pkg", pkg.Name).WithField("variant", variant).WithField("excl", excl).WithField("incl", incl).Debug("applying variant")
 		}
 		pkg.Sources = make([]string, len(completeSources))
 		i := 0
@@ -294,9 +327,95 @@ func loadComponent(workspace *Workspace, path string, args Arguments) (Component
 
 			pkg.Dependencies[idx] = comp.Name + dep
 		}
+
+		// apply variant config
+		if pkg.variant != nil {
+			err = mergeConfig(pkg, pkg.variant.Config())
+			if err != nil {
+				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+			}
+
+			err = mergeEnv(pkg, pkg.variant.Environment)
+			if err != nil {
+				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+			}
+		}
 	}
 
 	return comp, nil
+}
+
+func mergeConfig(pkg *Package, src PackageConfig) error {
+	switch pkg.Config.(type) {
+	case TypescriptPkgConfig:
+		dst := pkg.Config.(TypescriptPkgConfig)
+		in, ok := src.(TypescriptPkgConfig)
+		if !ok {
+			return xerrors.Errorf("cannot merge %s onto %s", reflect.TypeOf(src).String(), reflect.TypeOf(dst).String())
+		}
+		err := mergo.Merge(&dst, in)
+		if err != nil {
+			return err
+		}
+		pkg.Config = dst
+	case GoPkgConfig:
+		dst := pkg.Config.(GoPkgConfig)
+		in, ok := src.(GoPkgConfig)
+		if !ok {
+			return xerrors.Errorf("cannot merge %s onto %s", reflect.TypeOf(src).String(), reflect.TypeOf(dst).String())
+		}
+		err := mergo.Merge(&dst, in)
+		if err != nil {
+			return err
+		}
+		pkg.Config = dst
+	case DockerPkgConfig:
+		dst := pkg.Config.(DockerPkgConfig)
+		in, ok := src.(DockerPkgConfig)
+		if !ok {
+			return xerrors.Errorf("cannot merge %s onto %s", reflect.TypeOf(src).String(), reflect.TypeOf(dst).String())
+		}
+		err := mergo.Merge(&dst, in)
+		if err != nil {
+			return err
+		}
+		pkg.Config = dst
+	case GenericPkgConfig:
+		dst := pkg.Config.(GenericPkgConfig)
+		in, ok := src.(GenericPkgConfig)
+		if !ok {
+			return xerrors.Errorf("cannot merge %s onto %s", reflect.TypeOf(src).String(), reflect.TypeOf(dst).String())
+		}
+		err := mergo.Merge(&dst, in)
+		if err != nil {
+			return err
+		}
+		pkg.Config = dst
+	default:
+		return xerrors.Errorf("unknown config type %s", reflect.ValueOf(pkg.Config).Elem().Type().String())
+	}
+	return nil
+}
+
+func mergeEnv(pkg *Package, src []string) error {
+	env := make(map[string]string, len(pkg.Environment))
+	for _, set := range [][]string{pkg.Environment, src} {
+		for _, kv := range set {
+			segs := strings.Split(kv, "=")
+			if len(segs) < 2 {
+				return xerrors.Errorf("environment variable must have format ENV=VAR: %s", kv)
+			}
+
+			env[segs[0]] = strings.Join(segs[1:], "=")
+		}
+
+	}
+
+	pkg.Environment = make([]string, 0, len(env))
+	for k, v := range env {
+		pkg.Environment = append(pkg.Environment, fmt.Sprintf("%s=%s", k, v))
+	}
+	return nil
 }
 
 // replaceBuildArguments replaces all build arguments in the byte stream (e.g. ${thisIsAnArg}) with its corresponding
@@ -338,13 +457,14 @@ func (n PackageNotFoundErr) Error() string {
 }
 
 type packageInternal struct {
-	Name                 string      `yaml:"name"`
-	Type                 PackageType `yaml:"type"`
-	Sources              []string    `yaml:"srcs"`
-	Dependencies         []string    `yaml:"deps"`
-	ArgumentDependencies []string    `yaml:"argdeps"`
-	Environment          []string    `yaml:"env"`
-	Ephemeral            bool        `yaml:"ephemeral"`
+	Name                 string           `yaml:"name"`
+	Type                 PackageType      `yaml:"type"`
+	Sources              []string         `yaml:"srcs"`
+	Dependencies         []string         `yaml:"deps"`
+	ArgumentDependencies []string         `yaml:"argdeps"`
+	Environment          []string         `yaml:"env"`
+	Ephemeral            bool             `yaml:"ephemeral"`
+	Variants             []PackageVariant `yaml:"variants"`
 }
 
 // Package is a single buildable artifact within a component
@@ -358,6 +478,7 @@ type Package struct {
 	Config PackageConfig `yaml:"config"`
 
 	dependencies []*Package
+	variant      *PackageVariant
 }
 
 // link connects resolves the references to the dependencies
@@ -376,6 +497,11 @@ func (p *Package) link(idx map[string]*Package) error {
 // GetDependencies returns the linked package dependencies or nil if not linked yet
 func (p *Package) GetDependencies() []*Package {
 	return p.dependencies
+}
+
+// Variant returns the selected package variant. nil if no variant is selected.
+func (p *Package) Variant() *PackageVariant {
+	return p.variant
 }
 
 // GetTransitiveDependencies returns all transitive dependencies of a package.
@@ -427,6 +553,20 @@ func (p *Package) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return err
 	}
 	p.Config = cfg
+
+	for i, v := range tpe.Variants {
+		b, err := yaml.Marshal(v)
+		if err != nil {
+			return err
+		}
+		cfg, err := unmarshalTypeDependentConfig(tpe.Type, func(out interface{}) error {
+			return yaml.Unmarshal(b, out)
+		})
+		if err != nil {
+			return err
+		}
+		tpe.Variants[i].config = cfg
+	}
 
 	return nil
 }
@@ -637,6 +777,49 @@ func (p *PackageType) UnmarshalYAML(unmarshal func(interface{}) error) (err erro
 	return
 }
 
+// PackageVariant provides a variation point for a package's sources,
+// environment variables and config.
+type PackageVariant struct {
+	Name    string `yaml:"name"`
+	Sources struct {
+		Include []string `yaml:"include"`
+		Exclude []string `yaml:"exclude"`
+	} `yaml:"srcs"`
+	RawConfig   yaml.MapSlice `yaml:"config"`
+	Environment []string      `yaml:"env"`
+
+	config PackageConfig
+}
+
+// Config returns this package variants configuration
+func (v *PackageVariant) Config() PackageConfig {
+	return v.config
+}
+
+func resolveSources(p *Package, globs []string) (res []string, err error) {
+	for _, glb := range globs {
+		srcs, err := doublestar.Glob(filepath.Join(p.C.Origin, glb))
+		if err != nil {
+			return nil, err
+		}
+
+		for _, src := range srcs {
+			stat, err := os.Stat(src)
+			if err != nil {
+				return nil, err
+			}
+			if stat.IsDir() {
+				continue
+			}
+			if p.C.W.ShouldIngoreSource(src) {
+				continue
+			}
+			res = append(res, src)
+		}
+	}
+	return res, nil
+}
+
 // CacheLevel describes a level of package cache
 type CacheLevel string
 
@@ -702,33 +885,6 @@ func (p *Package) FilesystemSafeName() string {
 	// components in the workspace root would otherwise start with - which breaks a lot of shell commands
 	pkgdir = strings.TrimLeft(pkgdir, "-")
 	return pkgdir
-}
-
-// resolveSources resolves any glob expression in the source list
-func (p *Package) resolveSources() error {
-	var res []string
-	for _, glb := range p.Sources {
-		srcs, err := doublestar.Glob(filepath.Join(p.C.Origin, glb))
-		if err != nil {
-			return err
-		}
-
-		for _, src := range srcs {
-			stat, err := os.Stat(src)
-			if err != nil {
-				return err
-			}
-			if stat.IsDir() {
-				continue
-			}
-			if p.C.W.ShouldIngoreSource(src) {
-				continue
-			}
-			res = append(res, src)
-		}
-	}
-	p.Sources = res
-	return nil
 }
 
 func (p *Package) resolveBuiltinVariables() error {

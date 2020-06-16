@@ -1,11 +1,12 @@
 module github.com/typefox/leeway
 
-go 1.12
+go 1.14
 
 require (
 	github.com/bmatcuk/doublestar v1.1.5
 	github.com/disiqueira/gotree v1.0.0
 	github.com/gookit/color v1.2.0
+	github.com/imdario/mergo v0.3.9
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/minio/highwayhash v1.0.0
 	github.com/segmentio/textio v1.2.0

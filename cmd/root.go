@@ -58,6 +58,7 @@ var (
 	workspace string
 	buildArgs []string
 	verbose   bool
+	variant   string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -111,6 +112,7 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVarP(&workspace, "workspace", "w", workspaceRoot, "Workspace root")
 	rootCmd.PersistentFlags().StringArrayVarP(&buildArgs, "build-arg", "D", []string{}, "pass arguments to BUILD files")
+	rootCmd.PersistentFlags().StringVar(&variant, "variant", "", "selects a package variant")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enables verbose logging")
 }
 
@@ -120,7 +122,7 @@ func getWorkspace() (leeway.Workspace, error) {
 		return leeway.Workspace{}, err
 	}
 
-	return leeway.FindWorkspace(workspace, args)
+	return leeway.FindWorkspace(workspace, args, variant)
 }
 
 func getBuildArgs() (leeway.Arguments, error) {
