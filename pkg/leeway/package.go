@@ -31,9 +31,10 @@ type Workspace struct {
 	ArgumentDefaults map[string]string `yaml:"defaultArgs,omitempty"`
 	Variants         []*PackageVariant `yaml:"variants,omitempty"`
 
-	Origin     string
-	Components map[string]Component
-	Packages   map[string]*Package
+	Origin          string               `yaml:"-"`
+	Components      map[string]Component `yaml:"-"`
+	Packages        map[string]*Package  `yaml:"-"`
+	SelectedVariant *PackageVariant      `yaml:"-"`
 
 	ignores []string
 }
@@ -123,6 +124,15 @@ func FindWorkspace(path string, args Arguments, variant string) (Workspace, erro
 		return Workspace{}, err
 	}
 
+	if variant != "" {
+		for _, vnt := range workspace.Variants {
+			if vnt.Name == variant {
+				workspace.SelectedVariant = vnt
+				break
+			}
+		}
+	}
+
 	var ignores []string
 	ignoresFile := filepath.Join(workspace.Origin, ".leewayignore")
 	if _, err := os.Stat(ignoresFile); !os.IsNotExist(err) {
@@ -148,7 +158,7 @@ func FindWorkspace(path string, args Arguments, variant string) (Workspace, erro
 		args[key] = val
 	}
 
-	comps, err := discoverComponents(&workspace, args, variant)
+	comps, err := discoverComponents(&workspace, args, workspace.SelectedVariant)
 	if err != nil {
 		return workspace, err
 	}
@@ -182,7 +192,7 @@ func FindWorkspace(path string, args Arguments, variant string) (Workspace, erro
 }
 
 // discoverComponents discovers components in a workspace
-func discoverComponents(workspace *Workspace, args Arguments, variant string) ([]Component, error) {
+func discoverComponents(workspace *Workspace, args Arguments, variant *PackageVariant) ([]Component, error) {
 	path := workspace.Origin
 	pths, err := doublestar.Glob(filepath.Join(path, "**/BUILD.yaml"))
 	if err != nil {
@@ -207,7 +217,7 @@ func discoverComponents(workspace *Workspace, args Arguments, variant string) ([
 }
 
 // loadComponent loads a component from a BUILD.yaml file
-func loadComponent(workspace *Workspace, path string, args Arguments, variant string) (Component, error) {
+func loadComponent(workspace *Workspace, path string, args Arguments, variant *PackageVariant) (Component, error) {
 	fc, err := ioutil.ReadFile(path)
 	if err != nil {
 		return Component{}, err
@@ -257,14 +267,6 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant st
 			return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 		}
 
-		// select variant
-		for _, v := range workspace.Variants {
-			if v.Name == variant {
-				pkg.variant = v
-				break
-			}
-		}
-
 		// add component BUILD file and additional sources to package sources
 		completeSources := make(map[string]struct{})
 		completeSources[path] = struct{}{}
@@ -285,8 +287,8 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant st
 
 			completeSources[fn] = struct{}{}
 		}
-		if pkg.variant != nil {
-			incl, err := resolveSources(pkg, pkg.variant.Sources.Include)
+		if vnt := pkg.C.W.SelectedVariant; vnt != nil {
+			incl, err := resolveSources(pkg, vnt.Sources.Include)
 			if err != nil {
 				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 			}
@@ -294,7 +296,7 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant st
 				completeSources[i] = struct{}{}
 			}
 
-			excl, err := resolveSources(pkg, pkg.variant.Sources.Exclude)
+			excl, err := resolveSources(pkg, vnt.Sources.Exclude)
 			if err != nil {
 				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 			}
@@ -329,13 +331,13 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant st
 		}
 
 		// apply variant config
-		if pkg.variant != nil {
-			err = mergeConfig(pkg, pkg.variant.Config(pkg.Type))
+		if vnt := pkg.C.W.SelectedVariant; vnt != nil {
+			err = mergeConfig(pkg, vnt.Config(pkg.Type))
 			if err != nil {
 				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 			}
 
-			err = mergeEnv(pkg, pkg.variant.Environment)
+			err = mergeEnv(pkg, vnt.Environment)
 			if err != nil {
 				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 			}
@@ -481,7 +483,6 @@ type Package struct {
 	Config PackageConfig `yaml:"config"`
 
 	dependencies []*Package
-	variant      *PackageVariant
 }
 
 // link connects resolves the references to the dependencies
@@ -500,11 +501,6 @@ func (p *Package) link(idx map[string]*Package) error {
 // GetDependencies returns the linked package dependencies or nil if not linked yet
 func (p *Package) GetDependencies() []*Package {
 	return p.dependencies
-}
-
-// Variant returns the selected package variant. nil if no variant is selected.
-func (p *Package) Variant() *PackageVariant {
-	return p.variant
 }
 
 // GetTransitiveDependencies returns all transitive dependencies of a package.
