@@ -141,24 +141,6 @@ func describePackage(pkg *leeway.Package) {
 	if pkg.Ephemeral {
 		fmt.Fprintf(w, "Ephemeral:\ttrue\t\n")
 	}
-	if len(pkg.Variants) > 0 {
-		vnt := pkg.Variant()
-		fmt.Fprintf(w, "Variants:\n")
-		for _, variant := range pkg.Variants {
-			format := "\tName:\t%s\n"
-			if vnt != nil && variant.Name == vnt.Name {
-				format = "\tName:\t%s (selected)\n"
-			}
-			fmt.Fprintf(w, format, variant.Name)
-			fmt.Fprintf(w, "\tConfiguration:\n%s", describeConfig(variant.Config(), "\t\t"))
-			if len(variant.Environment) > 0 {
-				fmt.Fprintf(w, "\tBuild Environment Variables:\n")
-				for _, env := range variant.Environment {
-					fmt.Fprintf(w, "\t\t%s\n", env)
-				}
-			}
-		}
-	}
 	fmt.Fprintf(w, "Configuration:\n%s", describeConfig(pkg.Config, "\t"))
 	if len(pkg.ArgumentDependencies) > 0 {
 		fmt.Fprintf(w, "Version Relevant Arguments:\n")

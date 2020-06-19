@@ -29,6 +29,7 @@ type Arguments map[string]string
 type Workspace struct {
 	DefaultTarget    string            `yaml:"defaultTarget,omitempty"`
 	ArgumentDefaults map[string]string `yaml:"defaultArgs,omitempty"`
+	Variants         []*PackageVariant `yaml:"variants,omitempty"`
 
 	Origin     string
 	Components map[string]Component
@@ -71,7 +72,6 @@ func FindUnresolvedArguments(pkg *Package) ([]string, error) {
 	// Only when a variant becomes selected do its argumnents play a role, at which point they'll
 	// show up during the config/env re-marshalling.
 	pi := pkg.packageInternal
-	pi.Variants = []PackageVariant{}
 	meta, err := yaml.Marshal(pi)
 	if err != nil {
 		return nil, err
@@ -258,9 +258,9 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant st
 		}
 
 		// select variant
-		for _, v := range pkg.Variants {
+		for _, v := range workspace.Variants {
 			if v.Name == variant {
-				pkg.variant = &v
+				pkg.variant = v
 				break
 			}
 		}
@@ -301,7 +301,7 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant st
 			for _, i := range excl {
 				delete(completeSources, i)
 			}
-			log.WithField("pkg", pkg.Name).WithField("variant", variant).WithField("excl", excl).WithField("incl", incl).Debug("applying variant")
+			log.WithField("pkg", pkg.Name).WithField("variant", variant).WithField("excl", excl).WithField("incl", incl).WithField("package", pkg.FullName()).Debug("applying variant")
 		}
 		pkg.Sources = make([]string, len(completeSources))
 		i := 0
@@ -330,7 +330,7 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant st
 
 		// apply variant config
 		if pkg.variant != nil {
-			err = mergeConfig(pkg, pkg.variant.Config())
+			err = mergeConfig(pkg, pkg.variant.Config(pkg.Type))
 			if err != nil {
 				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 			}
@@ -346,6 +346,10 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant st
 }
 
 func mergeConfig(pkg *Package, src PackageConfig) error {
+	if src == nil {
+		return nil
+	}
+
 	switch pkg.Config.(type) {
 	case TypescriptPkgConfig:
 		dst := pkg.Config.(TypescriptPkgConfig)
@@ -457,14 +461,13 @@ func (n PackageNotFoundErr) Error() string {
 }
 
 type packageInternal struct {
-	Name                 string           `yaml:"name"`
-	Type                 PackageType      `yaml:"type"`
-	Sources              []string         `yaml:"srcs"`
-	Dependencies         []string         `yaml:"deps"`
-	ArgumentDependencies []string         `yaml:"argdeps"`
-	Environment          []string         `yaml:"env"`
-	Ephemeral            bool             `yaml:"ephemeral"`
-	Variants             []PackageVariant `yaml:"variants"`
+	Name                 string      `yaml:"name"`
+	Type                 PackageType `yaml:"type"`
+	Sources              []string    `yaml:"srcs"`
+	Dependencies         []string    `yaml:"deps"`
+	ArgumentDependencies []string    `yaml:"argdeps"`
+	Environment          []string    `yaml:"env"`
+	Ephemeral            bool        `yaml:"ephemeral"`
 }
 
 // Package is a single buildable artifact within a component
@@ -553,20 +556,6 @@ func (p *Package) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return err
 	}
 	p.Config = cfg
-
-	for i, v := range tpe.Variants {
-		b, err := yaml.Marshal(v)
-		if err != nil {
-			return err
-		}
-		cfg, err := unmarshalTypeDependentConfig(tpe.Type, func(out interface{}) error {
-			return yaml.Unmarshal(b, out)
-		})
-		if err != nil {
-			return err
-		}
-		tpe.Variants[i].config = cfg
-	}
 
 	return nil
 }
@@ -777,23 +766,58 @@ func (p *PackageType) UnmarshalYAML(unmarshal func(interface{}) error) (err erro
 	return
 }
 
-// PackageVariant provides a variation point for a package's sources,
-// environment variables and config.
-type PackageVariant struct {
+type packageVariantInternal struct {
 	Name    string `yaml:"name"`
 	Sources struct {
 		Include []string `yaml:"include"`
 		Exclude []string `yaml:"exclude"`
 	} `yaml:"srcs"`
-	RawConfig   yaml.MapSlice `yaml:"config"`
-	Environment []string      `yaml:"env"`
+	Environment []string                      `yaml:"env"`
+	RawConfig   map[PackageType]yaml.MapSlice `yaml:"config"`
+}
 
-	config PackageConfig
+// PackageVariant provides a variation point for a package's sources,
+// environment variables and config.
+type PackageVariant struct {
+	packageVariantInternal
+
+	config map[PackageType]PackageConfig
+}
+
+// UnmarshalYAML unmarshals a package variant
+func (v *PackageVariant) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var vi packageVariantInternal
+	err := unmarshal(&vi)
+	if err != nil {
+		return err
+	}
+
+	config := make(map[PackageType]PackageConfig)
+	for k, rc := range vi.RawConfig {
+		b, err := yaml.Marshal(rc)
+		if err != nil {
+			return err
+		}
+		cfg, err := unmarshalTypeDependentConfig(k, func(dst interface{}) error {
+			return yaml.Unmarshal(b, dst)
+		})
+		if err != nil {
+			return err
+		}
+		config[k] = cfg
+	}
+
+	*v = PackageVariant{
+		packageVariantInternal: vi,
+		config:                 config,
+	}
+
+	return nil
 }
 
 // Config returns this package variants configuration
-func (v *PackageVariant) Config() PackageConfig {
-	return v.config
+func (v *PackageVariant) Config(t PackageType) PackageConfig {
+	return v.config[t]
 }
 
 func resolveSources(p *Package, globs []string) (res []string, err error) {
