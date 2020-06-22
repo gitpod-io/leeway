@@ -262,7 +262,7 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant *P
 	for _, pkg := range comp.Packages {
 		pkg.C = &comp
 
-		pkg.Sources, err = resolveSources(pkg, pkg.Sources)
+		pkg.Sources, err = resolveSources(pkg.C.W, pkg.C.Origin, pkg.Sources, false)
 		if err != nil {
 			return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 		}
@@ -288,17 +288,12 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant *P
 			completeSources[fn] = struct{}{}
 		}
 		if vnt := pkg.C.W.SelectedVariant; vnt != nil {
-			incl, err := resolveSources(pkg, vnt.Sources.Include)
+			incl, excl, err := vnt.ResolveSources(pkg.C.W, pkg.C.Origin)
 			if err != nil {
 				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 			}
 			for _, i := range incl {
 				completeSources[i] = struct{}{}
-			}
-
-			excl, err := resolveSources(pkg, vnt.Sources.Exclude)
-			if err != nil {
-				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 			}
 			for _, i := range excl {
 				delete(completeSources, i)
@@ -816,9 +811,25 @@ func (v *PackageVariant) Config(t PackageType) PackageConfig {
 	return v.config[t]
 }
 
-func resolveSources(p *Package, globs []string) (res []string, err error) {
+// ResolveSources lists all files which are explicitely included or excluded by this variant.
+// Inclusion takes precedence over exclusion.
+func (v *PackageVariant) ResolveSources(workspace *Workspace, loc string) (incl []string, excl []string, err error) {
+	incl, err = resolveSources(workspace, loc, v.Sources.Include, true)
+	if err != nil {
+		return
+	}
+
+	excl, err = resolveSources(workspace, loc, v.Sources.Exclude, true)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+func resolveSources(workspace *Workspace, loc string, globs []string, includeDirs bool) (res []string, err error) {
 	for _, glb := range globs {
-		srcs, err := doublestar.Glob(filepath.Join(p.C.Origin, glb))
+		srcs, err := doublestar.Glob(filepath.Join(loc, glb))
 		if err != nil {
 			return nil, err
 		}
@@ -828,10 +839,10 @@ func resolveSources(p *Package, globs []string) (res []string, err error) {
 			if err != nil {
 				return nil, err
 			}
-			if stat.IsDir() {
+			if !includeDirs && stat.IsDir() {
 				continue
 			}
-			if p.C.W.ShouldIngoreSource(src) {
+			if workspace.ShouldIngoreSource(src) {
 				continue
 			}
 			res = append(res, src)

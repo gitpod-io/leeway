@@ -7,17 +7,15 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 
-	"github.com/bmatcuk/doublestar"
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/leeway"
 )
 
 // mountCmd represents the mount command
 var mountCmd = &cobra.Command{
-	Use:   "mount <destination> [package]",
+	Use:   "mount <destination>",
 	Short: "[experimental] Mounts a package or workspace variant",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -30,17 +28,6 @@ var mountCmd = &cobra.Command{
 		err = os.MkdirAll(dest, 0777)
 		if err != nil && !os.IsExist(err) {
 			return fmt.Errorf("cannot create destination dir: %q", err)
-		}
-
-		var pkg *leeway.Package
-		if len(args) > 1 {
-			pkgn := args[1]
-			for _, p := range ws.Packages {
-				if p.FullName() == pkgn {
-					pkg = p
-					break
-				}
-			}
 		}
 
 		wdbase, _ := cmd.Flags().GetString("workdir")
@@ -70,7 +57,8 @@ var mountCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("cannot mount delup overlay: %q", err)
 		}
-		err = deleteFilesOtherThan(delmp, &ws, pkg, ws.SelectedVariant)
+		strict, _ := cmd.Flags().GetBool("strict")
+		err = leeway.DeleteNonWorkspaceFiles(delmp, &ws, strict)
 		if err != nil {
 			return err
 		}
@@ -85,53 +73,9 @@ var mountCmd = &cobra.Command{
 	},
 }
 
-func deleteFilesOtherThan(loc string, workspace *leeway.Workspace, pkg *leeway.Package, variant *leeway.PackageVariant) error {
-	dc := make(map[string]struct{})
-
-	if pkg != nil {
-		fns, err := doublestar.Glob(filepath.Join(loc, "**/*"))
-		if err != nil {
-			return fmt.Errorf("cannot list files: %q", err)
-		}
-		for _, del := range fns {
-			dc[filepath.Join(loc, strings.TrimPrefix(pkg.C.W.Origin, del))] = struct{}{}
-		}
-
-		for _, inc := range pkg.Sources {
-			delete(dc, filepath.Join(loc, strings.TrimPrefix(pkg.C.W.Origin, inc)))
-		}
-	} else if variant != nil {
-		for _, p := range workspace.Packages {
-			loc := filepath.Join(loc, strings.TrimPrefix(p.C.Origin, workspace.Origin))
-
-			for _, excl := range variant.Sources.Exclude {
-				fns, err := doublestar.Glob(filepath.Join(loc, excl))
-				if err != nil {
-					return fmt.Errorf("cannot list variant exluded files: %q", err)
-				}
-
-				for _, fn := range fns {
-					dc[fn] = struct{}{}
-				}
-			}
-		}
-
-	} else {
-		return fmt.Errorf("mounting without package or variant would result in an empty directory")
-	}
-
-	for f := range dc {
-		err := os.RemoveAll(f)
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("cannot remove superflous file: %q", err)
-		}
-	}
-
-	return nil
-}
-
 func init() {
 	rootCmd.AddCommand(mountCmd)
 
 	mountCmd.Flags().String("workdir", "", "overlayfs workdir location (must be on the same volume as the destination)")
+	mountCmd.Flags().Bool("strict", false, "keep only package source files")
 }
