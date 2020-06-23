@@ -169,7 +169,7 @@ func findOverlayMount(mountpoint string) (origin, upper, delmp string, err error
 }
 
 func init() {
-	rootCmd.AddCommand(unmountCmd)
+	addExperimentalCommand(rootCmd, unmountCmd)
 
 	unmountCmd.Flags().Bool("apply", true, "apply the changes made in the overlay back to the original workspace")
 }

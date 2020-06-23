@@ -84,8 +84,9 @@ variables have an effect on leeway:
             <light_blue>LEEWAY_BUILD_DIR</>  Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O
                               which makes it advisable to place this on a fast SSD or in RAM.
            <light_blue>LEEWAY_YARN_MUTEX</>  Configures the mutex flag leeway will pass to yarn. Defaults to "network".
-							  See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
+                              See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
   <light_blue>LEEWAY_DEFAULT_CACHE_LEVEL</>  Sets the default cache level for builds. Defaults to "remote".
+         <light_blue>LEEWAY_EXPERIMENTAL</>  Enables experimental leeway features and commands.
 `),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if verbose {
@@ -150,4 +151,12 @@ func getRemoteCache() leeway.RemoteCache {
 	}
 
 	return leeway.NoRemoteCache{}
+}
+
+func addExperimentalCommand(parent, child *cobra.Command) {
+	if os.Getenv("LEEWAY_EXPERIMENTAL") != "true" {
+		return
+	}
+
+	parent.AddCommand(child)
 }

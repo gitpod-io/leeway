@@ -152,27 +152,31 @@ variables have an effect on leeway:
 - `LEEWAY_CACHE_DIR`: Location of the local build cache. The directory does not have to exist yet.
 - `LEEWAY_BUILD_DIR`: Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O which makes it advisable to place this on a fast SSD or in RAM.
 - `LEEWAY_YARN_MUTEX`: Configures the mutex flag leeway will pass to yarn. Defaults to "network". See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
+- `LEEWAY_EXPERIMENTAL`: Enables exprimental features
 
 # Debugging
 When a build fails, or to get an idea of how leeway assembles dependencies, run your build with `leeway build -c local` (local cache only) and inspect your `$LEEWAY_BUILD_DIR`.
 
 # CLI tips
 
-## How can I build a package in the current component/folder?
+### How can I build a package in the current component/folder?
 `leeway build .:package-name`
 
-## Is there bash autocompletion?
+### Is there bash autocompletion?
 Yes, run `. <(leeway bash-completion)` to enable it. If you place this line in `.bashrc` you'll have autocompletion every time.
 
-## How can I print a component constant (since v0.6.0)?
+### How can I print a component constant?
 `leeway describe const some/component/name` prints all constants of a component.
 
 `leeway describe const -n someName some/component/name` prints the value of the `someName` constant of `some/component/name`.
 
 `leeway describe const -n someName .` prints the value of the `someName` constant of the component in the current working directory.
 
-## How can I find all packages in a workspace (since v0.6.0)?
+### How can I find all packages in a workspace?
 `leeway collect`
 
-## How can I find all components with a particular constant (since v0.6.0)?
+### How can I find all components with a particular constant?
 `leeway collect --components -l someConstant`
+
+### How can I export only a workspace the way leeway sees it, i.e. based on the packages?
+`LEEWAY_EXPERIMENTAL=true leeway export --strict /some/destination`

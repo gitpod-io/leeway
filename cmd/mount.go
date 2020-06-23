@@ -74,7 +74,7 @@ var mountCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(mountCmd)
+	addExperimentalCommand(rootCmd, mountCmd)
 
 	mountCmd.Flags().String("workdir", "", "overlayfs workdir location (must be on the same volume as the destination)")
 	mountCmd.Flags().Bool("strict", false, "keep only package source files")
