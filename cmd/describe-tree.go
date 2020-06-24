@@ -14,7 +14,7 @@ var describeTreeCmd = &cobra.Command{
 	Use:   "tree",
 	Short: "Prints the depepency tree of a package",
 	Run: func(cmd *cobra.Command, args []string) {
-		_, pkg, _ := getTarget(args)
+		_, pkg, _, _ := getTarget(args, false)
 		if pkg == nil {
 			log.Fatal("tree needs a package")
 		}

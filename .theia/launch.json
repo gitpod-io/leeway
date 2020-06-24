@@ -9,8 +9,10 @@
       "request": "launch",
       "mode": "auto",
       "program": "${workspaceFolder}/main.go",
-      "env": {},
-      "args": ["build", "//:app"]
+      "env": {
+          "LEEWAY_EXPERIMENTAL": "true"
+      },
+      "args": ["run", "//:hello"]
     }
   ]
 }

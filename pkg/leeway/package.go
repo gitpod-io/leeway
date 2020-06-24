@@ -34,6 +34,7 @@ type Workspace struct {
 	Origin          string               `yaml:"-"`
 	Components      map[string]Component `yaml:"-"`
 	Packages        map[string]*Package  `yaml:"-"`
+	Scripts         map[string]*Script   `yaml:"-"`
 	SelectedVariant *PackageVariant      `yaml:"-"`
 
 	ignores []string
@@ -164,11 +165,15 @@ func FindWorkspace(path string, args Arguments, variant string) (Workspace, erro
 	}
 	workspace.Components = make(map[string]Component)
 	workspace.Packages = make(map[string]*Package)
+	workspace.Scripts = make(map[string]*Script)
 	for _, comp := range comps {
 		workspace.Components[comp.Name] = comp
 
 		for _, pkg := range comp.Packages {
 			workspace.Packages[pkg.FullName()] = pkg
+		}
+		for _, script := range comp.Scripts {
+			workspace.Scripts[script.FullName()] = script
 		}
 	}
 
@@ -176,7 +181,13 @@ func FindWorkspace(path string, args Arguments, variant string) (Workspace, erro
 	for _, pkg := range workspace.Packages {
 		err := pkg.link(workspace.Packages)
 		if err != nil {
-			return workspace, xerrors.Errorf("linking error in %s: %w", pkg.FullName(), err)
+			return workspace, xerrors.Errorf("linking error in package %s: %w", pkg.FullName(), err)
+		}
+	}
+	for _, script := range workspace.Scripts {
+		err := script.link(workspace.Packages)
+		if err != nil {
+			return workspace, xerrors.Errorf("linking error in script %s: %w", script.FullName(), err)
 		}
 	}
 
@@ -339,6 +350,27 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant *P
 		}
 	}
 
+	for _, scr := range comp.Scripts {
+		scr.C = &comp
+
+		// fill in defaults
+		if scr.Type == "" {
+			scr.Type = BashScript
+		}
+		if scr.WorkdirLayout == "" {
+			scr.WorkdirLayout = WorkdirOrigin
+		}
+
+		// make all dependencies fully qualified
+		for idx, dep := range scr.Dependencies {
+			if !strings.HasPrefix(dep, ":") {
+				continue
+			}
+
+			scr.Dependencies[idx] = comp.Name + dep
+		}
+	}
+
 	return comp, nil
 }
 
@@ -446,6 +478,7 @@ type Component struct {
 
 	Constants Arguments  `yaml:"const"`
 	Packages  []*Package `yaml:"packages"`
+	Scripts   []*Script  `yaml:"scripts"`
 }
 
 // PackageNotFoundErr is used when something references a package we don't know about

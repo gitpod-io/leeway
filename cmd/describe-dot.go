@@ -12,7 +12,7 @@ var describeDotCmd = &cobra.Command{
 	Use:   "dot",
 	Short: "Prints the depenency graph of a package as Graphviz dot",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, pkg, _ := getTarget(args)
+		_, pkg, _, _ := getTarget(args, false)
 		if pkg == nil {
 			log.Fatal("dot needs a package")
 		}

@@ -41,7 +41,7 @@ var describeCmd = &cobra.Command{
 			return
 		}
 
-		comp, pkg, exists := getTarget(args)
+		comp, pkg, _, exists := getTarget(args, false)
 		if !exists {
 			return
 		}
@@ -62,7 +62,7 @@ var describeCmd = &cobra.Command{
 	},
 }
 
-func getTarget(args []string) (comp leeway.Component, pkg *leeway.Package, exists bool) {
+func getTarget(args []string, findScript bool) (comp leeway.Component, pkg *leeway.Package, script *leeway.Script, exists bool) {
 	workspace, err := getWorkspace()
 	if err != nil {
 		log.Fatal(err)
@@ -107,7 +107,16 @@ func getTarget(args []string) (comp leeway.Component, pkg *leeway.Package, exist
 		target = cn
 	}
 
-	if isPkg := strings.Contains(target, ":"); isPkg {
+	if isInCmp := strings.Contains(target, ":"); isInCmp {
+		if findScript {
+			script, exists = workspace.Scripts[target]
+			if !exists {
+				log.Fatalf("script \"%s\" does not exist", target)
+				return
+			}
+			return
+		}
+
 		pkg, exists = workspace.Packages[target]
 		if !exists {
 			log.Fatalf("package \"%s\" does not exist", target)

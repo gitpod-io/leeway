@@ -21,95 +21,13 @@ var buildCmd = &cobra.Command{
 	Short: "Builds a package",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		_, pkg, _ := getTarget(args)
+		_, pkg, _, _ := getTarget(args, false)
 		if pkg == nil {
 			log.Fatal("tree needs a package")
 		}
 
-		cm, _ := cmd.Flags().GetString("cache")
-		log.WithField("cacheMode", cm).Debug("configuring caches")
-		cacheLevel := leeway.CacheLevel(cm)
-
-		remoteCache := getRemoteCache()
-		switch cacheLevel {
-		case leeway.CacheNone, leeway.CacheLocal:
-			remoteCache = leeway.NoRemoteCache{}
-		case leeway.CacheRemotePull:
-			remoteCache = &pullOnlyRemoteCache{C: remoteCache}
-		case leeway.CacheRemotePush:
-			remoteCache = &pushOnlyRemoteCache{C: remoteCache}
-		case leeway.CacheRemote:
-		default:
-			log.Fatalf("invalid cache level: %s", cacheLevel)
-		}
-
-		var (
-			localCacheLoc string
-			err           error
-		)
-		if cacheLevel == leeway.CacheNone {
-			localCacheLoc, err = ioutil.TempDir("", "leeway")
-			if err != nil {
-				log.Fatal(err)
-			}
-		} else {
-			localCacheLoc = os.Getenv(leeway.EnvvarCacheDir)
-			if localCacheLoc == "" {
-				localCacheLoc = filepath.Join(os.TempDir(), "cache")
-			}
-		}
-		log.WithField("location", localCacheLoc).Debug("set up local cache")
-		localCache, err := leeway.NewFilesystemCache(localCacheLoc)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		dryrun, err := cmd.Flags().GetBool("dry-run")
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		log.Debugf("this is leeway version %s", version)
-
-		var planOutlet io.Writer
-		if plan, _ := cmd.Flags().GetString("dump-plan"); plan != "" {
-			if plan == "-" {
-				planOutlet = os.Stderr
-			} else {
-				f, err := os.OpenFile(plan, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
-				if err != nil {
-					log.Fatal(err)
-				}
-				defer f.Close()
-
-				planOutlet = f
-			}
-		}
-
-		werftlog, err := cmd.Flags().GetBool("werft")
-		if err != nil {
-			log.Fatal(err)
-		}
-		var reporter leeway.Reporter
-		if werftlog {
-			reporter = leeway.NewWerftReporter()
-		} else {
-			reporter = leeway.NewConsoleReporter()
-		}
-
-		dontTest, err := cmd.Flags().GetBool("dont-test")
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		err = leeway.Build(pkg,
-			leeway.WithLocalCache(localCache),
-			leeway.WithRemoteCache(remoteCache),
-			leeway.WithDryRun(dryrun),
-			leeway.WithBuildPlan(planOutlet),
-			leeway.WithReporter(reporter),
-			leeway.WithDontTest(dontTest),
-		)
+		opts, localCache := getBuildOpts(cmd)
+		err := leeway.Build(pkg, opts...)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -170,19 +88,111 @@ var buildCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.AddCommand(buildCmd)
+
+	addBuildFlags(buildCmd)
+	buildCmd.Flags().String("serve", "", "After a successful build this starts a webserver on the given address serving the build result (e.g. --serve localhost:8080)")
+	buildCmd.Flags().String("save", "", "After a successful build this saves the build result as tar.gz file in the local filesystem (e.g. --save build-result.tar.gz)")
+}
+
+func addBuildFlags(cmd *cobra.Command) {
 	cacheDefault := os.Getenv("LEEWAY_DEFAULT_CACHE_LEVEL")
 	if cacheDefault == "" {
 		cacheDefault = "remote"
 	}
 
-	rootCmd.AddCommand(buildCmd)
-	buildCmd.Flags().StringP("cache", "c", cacheDefault, "Configures the caching behaviour: none=no caching, local=local caching only, remote-pull=download from remote but never upload, remote-push=push to remote cache only but don't download, remote=use all configured caches")
-	buildCmd.Flags().Bool("dry-run", false, "Don't actually build but stop after showing what would need to be built")
-	buildCmd.Flags().String("serve", "", "After a successful build this starts a webserver on the given address serving the build result (e.g. --serve localhost:8080)")
-	buildCmd.Flags().String("save", "", "After a successful build this saves the build result as tar.gz file in the local filesystem (e.g. --save build-result.tar.gz)")
-	buildCmd.Flags().String("dump-plan", "", "Writes the build plan as JSON to a file. Use \"-\" to write the build plan to stderr.")
-	buildCmd.Flags().Bool("werft", false, "Produce werft CI compatible output")
-	buildCmd.Flags().Bool("dont-test", false, "Disable all package-level tests (defaults to false)")
+	cmd.Flags().StringP("cache", "c", cacheDefault, "Configures the caching behaviour: none=no caching, local=local caching only, remote-pull=download from remote but never upload, remote-push=push to remote cache only but don't download, remote=use all configured caches")
+	cmd.Flags().Bool("dry-run", false, "Don't actually build but stop after showing what would need to be built")
+	cmd.Flags().String("dump-plan", "", "Writes the build plan as JSON to a file. Use \"-\" to write the build plan to stderr.")
+	cmd.Flags().Bool("werft", false, "Produce werft CI compatible output")
+	cmd.Flags().Bool("dont-test", false, "Disable all package-level tests (defaults to false)")
+}
+
+func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemCache) {
+	cm, _ := cmd.Flags().GetString("cache")
+	log.WithField("cacheMode", cm).Debug("configuring caches")
+	cacheLevel := leeway.CacheLevel(cm)
+
+	remoteCache := getRemoteCache()
+	switch cacheLevel {
+	case leeway.CacheNone, leeway.CacheLocal:
+		remoteCache = leeway.NoRemoteCache{}
+	case leeway.CacheRemotePull:
+		remoteCache = &pullOnlyRemoteCache{C: remoteCache}
+	case leeway.CacheRemotePush:
+		remoteCache = &pushOnlyRemoteCache{C: remoteCache}
+	case leeway.CacheRemote:
+	default:
+		log.Fatalf("invalid cache level: %s", cacheLevel)
+	}
+
+	var (
+		localCacheLoc string
+		err           error
+	)
+	if cacheLevel == leeway.CacheNone {
+		localCacheLoc, err = ioutil.TempDir("", "leeway")
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		localCacheLoc = os.Getenv(leeway.EnvvarCacheDir)
+		if localCacheLoc == "" {
+			localCacheLoc = filepath.Join(os.TempDir(), "cache")
+		}
+	}
+	log.WithField("location", localCacheLoc).Debug("set up local cache")
+	localCache, err := leeway.NewFilesystemCache(localCacheLoc)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	dryrun, err := cmd.Flags().GetBool("dry-run")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Debugf("this is leeway version %s", version)
+
+	var planOutlet io.Writer
+	if plan, _ := cmd.Flags().GetString("dump-plan"); plan != "" {
+		if plan == "-" {
+			planOutlet = os.Stderr
+		} else {
+			f, err := os.OpenFile(plan, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer f.Close()
+
+			planOutlet = f
+		}
+	}
+
+	werftlog, err := cmd.Flags().GetBool("werft")
+	if err != nil {
+		log.Fatal(err)
+	}
+	var reporter leeway.Reporter
+	if werftlog {
+		reporter = leeway.NewWerftReporter()
+	} else {
+		reporter = leeway.NewConsoleReporter()
+	}
+
+	dontTest, err := cmd.Flags().GetBool("dont-test")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return []leeway.BuildOption{
+		leeway.WithLocalCache(localCache),
+		leeway.WithRemoteCache(remoteCache),
+		leeway.WithDryRun(dryrun),
+		leeway.WithBuildPlan(planOutlet),
+		leeway.WithReporter(reporter),
+		leeway.WithDontTest(dontTest),
+	}, localCache
 }
 
 type pushOnlyRemoteCache struct {

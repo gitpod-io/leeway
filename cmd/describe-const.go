@@ -13,7 +13,7 @@ var describeConstCmd = &cobra.Command{
 	Use:   "const",
 	Short: "Prints the value of a component constant",
 	Run: func(cmd *cobra.Command, args []string) {
-		comp, _, exists := getTarget(args)
+		comp, _, _, exists := getTarget(args, false)
 		if !exists {
 			log.Fatal("const needs a component")
 		}

@@ -81,6 +81,10 @@ var buildProcessVersions = map[PackageType]int{
 }
 
 func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
+	if options.context != nil {
+		return options.context, nil
+	}
+
 	buildDir := os.Getenv(EnvvarBuildDir)
 	if buildDir == "" {
 		buildDir = filepath.Join(os.TempDir(), "build")
@@ -172,6 +176,8 @@ type buildOptions struct {
 	DryRun      bool
 	BuildPlan   io.Writer
 	DontTest    bool
+
+	context *buildContext
 }
 
 // BuildOption configures the build behaviour
@@ -225,9 +231,15 @@ func WithDontTest(dontTest bool) BuildOption {
 	}
 }
 
-// Build builds the packages in the order they're given. It's the callers responsibility to ensure the dependencies are built
-// in order.
-func Build(pkg *Package, opts ...BuildOption) (err error) {
+func withBuildContext(ctx *buildContext) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.context = ctx
+		opts.LocalCache = opts.context.LocalCache
+		return nil
+	}
+}
+
+func applyBuildOpts(opts []BuildOption) (buildOptions, error) {
 	options := buildOptions{
 		Reporter:    NewConsoleReporter(),
 		RemoteCache: &NoRemoteCache{},
@@ -236,13 +248,23 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	for _, opt := range opts {
 		err := opt(&options)
 		if err != nil {
-			return err
+			return options, err
 		}
 	}
 	if options.LocalCache == nil {
-		return xerrors.Errorf("cannot build without local cache. Use WithLocalCache() to configure one")
+		return options, xerrors.Errorf("cannot build without local cache. Use WithLocalCache() to configure one")
 	}
 
+	return options, nil
+}
+
+// Build builds the packages in the order they're given. It's the callers responsibility to ensure the dependencies are built
+// in order.
+func Build(pkg *Package, opts ...BuildOption) (err error) {
+	options, err := applyBuildOpts(opts)
+	if err != nil {
+		return err
+	}
 	ctx, err := newBuildContext(options)
 
 	requirements := pkg.GetTransitiveDependencies()
@@ -474,6 +496,13 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 		cpargs = append(cpargs, builddir)
 		err = run(buildctx.Reporter, p, nil, p.C.Origin, "cp", cpargs...)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(p.PreparationCommands) > 0 {
+		err = executeCommandsForPackage(buildctx, p, builddir, p.PreparationCommands)
 		if err != nil {
 			return err
 		}

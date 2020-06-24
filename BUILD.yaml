@@ -17,8 +17,17 @@ packages:
   - :helloworld
   argdeps:
   - version
+  prep:
+  - ["echo", "hello prep"]
   config:
     buildArgs:
     - -ldflags
     - -X main.version=${version}
     library: false
+scripts:
+- name: env
+  deps:
+  - :app
+  script: |
+    env
+    pwd
