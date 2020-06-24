@@ -5,7 +5,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"text/tabwriter"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -49,17 +48,17 @@ var describeCmd = &cobra.Command{
 
 		format, _ := cmd.Flags().GetString("format")
 		formatString, _ := cmd.Flags().GetString("formatString")
-		w := prettyprint.Writer{
+		w := &prettyprint.Writer{
 			Out:          os.Stdout,
 			Format:       prettyprint.Format(format),
 			FormatString: formatString,
 		}
 		if pkg != nil {
-			describePackage(&w, pkg)
+			describePackage(w, pkg)
 			return
 		}
 
-		describeComponent(comp)
+		describeComponent(w, comp)
 	},
 }
 
@@ -132,6 +131,20 @@ type packageMetadataDescription struct {
 	Emphemral bool   `json:"ephemeral" yaml:"ephemeral"`
 }
 
+func newMetadataDescription(pkg *leeway.Package) packageMetadataDescription {
+	version, err := pkg.Version()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return packageMetadataDescription{
+		Name:      pkg.Name,
+		FullName:  pkg.FullName(),
+		Version:   version,
+		Emphemral: pkg.Ephemeral,
+	}
+}
+
 type packageDescription struct {
 	Metadata     packageMetadataDescription   `json:"metadata" yaml:"metadata"`
 	Type         string                       `json:"type" yaml:"type"`
@@ -154,23 +167,10 @@ func describePackage(out *prettyprint.Writer, pkg *leeway.Package) {
 		segs := strings.Split(m, ":")
 		manifest[segs[0]] = segs[1]
 	}
-	version, err := pkg.Version()
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	deps := make([]packageMetadataDescription, len(pkg.Dependencies))
 	for i, dep := range pkg.GetDependencies() {
-		ver, err := dep.Version()
-		if err != nil {
-			log.Fatal(err)
-		}
-		deps[i] = packageMetadataDescription{
-			FullName:  dep.FullName(),
-			Name:      dep.Name,
-			Emphemral: dep.Ephemeral,
-			Version:   ver,
-		}
+		deps[i] = newMetadataDescription(dep)
 	}
 	sort.Slice(deps, func(i, j int) bool { return deps[i].FullName < deps[j].FullName })
 
@@ -206,12 +206,7 @@ func describePackage(out *prettyprint.Writer, pkg *leeway.Package) {
 	}
 
 	dp := packageDescription{
-		Metadata: packageMetadataDescription{
-			Name:      pkg.Name,
-			FullName:  pkg.FullName(),
-			Version:   version,
-			Emphemral: pkg.Ephemeral,
-		},
+		Metadata:     newMetadataDescription(pkg),
 		Type:         string(pkg.Type),
 		ArgDeps:      pkg.ArgumentDependencies,
 		Dependencies: deps,
@@ -254,67 +249,48 @@ Sources:
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// deps := make([]string, len(pkg.GetDependencies()))
-	// for i, dep := range pkg.GetDependencies() {
-	// 	version, _ := dep.Version()
-	// 	deps[i] = fmt.Sprintf("\t%s\t%s\n", dep.FullName(), version)
-	// }
-	// sort.Slice(deps, func(i, j int) bool { return deps[i] < deps[j] })
-
-	// w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	// defer w.Flush()
-
-	// fmt.Fprintf(w, "Name:\t%s\n", pkg.FullName())
-	// fmt.Fprintf(w, "Version:\t%s\t\n", version)
-	// if pkg.Ephemeral {
-	// 	fmt.Fprintf(w, "Ephemeral:\ttrue\t\n")
-	// }
-	// fmt.Fprintf(w, "Configuration:\n%s", describeConfig(pkg.Config, "\t"))
-	// if len(pkg.ArgumentDependencies) > 0 {
-	// 	fmt.Fprintf(w, "Version Relevant Arguments:\n")
-	// 	for _, argdep := range pkg.ArgumentDependencies {
-	// 		fmt.Fprintf(w, "\t%s\n", argdep)
-	// 	}
-	// }
-	// if len(pkg.Environment) > 0 {
-	// 	fmt.Fprintf(w, "Build Environment Variables:\n")
-	// 	for _, env := range pkg.Environment {
-	// 		fmt.Fprintf(w, "\t%s\n", env)
-	// 	}
-	// }
-	// if len(pkg.Dependencies) > 0 {
-	// 	fmt.Fprintf(w, "Dependencies:\n")
-	// 	for _, dep := range deps {
-	// 		fmt.Fprint(w, dep)
-	// 	}
-	// }
-	// if len(pkg.Sources) > 0 {
-	// 	fmt.Fprintf(w, "Sources:\n")
-	// 	for _, src := range manifest {
-	// 		segs := strings.Split(src, ":")
-	// 		name := segs[0]
-	// 		version := segs[1]
-	// 		fmt.Fprintf(w, "\t%s\t%s\n", name, version)
-	// 	}
-	// }
 }
 
-func describeComponent(comp leeway.Component) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	defer w.Flush()
-
-	fmt.Fprintf(w, "Name:\t%s\n", comp.Name)
-	fmt.Fprintf(w, "Origin:\t%s\n", comp.Origin)
-	if len(comp.Constants) > 0 {
-		fmt.Fprintf(w, "Constants:\t\n")
-		for k, v := range comp.Constants {
-			fmt.Fprintf(w, "\t%s:\t%s\n", k, v)
-		}
+func describeComponent(out *prettyprint.Writer, comp leeway.Component) {
+	type componentDescription struct {
+		Name      string                       `json:"name" yaml:"name"`
+		Origin    string                       `json:"origin" yaml:"origin"`
+		Constants map[string]string            `json:"contants,omitempty" yaml:"constants,omitempty"`
+		Packages  []packageMetadataDescription `json:"packages,omitempty" yaml:"packages,omitempty"`
 	}
-	fmt.Fprintf(w, "Packages:\t\n")
-	for _, pkg := range comp.Packages {
-		fmt.Fprintf(w, "\t%s\n", pkg.Name)
+
+	pkgs := make([]packageMetadataDescription, len(comp.Packages))
+	for i := range comp.Packages {
+		pkgs[i] = newMetadataDescription(comp.Packages[i])
+	}
+	desc := componentDescription{
+		Name:      comp.Name,
+		Origin:    comp.Origin,
+		Constants: comp.Constants,
+		Packages:  pkgs,
+	}
+
+	if out.Format == prettyprint.TemplateFormat && out.FormatString == "" {
+		out.FormatString = `Name:{{"\t"}}{{ .Name }}
+Origin:{{"\t"}}{{ .Origin }}
+{{ if .Constants -}}
+Constants:
+{{- range $k, $v := .Constants }}
+{{"\t"}}{{ $k }}: {{ $v -}}
+{{ end -}}
+{{ end }}
+{{ if .Packages -}}
+Packages:
+{{- range $k, $v := .Packages }}
+{{"\t"}}{{ $v.FullName }}{{"\t"}}{{ $v.Version -}}
+{{ end -}}
+{{ end }}
+`
+	}
+
+	err := out.Write(desc)
+	if err != nil {
+		log.Fatal(err)
 	}
 }
 
@@ -340,6 +316,6 @@ func describeConfig(cfg leeway.PackageConfig, indent string) string {
 func init() {
 	rootCmd.AddCommand(describeCmd)
 
-	describeCmd.Flags().StringP("format", "f", string(prettyprint.TemplateFormat), "the description format. Valid choices are: template, json or yaml")
-	describeCmd.Flags().String("format-string", "", "format string to use, e.g. the template")
+	describeCmd.Flags().StringP("format", "o", string(prettyprint.TemplateFormat), "the description format. Valid choices are: template, json or yaml")
+	describeCmd.Flags().StringP("format-string", "t", "", "format string to use, e.g. the template")
 }
