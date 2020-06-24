@@ -14,8 +14,9 @@ import (
 
 // collectCmd represents the collect command
 var collectCmd = &cobra.Command{
-	Use:   "collect",
+	Use:   "collect [packages|components|files]",
 	Short: "Collects all packages in a workspace",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		workspace, err := getWorkspace()
 		if err != nil {
@@ -23,7 +24,10 @@ var collectCmd = &cobra.Command{
 		}
 
 		nameOnly, _ := cmd.Flags().GetBool("name-only")
-		componentsOnly, _ := cmd.Flags().GetBool("components")
+		var tpe string
+		if len(args) > 0 {
+			tpe = args[0]
+		}
 
 		selectStr, _ := cmd.Flags().GetString("select")
 		var selector func(c leeway.Component) bool
@@ -51,7 +55,7 @@ var collectCmd = &cobra.Command{
 				continue
 			}
 
-			if componentsOnly {
+			if tpe == "component" {
 				res = append(res, comp.Name)
 				continue
 			}
@@ -60,6 +64,11 @@ var collectCmd = &cobra.Command{
 				version, err := pkg.Version()
 				if err != nil {
 					version = "ERROR: " + err.Error()
+				}
+
+				if tpe == "files" {
+					res = append(res, pkg.Sources...)
+					continue
 				}
 
 				if nameOnly {
@@ -85,6 +94,5 @@ func init() {
 	rootCmd.AddCommand(collectCmd)
 	// collectCmd.Flags().Bool("dot", false, "print dependency graph as Graphviz dot")
 	collectCmd.Flags().Bool("name-only", false, "Prints the package name only")
-	collectCmd.Flags().Bool("components", false, "Collect components rather than packages")
 	collectCmd.Flags().StringP("select", "l", "", "Filters packages by component constants (e.g. `-l foo` finds all packages whose components have a foo constant and `-l foo=bar` only prints packages whose components have a foo=bar constant)")
 }
