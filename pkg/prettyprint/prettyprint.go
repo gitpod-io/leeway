@@ -31,20 +31,15 @@ type Writer struct {
 
 // Write prints the input in the preconfigred way
 func (w *Writer) Write(in interface{}) error {
-	return Write(w.Out, in, w.Format, w.FormatString)
-}
-
-// Write prints an input value using the format to the writer
-func Write(out io.Writer, in interface{}, format Format, formatString string) error {
-	switch format {
+	switch w.Format {
 	case TemplateFormat:
-		return writeTemplate(out, in, formatString)
+		return writeTemplate(w.Out, in, w.FormatString)
 	case JSONFormat:
-		return json.NewEncoder(out).Encode(in)
+		return json.NewEncoder(w.Out).Encode(in)
 	case YAMLFormat:
-		return yaml.NewEncoder(out).Encode(in)
+		return yaml.NewEncoder(w.Out).Encode(in)
 	default:
-		return fmt.Errorf("unknown format: %s", format)
+		return fmt.Errorf("unknown format: %s", w.Format)
 	}
 }
 

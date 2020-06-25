@@ -31,11 +31,11 @@ type Workspace struct {
 	ArgumentDefaults map[string]string `yaml:"defaultArgs,omitempty"`
 	Variants         []*PackageVariant `yaml:"variants,omitempty"`
 
-	Origin          string               `yaml:"-"`
-	Components      map[string]Component `yaml:"-"`
-	Packages        map[string]*Package  `yaml:"-"`
-	Scripts         map[string]*Script   `yaml:"-"`
-	SelectedVariant *PackageVariant      `yaml:"-"`
+	Origin          string                `yaml:"-"`
+	Components      map[string]*Component `yaml:"-"`
+	Packages        map[string]*Package   `yaml:"-"`
+	Scripts         map[string]*Script    `yaml:"-"`
+	SelectedVariant *PackageVariant       `yaml:"-"`
 
 	ignores []string
 }
@@ -163,11 +163,11 @@ func FindWorkspace(path string, args Arguments, variant string) (Workspace, erro
 	if err != nil {
 		return workspace, err
 	}
-	workspace.Components = make(map[string]Component)
+	workspace.Components = make(map[string]*Component)
 	workspace.Packages = make(map[string]*Package)
 	workspace.Scripts = make(map[string]*Script)
 	for _, comp := range comps {
-		workspace.Components[comp.Name] = comp
+		workspace.Components[comp.Name] = &comp
 
 		for _, pkg := range comp.Packages {
 			workspace.Packages[pkg.FullName()] = pkg

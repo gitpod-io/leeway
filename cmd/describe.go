@@ -46,13 +46,7 @@ var describeCmd = &cobra.Command{
 			return
 		}
 
-		format, _ := cmd.Flags().GetString("format")
-		formatString, _ := cmd.Flags().GetString("formatString")
-		w := &prettyprint.Writer{
-			Out:          os.Stdout,
-			Format:       prettyprint.Format(format),
-			FormatString: formatString,
-		}
+		w := getWriterFromFlags(cmd)
 		if pkg != nil {
 			describePackage(w, pkg)
 			return
@@ -62,7 +56,7 @@ var describeCmd = &cobra.Command{
 	},
 }
 
-func getTarget(args []string, findScript bool) (comp leeway.Component, pkg *leeway.Package, script *leeway.Script, exists bool) {
+func getTarget(args []string, findScript bool) (comp *leeway.Component, pkg *leeway.Package, script *leeway.Script, exists bool) {
 	workspace, err := getWorkspace()
 	if err != nil {
 		log.Fatal(err)
@@ -164,9 +158,7 @@ type packageDescription struct {
 	Env          []string                     `json:"env,omitempty" yaml:"env,omitempty"`
 }
 
-type configDescription map[string]interface{}
-
-func describePackage(out *prettyprint.Writer, pkg *leeway.Package) {
+func newPackageDesription(pkg *leeway.Package) packageDescription {
 	mf, err := pkg.ContentManifest()
 	if err != nil {
 		log.Fatal(err)
@@ -214,7 +206,7 @@ func describePackage(out *prettyprint.Writer, pkg *leeway.Package) {
 		}
 	}
 
-	dp := packageDescription{
+	return packageDescription{
 		Metadata:     newMetadataDescription(pkg),
 		Type:         string(pkg.Type),
 		ArgDeps:      pkg.ArgumentDependencies,
@@ -223,7 +215,11 @@ func describePackage(out *prettyprint.Writer, pkg *leeway.Package) {
 		Manifest:     manifest,
 		Config:       cfg,
 	}
+}
 
+type configDescription map[string]interface{}
+
+func describePackage(out *prettyprint.Writer, pkg *leeway.Package) {
 	if out.Format == prettyprint.TemplateFormat && out.FormatString == "" {
 		out.FormatString = `Name:	{{ .Metadata.FullName }}
 Version:	{{ .Metadata.Version }}
@@ -254,31 +250,33 @@ Sources:
 `
 	}
 
-	err = out.Write(dp)
+	err := out.Write(newPackageDesription(pkg))
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func describeComponent(out *prettyprint.Writer, comp leeway.Component) {
-	type componentDescription struct {
-		Name      string                       `json:"name" yaml:"name"`
-		Origin    string                       `json:"origin" yaml:"origin"`
-		Constants map[string]string            `json:"contants,omitempty" yaml:"constants,omitempty"`
-		Packages  []packageMetadataDescription `json:"packages,omitempty" yaml:"packages,omitempty"`
-	}
+type componentDescription struct {
+	Name      string                       `json:"name" yaml:"name"`
+	Origin    string                       `json:"origin" yaml:"origin"`
+	Constants map[string]string            `json:"contants,omitempty" yaml:"constants,omitempty"`
+	Packages  []packageMetadataDescription `json:"packages,omitempty" yaml:"packages,omitempty"`
+}
 
+func newComponentDescription(comp *leeway.Component) componentDescription {
 	pkgs := make([]packageMetadataDescription, len(comp.Packages))
 	for i := range comp.Packages {
 		pkgs[i] = newMetadataDescription(comp.Packages[i])
 	}
-	desc := componentDescription{
+	return componentDescription{
 		Name:      comp.Name,
 		Origin:    comp.Origin,
 		Constants: comp.Constants,
 		Packages:  pkgs,
 	}
+}
 
+func describeComponent(out *prettyprint.Writer, comp *leeway.Component) {
 	if out.Format == prettyprint.TemplateFormat && out.FormatString == "" {
 		out.FormatString = `Name:{{"\t"}}{{ .Name }}
 Origin:{{"\t"}}{{ .Origin }}
@@ -297,6 +295,7 @@ Packages:
 `
 	}
 
+	desc := newComponentDescription(comp)
 	err := out.Write(desc)
 	if err != nil {
 		log.Fatal(err)
@@ -322,9 +321,56 @@ func describeConfig(cfg leeway.PackageConfig, indent string) string {
 	return res
 }
 
+type scriptDescription struct {
+	Name            string                       `json:"name" yaml:"name"`
+	FullName        string                       `json:"fullName" yaml:"fullName"`
+	Description     string                       `json:"description,omitempty" json:"description,omitempty"`
+	FullDescription string                       `json:"fullDescription,omitempty" yaml:"fullDescription,omitempty"`
+	Env             []string                     `json:"env,omitempty" yaml:"env,omitempty"`
+	Dependencies    []packageMetadataDescription `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
+	WorkdirLayout   string                       `json:"workdirLayout" yaml:"workdirLayout"`
+	Type            string                       `json:"type" yaml:"type"`
+}
+
+func newScriptDescription(s *leeway.Script) scriptDescription {
+	deps := make([]packageMetadataDescription, len(s.Dependencies))
+	for i, d := range s.GetDependencies() {
+		deps[i] = newMetadataDescription(d)
+	}
+
+	desc := strings.ReplaceAll(s.Description, "\n", " ")
+	if len(desc) > 80 {
+		desc = desc[:80] + " ..."
+	}
+
+	return scriptDescription{
+		Name:            s.Name,
+		FullName:        s.FullName(),
+		Description:     desc,
+		FullDescription: s.Description,
+		Dependencies:    deps,
+		Env:             s.Environment,
+		WorkdirLayout:   string(s.WorkdirLayout),
+		Type:            string(s.Type),
+	}
+}
+
 func init() {
 	rootCmd.AddCommand(describeCmd)
+	addFormatFlags(describeCmd)
+}
 
-	describeCmd.Flags().StringP("format", "o", string(prettyprint.TemplateFormat), "the description format. Valid choices are: template, json or yaml")
-	describeCmd.Flags().StringP("format-string", "t", "", "format string to use, e.g. the template")
+func addFormatFlags(cmd *cobra.Command) {
+	cmd.Flags().StringP("format", "o", string(prettyprint.TemplateFormat), "the description format. Valid choices are: template, json or yaml")
+	cmd.Flags().StringP("format-string", "t", "", "format string to use, e.g. the template")
+}
+
+func getWriterFromFlags(cmd *cobra.Command) *prettyprint.Writer {
+	format, _ := cmd.Flags().GetString("format")
+	formatString, _ := cmd.Flags().GetString("formatString")
+	return &prettyprint.Writer{
+		Out:          os.Stdout,
+		Format:       prettyprint.Format(format),
+		FormatString: formatString,
+	}
 }

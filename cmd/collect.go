@@ -1,20 +1,24 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
 	"sort"
 	"strings"
-	"text/tabwriter"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/typefox/leeway/pkg/prettyprint"
 )
+
+type fileDescription struct {
+	Name    string `json:"name" yaml:"name"`
+	Version string `json:"version" yaml:"version"`
+	Package string `json:"package" yaml:"package"`
+}
 
 // collectCmd represents the collect command
 var collectCmd = &cobra.Command{
-	Use:   "collect [packages|components|files]",
+	Use:   "collect [components|packages|scripts|files]",
 	Short: "Collects all packages in a workspace",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -23,76 +27,121 @@ var collectCmd = &cobra.Command{
 			log.Fatal(err)
 		}
 
-		nameOnly, _ := cmd.Flags().GetBool("name-only")
 		var tpe string
-		if len(args) > 0 {
+		if len(args) == 0 {
+			tpe = "packages"
+		} else {
 			tpe = args[0]
 		}
 
 		selectStr, _ := cmd.Flags().GetString("select")
-		var selector func(c leeway.Component) bool
+		var selector func(c *leeway.Component) bool
 		segs := strings.Split(selectStr, "=")
 		if len(selectStr) == 0 {
-			selector = func(c leeway.Component) bool {
+			selector = func(c *leeway.Component) bool {
 				return true
 			}
 		} else if len(segs) == 1 {
-			selector = func(c leeway.Component) bool {
+			selector = func(c *leeway.Component) bool {
 				_, ok := c.Constants[segs[0]]
 				return ok
 			}
 		} else if len(segs) == 2 {
-			selector = func(c leeway.Component) bool {
+			selector = func(c *leeway.Component) bool {
 				return c.Constants[segs[0]] == segs[1]
 			}
 		} else {
 			log.Fatal("selector must either be a constant name or const=value")
 		}
 
-		var res []string
-		for _, comp := range workspace.Components {
-			if !selector(comp) {
-				continue
+		w := getWriterFromFlags(cmd)
+		switch tpe {
+		case "components":
+			if w.Format == prettyprint.TemplateFormat && w.FormatString == "" {
+				w.FormatString = `{{ range . }}{{ .Name }}{{"\n"}}{{ end }}`
 			}
-
-			if tpe == "component" {
-				res = append(res, comp.Name)
-				continue
+			decs := make([]componentDescription, 0, len(workspace.Components))
+			for _, comp := range workspace.Components {
+				if !selector(comp) {
+					continue
+				}
+				decs = append(decs, newComponentDescription(comp))
 			}
+			sort.Slice(decs, func(i, j int) bool { return decs[i].Name < decs[j].Name })
+			err = w.Write(decs)
+			if err != nil {
+				log.Fatal(err)
+			}
+		case "packages":
+			if w.Format == prettyprint.TemplateFormat && w.FormatString == "" {
+				w.FormatString = `{{ range . }}{{ .Metadata.FullName }}{{"\t"}}{{ .Metadata.Version }}{{"\n"}}{{ end }}`
+			}
+			decs := make([]packageDescription, 0, len(workspace.Packages))
+			for _, pkg := range workspace.Packages {
+				if !selector(pkg.C) {
+					continue
+				}
 
-			for _, pkg := range comp.Packages {
-				version, err := pkg.Version()
+				decs = append(decs, newPackageDesription(pkg))
+			}
+			sort.Slice(decs, func(i, j int) bool { return decs[i].Metadata.FullName < decs[j].Metadata.FullName })
+			err = w.Write(decs)
+			if err != nil {
+				log.Fatal(err)
+			}
+		case "scripts":
+			if w.Format == prettyprint.TemplateFormat && w.FormatString == "" {
+				w.FormatString = `{{ range . }}{{ .FullName }}{{ if .Description }}{{"\t"}}{{ .Description }}{{ end }}{{"\n"}}{{ end }}`
+			}
+			decs := make([]scriptDescription, 0, len(workspace.Scripts))
+			for _, scr := range workspace.Scripts {
+				if !selector(scr.C) {
+					continue
+				}
+
+				decs = append(decs, newScriptDescription(scr))
+			}
+			sort.Slice(decs, func(i, j int) bool { return decs[i].FullName < decs[j].FullName })
+			err = w.Write(decs)
+			if err != nil {
+				log.Fatal(err)
+			}
+		case "files":
+			if w.Format == prettyprint.TemplateFormat && w.FormatString == "" {
+				w.FormatString = `{{ range . }}{{ .Name }}{{"\t"}}{{ .Version }}{{"\n"}}{{ end }}`
+			}
+			decs := make([]fileDescription, 0, len(workspace.Packages))
+			for _, pkg := range workspace.Packages {
+				if !selector(pkg.C) {
+					continue
+				}
+
+				pkgn := pkg.FullName()
+				mf, err := pkg.ContentManifest()
 				if err != nil {
-					version = "ERROR: " + err.Error()
+					log.Fatal(err)
+				}
+				fs := make([]fileDescription, len(mf))
+				for i, f := range mf {
+					segs := strings.Split(f, ":")
+					fs[i] = fileDescription{Name: segs[0], Version: segs[1], Package: pkgn}
 				}
 
-				if tpe == "files" {
-					res = append(res, pkg.Sources...)
-					continue
-				}
-
-				if nameOnly {
-					res = append(res, pkg.FullName())
-					continue
-				}
-
-				res = append(res, fmt.Sprintf("%s\t%s", pkg.FullName(), version))
+				decs = append(decs, fs...)
+			}
+			sort.Slice(decs, func(i, j int) bool { return decs[i].Name < decs[j].Name })
+			err = w.Write(decs)
+			if err != nil {
+				log.Fatal(err)
 			}
 		}
-
-		sort.Slice(res, func(i, j int) bool { return res[i] < res[j] })
-
-		tw := tabwriter.NewWriter(os.Stdout, 1, 8, 2, ' ', 0)
-		for _, pkg := range res {
-			fmt.Fprintln(tw, pkg)
-		}
-		tw.Flush()
+		return
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(collectCmd)
-	// collectCmd.Flags().Bool("dot", false, "print dependency graph as Graphviz dot")
-	collectCmd.Flags().Bool("name-only", false, "Prints the package name only")
 	collectCmd.Flags().StringP("select", "l", "", "Filters packages by component constants (e.g. `-l foo` finds all packages whose components have a foo constant and `-l foo=bar` only prints packages whose components have a foo=bar constant)")
+
+	addFormatFlags(collectCmd)
 }

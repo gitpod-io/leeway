@@ -38,6 +38,7 @@ type Script struct {
 	C *Component
 
 	Name          string        `yaml:"name"`
+	Description   string        `yaml:"description"`
 	Dependencies  []string      `yaml:"deps"`
 	Environment   []string      `yaml:"env"`
 	WorkdirLayout WorkdirLayout `yaml:"workdir"`

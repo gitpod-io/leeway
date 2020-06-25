@@ -1,11 +1,9 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
-
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/typefox/leeway/pkg/prettyprint"
 )
 
 // describeConstCmd represents the describeTree command
@@ -13,30 +11,33 @@ var describeConstCmd = &cobra.Command{
 	Use:   "const",
 	Short: "Prints the value of a component constant",
 	Run: func(cmd *cobra.Command, args []string) {
-		comp, _, _, exists := getTarget(args, false)
+		comp, pkg, _, exists := getTarget(args, false)
 		if !exists {
 			log.Fatal("const needs a component")
 		}
-
-		sp, _ := cmd.Flags().GetString("constant")
-		if sp != "" {
-			val, ok := comp.Constants[sp]
-			if !ok {
-				os.Exit(1)
-			}
-
-			fmt.Println(val)
-			os.Exit(0)
+		if comp == nil && pkg != nil {
+			comp = pkg.C
 		}
 
+		type constDesc struct {
+			Name  string `json:"name" yaml:"name"`
+			Value string `json:"value" yaml:"value"`
+		}
+
+		w := getWriterFromFlags(cmd)
+		if w.Format == prettyprint.TemplateFormat && w.FormatString == "" {
+			w.FormatString = `{{ range . }}{{ .Name }}:{{"\t"}}{{ .Value }}{{"\n"}}{{ end }}`
+		}
+
+		desc := make([]constDesc, 0, len(comp.Constants))
 		for k, v := range comp.Constants {
-			fmt.Printf("%s=%s\n", k, v)
+			desc = append(desc, constDesc{Name: k, Value: v})
 		}
+		w.Write(desc)
 	},
 }
 
 func init() {
 	describeCmd.AddCommand(describeConstCmd)
-
-	describeConstCmd.Flags().StringP("constant", "n", "", "Name of the constant whose value to print")
+	addFormatFlags(describeConstCmd)
 }
