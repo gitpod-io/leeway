@@ -25,6 +25,6 @@ var runCmd = &cobra.Command{
 }
 
 func init() {
-	addExperimentalCommand(rootCmd, runCmd)
+	rootCmd.AddCommand(runCmd)
 	addBuildFlags(runCmd)
 }
