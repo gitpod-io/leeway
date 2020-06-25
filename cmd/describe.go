@@ -367,7 +367,7 @@ func addFormatFlags(cmd *cobra.Command) {
 
 func getWriterFromFlags(cmd *cobra.Command) *prettyprint.Writer {
 	format, _ := cmd.Flags().GetString("format")
-	formatString, _ := cmd.Flags().GetString("formatString")
+	formatString, _ := cmd.Flags().GetString("format-string")
 	return &prettyprint.Writer{
 		Out:          os.Stdout,
 		Format:       prettyprint.Format(format),
