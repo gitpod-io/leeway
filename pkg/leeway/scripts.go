@@ -105,9 +105,14 @@ func (p *Script) Run(opts ...BuildOption) error {
 		}
 	}
 
-	tdir, paths, err := p.synthesizePackagesWorkdir(buildCtx)
+	tdir, deplocs, err := p.synthesizePackagesWorkdir(buildCtx)
 	if err != nil {
 		return err
+	}
+
+	paths := make([]string, 0, len(deplocs))
+	for _, pth := range deplocs {
+		paths = append(paths, pth)
 	}
 
 	var wd string
@@ -139,6 +144,9 @@ func (p *Script) Run(opts ...BuildOption) error {
 	if !pa {
 		env = append(env, fmt.Sprintf("PATH=%s", strings.Join(paths, ":")))
 	}
+	for n, pth := range deplocs {
+		env = append(env, fmt.Sprintf("%s=%s", strings.ToUpper(n), pth))
+	}
 
 	// execute script
 	switch p.Type {
@@ -151,14 +159,14 @@ func (p *Script) Run(opts ...BuildOption) error {
 	return nil
 }
 
-func (p *Script) synthesizePackagesWorkdir(buildCtx *buildContext) (path string, bins []string, err error) {
+func (p *Script) synthesizePackagesWorkdir(buildCtx *buildContext) (path string, bins map[string]string, err error) {
 	path, err = ioutil.TempDir(buildCtx.buildDir, fmt.Sprintf("script-%s-*", p.FilesystemSafeName()))
 	if err != nil {
 		return
 	}
 
-	bins = make([]string, len(p.dependencies))
-	for i, dep := range p.dependencies {
+	bins = make(map[string]string, len(p.dependencies))
+	for _, dep := range p.dependencies {
 		br, exists := buildCtx.LocalCache.Location(dep)
 		if !exists {
 			err = xerrors.Errorf("dependency %s is not built", dep.FullName())
@@ -180,7 +188,7 @@ func (p *Script) synthesizePackagesWorkdir(buildCtx *buildContext) (path string,
 			return
 		}
 
-		bins[i] = loc
+		bins[dep.FilesystemSafeName()] = loc
 	}
 
 	return
