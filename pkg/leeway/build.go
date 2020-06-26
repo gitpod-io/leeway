@@ -501,13 +501,6 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
-	if len(p.PreparationCommands) > 0 {
-		err = executeCommandsForPackage(buildctx, p, builddir, p.PreparationCommands)
-		if err != nil {
-			return err
-		}
-	}
-
 	result, _ := buildctx.LocalCache.Location(p)
 
 	switch p.Type {
@@ -703,6 +696,10 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		return xerrors.Errorf("name or version in package.json must not be empty")
 	}
 
+	// At this point we have all dependencies in place, a the correct package.json,
+	// and we're just short of running yarn install. Good point to do other prep work.
+	commands = append(commands, p.PreparationCommands...)
+
 	// The yarn cache cannot handly conccurency proplery and needs to be looked.
 	// Make sure that all our yarn install calls lock the yarn cache.
 	yarnMutex := os.Getenv(EnvvarYarnMutex)
@@ -816,6 +813,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("go mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2)=./%s", tgt, tgt)})
 		}
 	}
+	commands = append(commands, p.PreparationCommands...)
 	commands = append(commands, []string{"go", "get", "-v", "./..."})
 	if cfg.Generate {
 		commands = append(commands, []string{"go", "generate", "-v", "./..."})
@@ -874,6 +872,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 			{"tar", "xfz", fn, "-C", tgt},
 		}...)
 	}
+
+	commands = append(commands, p.PreparationCommands...)
 
 	version, err := p.Version()
 	if err != nil {
@@ -945,6 +945,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 		}...)
 	}
 
+	commands = append(commands, p.PreparationCommands...)
 	commands = append(commands, cfg.Commands...)
 	commands = append(commands, []string{"tar", "cfz", result, "."})
 
