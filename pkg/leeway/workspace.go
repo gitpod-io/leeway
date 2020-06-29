@@ -49,10 +49,6 @@ func (ws *Workspace) ShouldIngoreSource(path string) bool {
 
 // FindNestedWorkspaces loads nested workspaces
 func FindNestedWorkspaces(path string, args Arguments, variant string) (res Workspace, err error) {
-	abspath, err := filepath.Abs(path)
-	if err != nil {
-		return
-	}
 	wss, err := doublestar.Glob(filepath.Join(path, "**/WORKSPACE.yaml"))
 	if err != nil {
 		return
@@ -87,19 +83,6 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 					}
 				}
 			},
-			IgnoreComponent: func(ws *Workspace, cpath string) bool {
-				relativeOrigin := strings.TrimSuffix(filepathTrimPrefix(cpath, abspath), "/BUILD.yaml")
-				wspathRelativeOrigin := filepath.Join(wspath, relativeOrigin)
-
-				for lwsOrigin := range loadedWorkspaces {
-					if strings.HasPrefix(wspathRelativeOrigin, lwsOrigin) {
-						log.WithField("wspathRelativeOrigin", wspathRelativeOrigin).WithField("lws", loadedWorkspaces).Debug("ignoring component")
-						return true
-					}
-				}
-
-				return false
-			},
 		})
 		if err != nil {
 			return res, err
@@ -130,7 +113,6 @@ func filepathTrimPrefix(path, prefix string) string {
 
 type loadWorkspaceOpts struct {
 	PrelinkModifier func(map[string]*Package)
-	IgnoreComponent func(ws *Workspace, path string) bool
 }
 
 func loadWorkspace(path string, args Arguments, variant string, opts *loadWorkspaceOpts) (Workspace, error) {
@@ -167,7 +149,19 @@ func loadWorkspace(path string, args Arguments, variant string, opts *loadWorksp
 		}
 		ignores = strings.Split(string(fc), "\n")
 	}
+	otherWS, err := doublestar.Glob("**/WORKSPACE.yaml")
+	if err != nil {
+		return Workspace{}, err
+	}
+	for _, ows := range otherWS {
+		if ows == root {
+			continue
+		}
+
+		ignores = append(ignores, filepath.Join(workspace.Origin, strings.TrimSuffix(ows, "/WORKSPACE.yaml")))
+	}
 	workspace.ignores = ignores
+	log.WithField("ingores", workspace.ignores).Debug("computed workspace ignores")
 
 	log.WithField("defaultArgs", workspace.ArgumentDefaults).Debug("applying workspace defaults")
 	for key, val := range workspace.ArgumentDefaults {
@@ -246,9 +240,6 @@ func discoverComponents(workspace *Workspace, args Arguments, variant *PackageVa
 	var comps []*Component
 	for _, pth := range pths {
 		if workspace.ShouldIngoreComponent(pth) {
-			continue
-		}
-		if opts != nil && opts.IgnoreComponent != nil && opts.IgnoreComponent(workspace, pth) {
 			continue
 		}
 
