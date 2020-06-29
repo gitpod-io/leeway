@@ -61,12 +61,13 @@ func TestWorkingDirLayout(t *testing.T) {
 }
 
 type CommandFixtureTest struct {
-	Name      string
-	T         *testing.T
-	Args      []string
-	ExitCode  int
-	StdoutSub string
-	StderrSub string
+	Name              string
+	T                 *testing.T
+	Args              []string
+	ExitCode          int
+	NoNestedWorkspace bool
+	StdoutSub         string
+	StderrSub         string
 }
 
 // Run executes the fixture test - do not forget to call this one
@@ -89,6 +90,11 @@ func (ft *CommandFixtureTest) Run() {
 		cmd.Stdout = sout
 		cmd.Stderr = serr
 		cmd.Dir = "../../"
+		if !ft.NoNestedWorkspace {
+			env := os.Environ()
+			env = append(env, "LEEWAY_NESTED_WORKSPACE=true")
+			cmd.Env = env
+		}
 		err = cmd.Run()
 
 		var exitCode int

@@ -124,6 +124,10 @@ func getWorkspace() (leeway.Workspace, error) {
 		return leeway.Workspace{}, err
 	}
 
+	if os.Getenv("LEEWAY_NESTED_WORKSPACE") != "" {
+		return leeway.FindNestedWorkspaces(workspace, args, variant)
+	}
+
 	return leeway.FindWorkspace(workspace, args, variant)
 }
 

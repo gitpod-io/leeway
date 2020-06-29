@@ -12,7 +12,7 @@
       "env": {
           "LEEWAY_EXPERIMENTAL": "true"
       },
-      "args": ["run", "//:hello"]
+      "args": ["collect"]
     }
   ]
 }
