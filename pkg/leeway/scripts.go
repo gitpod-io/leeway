@@ -89,6 +89,19 @@ func (p *Script) Run(opts ...BuildOption) error {
 	}
 	buildCtx, err := newBuildContext(options)
 
+	unresolvedArgs, err := findUnresolvedArgumentsInScript(p)
+	if err != nil {
+		return err
+	}
+	if len(unresolvedArgs) != 0 {
+		var msg string
+		for _, arg := range unresolvedArgs {
+			cleanArg := strings.TrimSuffix(strings.TrimPrefix(arg, "${"), "}")
+			msg += fmt.Sprintf("cannot run script with unresolved argument \"%s\": use -D%s=value to set the argument\n\n", arg, cleanArg)
+		}
+		return xerrors.Errorf(msg)
+	}
+
 	if len(p.dependencies) > 0 {
 		err = Build(&Package{
 			C:            p.C,
@@ -158,6 +171,21 @@ func (p *Script) Run(opts ...BuildOption) error {
 	}
 
 	return nil
+}
+
+// FindUnresolvedArguments finds any still unresolved build arguments in a set of packages
+func findUnresolvedArgumentsInScript(script *Script) ([]string, error) {
+	args := buildArgRegexp.FindAll([]byte(script.Script), -1)
+	vars := make(map[string]struct{}, len(args))
+	for _, arg := range args {
+		vars[string(arg)] = struct{}{}
+	}
+
+	var res []string
+	for v := range vars {
+		res = append(res, v)
+	}
+	return res, nil
 }
 
 func (p *Script) synthesizePackagesWorkdir(buildCtx *buildContext) (path string, bins map[string]string, err error) {

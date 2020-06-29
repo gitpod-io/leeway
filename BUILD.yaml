@@ -24,17 +24,3 @@ packages:
     - -ldflags
     - -X main.version=${version}
     library: false
-scripts:
-- name: env
-  description: prints the environment variables of the script execution context
-  deps:
-  - :app
-  script: |
-    env
-- name: pwd
-  description: prints the current working directory of the script
-  workingdirLayout: packages
-  deps:
-  - :app
-  script: |
-    pwd

@@ -1,0 +1,25 @@
+scripts:
+- name: env
+  description: prints the environment variables of the script execution context
+  deps:
+  - fixtures/pkgs/generic:something
+  script: |
+    env
+- name: pwd-origin
+  workingdirLayout: origin
+  deps:
+  - fixtures/pkgs/generic:something
+  script: |
+    pwd
+    find .
+- name: pwd-packages
+  workingdirLayout: packages
+  deps:
+  - fixtures/pkgs/generic:something
+  script: |
+    pwd
+    find .
+- name: echo
+  description: echos an argument
+  script: |
+    echo ${msg}

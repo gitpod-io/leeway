@@ -115,6 +115,7 @@ func init() {
 	rootCmd.PersistentFlags().StringArrayVarP(&buildArgs, "build-arg", "D", []string{}, "pass arguments to BUILD files")
 	rootCmd.PersistentFlags().StringVar(&variant, "variant", "", "selects a package variant")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enables verbose logging")
+	rootCmd.PersistentFlags().Bool("dut", false, "used for testing only - doesn't actually do anything")
 }
 
 func getWorkspace() (leeway.Workspace, error) {
