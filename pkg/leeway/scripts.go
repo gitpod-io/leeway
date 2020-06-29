@@ -240,7 +240,7 @@ func executeBashScript(script string, wd string, env []string) error {
 	}
 	f.Close()
 
-	log.WithField("env", env).Debug("running bash script")
+	log.WithField("env", env).WithField("wd", wd).Debug("running bash script")
 
 	cmd := exec.Command("bash", f.Name())
 	cmd.Env = env

@@ -35,6 +35,31 @@ func TestScriptArgs(t *testing.T) {
 	}
 }
 
+func TestWorkingDirLayout(t *testing.T) {
+	tests := []*CommandFixtureTest{
+		{
+			Name:     "origin",
+			T:        t,
+			Args:     []string{"run", "fixtures/scripts:pwd-origin"},
+			ExitCode: 0,
+			StdoutSub: `.
+./BUILD.yaml`,
+		},
+		{
+			Name:     "packages",
+			T:        t,
+			Args:     []string{"run", "fixtures/scripts:pwd-packages"},
+			ExitCode: 0,
+			StdoutSub: `.
+./fixtures-pkgs-generic--something`,
+		},
+	}
+
+	for _, test := range tests {
+		test.Run()
+	}
+}
+
 type CommandFixtureTest struct {
 	Name      string
 	T         *testing.T
