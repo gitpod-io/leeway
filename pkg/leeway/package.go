@@ -14,7 +14,7 @@ import (
 	"github.com/bmatcuk/doublestar"
 	"github.com/minio/highwayhash"
 	"golang.org/x/xerrors"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 // Arguments can be passed to components/packages introducing variation points
@@ -131,6 +131,8 @@ type Package struct {
 
 	packageInternal
 	Config PackageConfig `yaml:"config"`
+	// Definition is the raw package definition YAML
+	Definition []byte `yaml:"-"`
 
 	dependencies []*Package
 }
@@ -196,7 +198,7 @@ func (p *Package) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	*p = Package{packageInternal: tpe}
 
-	var buf yaml.MapSlice
+	var buf yaml.Node
 	err = unmarshal(&buf)
 	if err != nil {
 		return err
@@ -423,8 +425,8 @@ type packageVariantInternal struct {
 		Include []string `yaml:"include"`
 		Exclude []string `yaml:"exclude"`
 	} `yaml:"srcs"`
-	Environment []string                      `yaml:"env"`
-	RawConfig   map[PackageType]yaml.MapSlice `yaml:"config"`
+	Environment []string                  `yaml:"env"`
+	RawConfig   map[PackageType]yaml.Node `yaml:"config"`
 }
 
 // PackageVariant provides a variation point for a package's sources,
@@ -445,7 +447,7 @@ func (v *PackageVariant) UnmarshalYAML(unmarshal func(interface{}) error) error 
 
 	config := make(map[PackageType]PackageConfig)
 	for k, rc := range vi.RawConfig {
-		b, err := yaml.Marshal(rc)
+		b, err := yaml.Marshal(&rc)
 		if err != nil {
 			return err
 		}
@@ -626,6 +628,26 @@ func (p *Package) resolveBuiltinVariables() error {
 	return nil
 }
 
+// DefinitionHash hashes the package definition
+func (p *Package) DefinitionHash() (string, error) {
+	key, err := hex.DecodeString(contentHashKey)
+	if err != nil {
+		return "", err
+	}
+
+	hash, err := highwayhash.New(key)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = hash.Write(p.Definition)
+	if err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 // ContentManifest produces an ordered list of content hashes (<filename>:<hash>) for each source file.
 // Expects the sources to be resolved.
 func (p *Package) ContentManifest() ([]string, error) {
@@ -682,12 +704,20 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 		return xerrors.Errorf("package is not linked")
 	}
 
+	defhash, err := p.DefinitionHash()
+	if err != nil {
+		return err
+	}
 	manifest, err := p.ContentManifest()
 	if err != nil {
 		return err
 	}
 
 	_, err = fmt.Fprintf(out, "buildProcessVersion: %d\n", buildProcessVersions[p.Type])
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "definition: %s\n", defhash)
 	if err != nil {
 		return err
 	}
