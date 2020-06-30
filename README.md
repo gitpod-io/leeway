@@ -46,6 +46,8 @@ const:
   someRandomProperty: value
 packages:
 - ...
+scripts:
+- ...
 ```
 
 ## Package
@@ -73,6 +75,42 @@ env:
 # Config configures the package build depending on the package type. See below for details
 config:
   ...
+```
+
+## Script
+Scripts are a great way to automate tasks during development time (think [`yarn scripts`](https://classic.yarnpkg.com/en/docs/package-json#toc-scripts)).
+Unlike packages they do not run in isolation by default, but have access to the original workspace.
+What makes scripts special is that they can dependent on packages which become available to a script in the PATH and as environment variables.
+
+Under the `scripts` key in the component's `BUILD.yaml` add:
+```YAML
+# name is the component-wide unique name of script. Packages and scripts do NOT share a namespace.
+# You can have a package called foo and a script called foo within the same component.
+name: some-script-name
+# description provides a short synopsis of the script. Shown when running `leeway collect scripts`.
+description: A sentence describing what the script is good for.
+# Deps list dependencies to packages (NOT scripts) which must be built prior to running this script.
+# All built dependencies get added to the PATH environment variable. This is handy if your workspace
+# contains tools you want to use in a script.
+deps:
+- some/other:package
+# Env sets environment variables which are present during script execution.
+env:
+- MESSAGE=hello
+# Workdir changes the workdir location/layout of working dir of the script. The following choices are available:
+# - origin (default): execute the script in the directory of the containing component in the original workspace.
+#                     This is the default mode and handy if one wants to automate tasks in the development workspace.
+# - packages:         produces a filesystem layout much like during a generic package build where all deps are
+#                     found by their name in a temporary directory. This provides some isolation from the original
+#                     workspace, while giving full access to the built dependencies.
+workdir: origin
+# The actual script. For now, only bash scripts are supported. The shebang is added automatically.
+scrip: |
+  echo $MESSAGE, this is where the script goes
+  if [ "A$(ps -o comm= -p $$)" = "Abash" ]; then
+    echo "it's the bash alright"
+  fi
+  echo "build args work to: ${myBuildArg}"
 ```
 
 ### Build arguments
@@ -153,6 +191,7 @@ variables have an effect on leeway:
 - `LEEWAY_BUILD_DIR`: Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O which makes it advisable to place this on a fast SSD or in RAM.
 - `LEEWAY_YARN_MUTEX`: Configures the mutex flag leeway will pass to yarn. Defaults to "network". See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
 - `LEEWAY_EXPERIMENTAL`: Enables exprimental features
+- `LEEWAY_NESTED_WORKSPACE`: Enables nested workspaces. By default leeway ignores everything below another `WORKSPACE.yaml`, but if this env var is set leeway will try and link packages from the other workspace as if they were part of the parent one. This does not work for scripts yet.
 
 # Debugging
 When a build fails, or to get an idea of how leeway assembles dependencies, run your build with `leeway build -c local` (local cache only) and inspect your `$LEEWAY_BUILD_DIR`.
