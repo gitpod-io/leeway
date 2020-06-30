@@ -210,6 +210,50 @@ func TestPackageDefinition(t *testing.T) {
 				},
 			},
 		},
+		{
+			Name: "build args dont change version",
+			Layouts: []map[string]string{
+				{
+					"WORKSPACE.yaml":  "",
+					"pkg1/BUILD.yaml": "packages:\n- name: foo\n  type: generic\n  srcs:\n  - \"doesNotExist\"\n  config:\n    commands:\n    - [\"echo\", \"${msg}\"]",
+				},
+				{},
+			},
+			Tester: []func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest{
+				func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest {
+					return &CommandFixtureTest{
+						T:    t,
+						Args: []string{"describe", "-Dmsg=foo", "-w", loc, "-o", "json", "pkg1:foo"},
+						Eval: func(t *testing.T, stdout, stderr string) {
+							var dest pkginfo
+							err := json.Unmarshal([]byte(stdout), &dest)
+							if err != nil {
+								fmt.Println(stdout)
+								t.Fatal(err)
+							}
+							state["v"] = dest.Metadata.Version
+						},
+					}
+				},
+				func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest {
+					return &CommandFixtureTest{
+						T:    t,
+						Args: []string{"describe", "-Dmsg=bar", "-w", loc, "-o", "json", "pkg1:foo"},
+						Eval: func(t *testing.T, stdout, stderr string) {
+							var dest pkginfo
+							err := json.Unmarshal([]byte(stdout), &dest)
+							if err != nil {
+								fmt.Println(stdout)
+								t.Fatal(err)
+							}
+							if state["v"] != dest.Metadata.Version {
+								t.Errorf("build arg did change version")
+							}
+						},
+					}
+				},
+			},
+		},
 	}
 
 	for _, test := range tests {

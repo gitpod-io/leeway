@@ -295,7 +295,7 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant *P
 	if err != nil {
 		return comp, err
 	}
-	err = yaml.Unmarshal(rfc, &rawcomp)
+	err = yaml.Unmarshal(fc, &rawcomp)
 	if err != nil {
 		return comp, err
 	}
