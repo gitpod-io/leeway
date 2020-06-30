@@ -10,9 +10,10 @@
       "mode": "auto",
       "program": "${workspaceFolder}/main.go",
       "env": {
-          "LEEWAY_EXPERIMENTAL": "true"
+          "LEEWAY_EXPERIMENTAL": "true",
+          "LEEWAY_IGNORE_NESTED_WORKSPACES": "true",
       },
-      "args": ["collect"]
+      "args": ["collect", "-w", "fixtures/nested-ws"]
     }
   ]
 }

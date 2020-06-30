@@ -149,16 +149,17 @@ func loadWorkspace(path string, args Arguments, variant string, opts *loadWorksp
 		}
 		ignores = strings.Split(string(fc), "\n")
 	}
-	otherWS, err := doublestar.Glob("**/WORKSPACE.yaml")
+	otherWS, err := doublestar.Glob(filepath.Join(workspace.Origin, "**/WORKSPACE.yaml"))
 	if err != nil {
 		return Workspace{}, err
 	}
 	for _, ows := range otherWS {
-		if ows == root {
+		dir := filepath.Dir(ows)
+		if dir == workspace.Origin {
 			continue
 		}
 
-		ignores = append(ignores, filepath.Join(workspace.Origin, strings.TrimSuffix(ows, "/WORKSPACE.yaml")))
+		ignores = append(ignores, dir)
 	}
 	workspace.ignores = ignores
 	log.WithField("ingores", workspace.ignores).Debug("computed workspace ignores")

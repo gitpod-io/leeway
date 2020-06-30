@@ -67,7 +67,9 @@ type CommandFixtureTest struct {
 	ExitCode          int
 	NoNestedWorkspace bool
 	StdoutSub         string
+	NoStdoutSub       string
 	StderrSub         string
+	NoStderrSub       string
 }
 
 // Run executes the fixture test - do not forget to call this one
@@ -111,8 +113,14 @@ func (ft *CommandFixtureTest) Run() {
 		if stdout := sout.String(); !strings.Contains(stdout, ft.StdoutSub) {
 			t.Errorf("stdout: expected to find \"%s\" in \"%s\"", ft.StdoutSub, stdout)
 		}
-		if stderr := sout.String(); !strings.Contains(stderr, ft.StderrSub) {
+		if stdout := sout.String(); ft.NoStdoutSub != "" && strings.Contains(stdout, ft.NoStdoutSub) {
+			t.Errorf("stdout: expected not to find \"%s\" in \"%s\"", ft.NoStdoutSub, stdout)
+		}
+		if stderr := serr.String(); !strings.Contains(stderr, ft.StderrSub) {
 			t.Errorf("stderr: expected to find \"%s\" in \"%s\"", ft.StderrSub, stderr)
+		}
+		if stderr := serr.String(); ft.NoStderrSub != "" && strings.Contains(stderr, ft.NoStderrSub) {
+			t.Errorf("stderr: expected not to find \"%s\" in \"%s\"", ft.NoStderrSub, stderr)
 		}
 	})
 }
