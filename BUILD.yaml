@@ -20,6 +20,7 @@ packages:
   prep:
   - ["echo", "hello prep"]
   config:
+    dontTest: true
     buildArgs:
     - -ldflags
     - -X main.version=${version}

@@ -13,7 +13,7 @@ import (
 	"github.com/imdario/mergo"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 // Workspace is the root container of all compoments. All components are named relative
@@ -280,12 +280,22 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant *P
 	}
 
 	// replace build args
+	var rfc []byte = fc
 	if len(args) > 0 {
-		fc = replaceBuildArguments(fc, compargs)
+		rfc = replaceBuildArguments(fc, compargs)
 	}
 
-	var comp Component
-	err = yaml.Unmarshal(fc, &comp)
+	var (
+		comp    Component
+		rawcomp struct {
+			Packages []yaml.Node
+		}
+	)
+	err = yaml.Unmarshal(rfc, &comp)
+	if err != nil {
+		return comp, err
+	}
+	err = yaml.Unmarshal(rfc, &rawcomp)
 	if err != nil {
 		return comp, err
 	}
@@ -298,17 +308,21 @@ func loadComponent(workspace *Workspace, path string, args Arguments, variant *P
 	comp.W = workspace
 	comp.Name = name
 	comp.Origin = filepath.Dir(path)
-	for _, pkg := range comp.Packages {
+	for i, pkg := range comp.Packages {
 		pkg.C = &comp
+
+		pkg.Definition, err = yaml.Marshal(&rawcomp.Packages[i])
+		if err != nil {
+			return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+		}
 
 		pkg.Sources, err = resolveSources(pkg.C.W, pkg.C.Origin, pkg.Sources, false)
 		if err != nil {
 			return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 		}
 
-		// add component BUILD file and additional sources to package sources
+		// add additional sources to package sources
 		completeSources := make(map[string]struct{})
-		completeSources[path] = struct{}{}
 		for _, src := range pkg.Sources {
 			completeSources[src] = struct{}{}
 		}

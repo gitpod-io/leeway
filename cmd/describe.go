@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/leeway"
 	"github.com/typefox/leeway/pkg/prettyprint"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 // describeCmd represents the describe command
@@ -156,6 +156,7 @@ type packageDescription struct {
 	Dependencies []packageMetadataDescription `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
 	Config       configDescription            `json:"config,omitempty" yaml:"config,omitempty"`
 	Env          []string                     `json:"env,omitempty" yaml:"env,omitempty"`
+	Definition   string                       `json:"definition,omitempty"`
 }
 
 func newPackageDesription(pkg *leeway.Package) packageDescription {
@@ -214,6 +215,7 @@ func newPackageDesription(pkg *leeway.Package) packageDescription {
 		Env:          pkg.Environment,
 		Manifest:     manifest,
 		Config:       cfg,
+		Definition:   string(pkg.Definition),
 	}
 }
 

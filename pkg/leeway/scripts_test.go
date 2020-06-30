@@ -14,7 +14,16 @@ import (
 
 var dut = flag.Bool("dut", false, "run command/device under test")
 
+func runDUT() {
+	if *dut {
+		cmd.Execute()
+		os.Exit(0)
+	}
+}
+
 func TestScriptArgs(t *testing.T) {
+	runDUT()
+
 	tests := []*CommandFixtureTest{
 		{
 			Name:     "unresolved arg",
@@ -36,6 +45,8 @@ func TestScriptArgs(t *testing.T) {
 }
 
 func TestWorkingDirLayout(t *testing.T) {
+	runDUT()
+
 	tests := []*CommandFixtureTest{
 		{
 			Name:     "origin",
@@ -70,6 +81,7 @@ type CommandFixtureTest struct {
 	NoStdoutSub       string
 	StderrSub         string
 	NoStderrSub       string
+	Eval              func(t *testing.T, stdout, stderr string)
 }
 
 // Run executes the fixture test - do not forget to call this one
@@ -110,17 +122,24 @@ func (ft *CommandFixtureTest) Run() {
 		if exitCode != ft.ExitCode {
 			t.Errorf("unepxected exit code: expected %d, actual %d (stderr: %s, stdout: %s)", ft.ExitCode, exitCode, serr.String(), sout.String())
 		}
-		if stdout := sout.String(); !strings.Contains(stdout, ft.StdoutSub) {
+		var (
+			stdout = sout.String()
+			stderr = serr.String()
+		)
+		if !strings.Contains(stdout, ft.StdoutSub) {
 			t.Errorf("stdout: expected to find \"%s\" in \"%s\"", ft.StdoutSub, stdout)
 		}
-		if stdout := sout.String(); ft.NoStdoutSub != "" && strings.Contains(stdout, ft.NoStdoutSub) {
+		if ft.NoStdoutSub != "" && strings.Contains(stdout, ft.NoStdoutSub) {
 			t.Errorf("stdout: expected not to find \"%s\" in \"%s\"", ft.NoStdoutSub, stdout)
 		}
-		if stderr := serr.String(); !strings.Contains(stderr, ft.StderrSub) {
+		if !strings.Contains(stderr, ft.StderrSub) {
 			t.Errorf("stderr: expected to find \"%s\" in \"%s\"", ft.StderrSub, stderr)
 		}
-		if stderr := serr.String(); ft.NoStderrSub != "" && strings.Contains(stderr, ft.NoStderrSub) {
+		if ft.NoStderrSub != "" && strings.Contains(stderr, ft.NoStderrSub) {
 			t.Errorf("stderr: expected not to find \"%s\" in \"%s\"", ft.NoStderrSub, stderr)
+		}
+		if ft.Eval != nil {
+			ft.Eval(t, stdout, stderr)
 		}
 	})
 }
