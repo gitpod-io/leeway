@@ -213,6 +213,20 @@ func loadWorkspace(path string, args Arguments, variant string, opts *loadWorksp
 		}
 	}
 
+	// dependency cycles break the version computation and are not allowed
+	for _, p := range workspace.Packages {
+		c, err := p.findCycle()
+		if err != nil {
+			log.WithError(err).WithField("pkg", p.FullName()).Warn("internal error - skipping cycle detection")
+			continue
+		}
+		if len(c) == 0 {
+			continue
+		}
+
+		return workspace, xerrors.Errorf("dependency cycle found: %s", strings.Join(c, " -> "))
+	}
+
 	// at this point all packages are fully loaded and we can compute the version, as well as resolve builtin variables
 	for _, pkg := range workspace.Packages {
 		err := pkg.resolveBuiltinVariables()

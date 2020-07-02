@@ -155,6 +155,55 @@ func (p *Package) link(idx map[string]*Package) error {
 	return nil
 }
 
+func (p *Package) findCycle() ([]string, error) {
+	var (
+		walk  func(pkg *Package) ([]string, error)
+		path  = make([]string, len(p.C.W.Packages))
+		depth int
+	)
+	walk = func(pkg *Package) ([]string, error) {
+		var (
+			seen bool
+			pkgn = pkg.FullName()
+		)
+		for _, p := range path[:depth] {
+			if p == pkgn {
+				seen = true
+				break
+			}
+		}
+
+		if len(path) <= depth {
+			return nil, xerrors.Errorf("[internal error] depth exceeds max path length: looks like the workspace package index isn't build properly")
+		}
+
+		path[depth] = pkg.FullName()
+		depth++
+		defer func() {
+			depth--
+		}()
+
+		if seen {
+			return path[:depth], nil
+		}
+
+		path = append(path, pkgn)
+		for _, dep := range pkg.GetDependencies() {
+			r, err := walk(dep)
+			if err != nil {
+				return nil, err
+			}
+			if r != nil {
+				return r, nil
+			}
+		}
+
+		return nil, nil
+	}
+
+	return walk(p)
+}
+
 // GetDependencies returns the linked package dependencies or nil if not linked yet
 func (p *Package) GetDependencies() []*Package {
 	return p.dependencies
