@@ -79,19 +79,26 @@ d3.json("graph.json", function(error, graph) {
       .attr("x", 0)
       .attr("y", 0)
       .style("fill", function(d) { return color(d.group); })
-      .on("mouseover", function(d) {		
-            div.transition()		
-                .duration(200)		
-                .style("opacity", .9);		
-            div	.html(d.name + "<br/>"  + d.comp)	
-                .style("left", (d3.event.pageX) + "px")		
-                .style("top", (d3.event.pageY - 28) + "px");	
-            })					
-        .on("mouseout", function(d) {		
-            div.transition()		
-                .duration(500)		
-                .style("opacity", 0);	
-        });;
+      .on("mouseover", function(d, di) {
+        div.transition()
+          .duration(200)
+          .style("opacity", .9);
+        div.html(d.name + "<br/>"  + d.comp)
+          .style("left", (d3.event.pageX) + "px")
+          .style("top", (d3.event.pageY - 28) + "px");
+
+        // highlight this line, fade other lines
+        d3.selectAll(".link").classed("link-hover", (l) => {
+          return (l.path || []).includes(di);
+        }).classed("link-fade", (l) => {
+          return !(l.path || []).includes(di);
+        });
+      }).on("mouseout", function(d) {		
+        div.transition()		
+          .duration(500)		
+          .style("opacity", 0);	
+        d3.selectAll(".link").classed("link-hover", false).classed("link-fade", false);
+      });
 
   node.append("title")
       .text(function(d) { return d.name; });

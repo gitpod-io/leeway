@@ -30,8 +30,9 @@ type node struct {
 }
 
 type link struct {
-	Source int `json:"source"`
-	Target int `json:"target"`
+	Source int   `json:"source"`
+	Target int   `json:"target"`
+	Path   []int `json:"path"`
 }
 
 func serveDepGraphJSON(pkg *leeway.Package) http.HandlerFunc {
@@ -41,7 +42,9 @@ func serveDepGraphJSON(pkg *leeway.Package) http.HandlerFunc {
 		nodeidx = make(map[string]int)
 		compidx = make(map[string]int)
 		links   []link
+		walk    func(pkg *leeway.Package, path []int)
 	)
+
 	for i, p := range tdeps {
 		group, ok := compidx[p.C.Name]
 		if !ok {
@@ -52,14 +55,20 @@ func serveDepGraphJSON(pkg *leeway.Package) http.HandlerFunc {
 		nodes[i] = node{Name: p.FullName(), Component: p.C.Name, Group: group}
 		nodeidx[p.FullName()] = i
 	}
-	for src, p := range tdeps {
+
+	walk = func(p *leeway.Package, path []int) {
+		src := nodeidx[p.FullName()]
 		for _, dep := range p.GetDependencies() {
 			links = append(links, link{
 				Source: src,
 				Target: nodeidx[dep.FullName()],
+				Path:   append(path, src),
 			})
+			walk(dep, append(path, src))
 		}
 	}
+	walk(pkg, nil)
+
 	js, _ := json.Marshal(graph{Nodes: nodes, Links: links})
 
 	return func(w http.ResponseWriter, r *http.Request) {

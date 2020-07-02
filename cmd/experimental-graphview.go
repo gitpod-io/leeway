@@ -3,6 +3,12 @@
 package cmd
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/graphview"
@@ -19,7 +25,25 @@ var graphviewCmd = &cobra.Command{
 			log.Fatal("graphview needs a package")
 		}
 
-		log.Fatal(graphview.Serve(pkg, ":8080"))
+		addr, _ := cmd.Flags().GetString("addr")
+		log.WithField("addr", addr).Info("serving dependency graph view")
+
+		go func() {
+			browser := os.Getenv("BROWSER")
+			if browser == "" {
+				return
+			}
+
+			time.Sleep(2 * time.Second)
+			taddr := addr
+			if strings.HasPrefix(taddr, ":") {
+				taddr = fmt.Sprintf("localhost%s", addr)
+			}
+			taddr = fmt.Sprintf("http://%s", taddr)
+			exec.Command(browser, taddr).Start()
+		}()
+
+		log.Fatal(graphview.Serve(pkg, addr))
 
 		return nil
 	},
@@ -27,4 +51,6 @@ var graphviewCmd = &cobra.Command{
 
 func init() {
 	addExperimentalCommand(rootCmd, graphviewCmd)
+
+	graphviewCmd.Flags().String("addr", ":8080", "address to serve the graphview on")
 }
