@@ -3,6 +3,7 @@ module github.com/typefox/leeway
 go 1.14
 
 require (
+	github.com/GeertJohan/go.rice v1.0.0
 	github.com/bmatcuk/doublestar v1.1.5
 	github.com/disiqueira/gotree v1.0.0
 	github.com/gookit/color v1.2.0
