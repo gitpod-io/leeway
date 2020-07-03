@@ -6,14 +6,15 @@ package graphview
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 
 	rice "github.com/GeertJohan/go.rice"
 	"github.com/typefox/leeway/pkg/leeway"
 )
 
 // Serve serves the dependency graph view for a package
-func Serve(pkg *leeway.Package, addr string) error {
-	http.HandleFunc("/graph.json", serveDepGraphJSON(pkg))
+func Serve(addr string, pkgs ...*leeway.Package) error {
+	http.HandleFunc("/graph.json", serveDepGraphJSON(pkgs))
 	http.Handle("/", http.FileServer(rice.MustFindBox("web/dist").HTTPBox()))
 	return http.ListenAndServe(addr, nil)
 }
@@ -26,7 +27,9 @@ type graph struct {
 type node struct {
 	Name      string `json:"name"`
 	Component string `json:"comp"`
-	Group     int    `json:"group"`
+
+	Type   string `json:"type"`
+	TypeID int    `json:"typeid"`
 }
 
 type link struct {
@@ -35,25 +38,49 @@ type link struct {
 	Path   []int `json:"path"`
 }
 
-func serveDepGraphJSON(pkg *leeway.Package) http.HandlerFunc {
+func serveDepGraphJSON(pkgs []*leeway.Package) http.HandlerFunc {
+	var (
+		nodes []node
+		links []link
+	)
+	for _, p := range pkgs {
+		n, l := computeDependencyGraph(p, len(nodes))
+		nodes = append(nodes, n...)
+		links = append(links, l...)
+	}
+
+	js, _ := json.Marshal(graph{Nodes: nodes, Links: links})
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Write(js)
+	}
+}
+
+func computeDependencyGraph(pkg *leeway.Package, offset int) ([]node, []link) {
 	var (
 		tdeps   = append(pkg.GetTransitiveDependencies(), pkg)
 		nodes   = make([]node, len(tdeps))
 		nodeidx = make(map[string]int)
-		compidx = make(map[string]int)
+		typeidx = make(map[string]int)
 		links   []link
 		walk    func(pkg *leeway.Package, path []int)
 	)
 
 	for i, p := range tdeps {
-		group, ok := compidx[p.C.Name]
-		if !ok {
-			group = len(compidx)
-			compidx[p.C.Name] = group
-		}
-
-		nodes[i] = node{Name: p.FullName(), Component: p.C.Name, Group: group}
-		nodeidx[p.FullName()] = i
+		nodes[i] = node{Name: p.FullName(), Component: p.C.Name, Type: getPackageType(p)}
+		nodeidx[nodes[i].Name] = offset + i
+		typeidx[nodes[i].Type] = 0
+	}
+	types := make([]string, 0, len(typeidx))
+	for k := range typeidx {
+		types = append(types, k)
+	}
+	sort.Strings(types)
+	for i, k := range types {
+		typeidx[k] = i
+	}
+	for i, n := range nodes {
+		n.TypeID = typeidx[n.Type]
+		nodes[i] = n
 	}
 
 	walk = func(p *leeway.Package, path []int) {
@@ -69,9 +96,19 @@ func serveDepGraphJSON(pkg *leeway.Package) http.HandlerFunc {
 	}
 	walk(pkg, nil)
 
-	js, _ := json.Marshal(graph{Nodes: nodes, Links: links})
+	return nodes, links
+}
 
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Write(js)
+func getPackageType(pkg *leeway.Package) (typen string) {
+	switch c := pkg.Config.(type) {
+	case leeway.DockerPkgConfig:
+		typen = "docker"
+	case leeway.GenericPkgConfig:
+		typen = "generic"
+	case leeway.GoPkgConfig:
+		typen = "go-" + string(c.Packaging)
+	case leeway.TypescriptPkgConfig:
+		typen = "typescript-" + string(c.Packaging)
 	}
+	return typen
 }

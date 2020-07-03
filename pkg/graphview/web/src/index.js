@@ -78,16 +78,14 @@ d3.json("graph.json", function(error, graph) {
       .attr("height", 10)
       .attr("x", 0)
       .attr("y", 0)
-      .style("fill", function(d) { return color(d.group); })
+      .style("fill", function(d) { return color(d.typeid); })
       .on("mouseover", function(d, di) {
         div.transition()
-          .duration(200)
+          .duration(100)
           .style("opacity", .9);
-        div.html(d.name + "<br/>"  + d.comp)
+        div.html(d.name)
           .style("left", (d3.event.pageX) + "px")
           .style("top", (d3.event.pageY - 28) + "px");
-
-        // highlight this line, fade other lines
         d3.selectAll(".link").classed("link-hover", (l) => {
           return (l.path || []).includes(di);
         }).classed("link-fade", (l) => {
@@ -104,8 +102,6 @@ d3.json("graph.json", function(error, graph) {
       .text(function(d) { return d.name; });
 
   layouter.on("finish", function(d) {
-  
-
     link.transition().attr("d", function(d) {
       var path = "";
       path += "M" + d.sourcePoint.x + " " + d.sourcePoint.y + " ";
@@ -115,12 +111,10 @@ d3.json("graph.json", function(error, graph) {
       path += "L" + d.targetPoint.x + " " + d.targetPoint.y + " ";
       return path;
     });
-  
 
     node.transition()
       .attr("x", function(d) { return d.x; })
-      .attr("y", function(d) { return d.y; });
-    
+      .attr("y", function(d) { return d.y; });    
   });
   
   layouter.start();
