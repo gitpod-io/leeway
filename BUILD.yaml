@@ -25,3 +25,29 @@ packages:
     - -ldflags
     - -X main.version=${version}
     library: false
+- name: goreleaser
+  type: generic
+  config:
+    commands:
+    - ["curl", "-OL", "https://github.com/goreleaser/goreleaser/releases/download/v0.138.0/goreleaser_Linux_x86_64.tar.gz"]
+    - ["tar", "xzf", "goreleaser_Linux_x86_64.tar.gz"]
+    - ["rm", "goreleaser_Linux_x86_64.tar.gz"]
+scripts:
+- name: release
+  description: releases leeway to GitHub
+  deps:
+  - :goreleaser
+  script: |
+    if [ "A$GITHUB_TOKEN" = "A" ]; then
+      echo "Please set the GITHUB_TOKEN env var"
+      exit 1
+    fi
+
+    if [ $(git tag | grep ${version}) ]; then
+      git tag --delete ${version}
+      git push origin --delete ${version} || echo "version wasn't pushed yet - that's ok"
+    fi
+
+    git tag ${version}
+    git push origin ${version}
+    goreleaser --rm-dist
