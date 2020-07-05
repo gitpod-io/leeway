@@ -199,23 +199,57 @@ When a build fails, or to get an idea of how leeway assembles dependencies, run 
 # CLI tips
 
 ### How can I build a package in the current component/folder?
-`leeway build .:package-name`
+```bash
+leeway build .:package-name
+```
 
 ### Is there bash autocompletion?
 Yes, run `. <(leeway bash-completion)` to enable it. If you place this line in `.bashrc` you'll have autocompletion every time.
 
-### How can I print a component constant?
-`leeway describe const some/component/name` prints all constants of a component.
-
-`leeway describe const -n someName some/component/name` prints the value of the `someName` constant of `some/component/name`.
-
-`leeway describe const -n someName .` prints the value of the `someName` constant of the component in the current working directory.
-
 ### How can I find all packages in a workspace?
-`leeway collect`
+```bash
+# list all packages in the workspace
+leeway collect
+# list all package names using Go templates
+leeway collect -t '{{ range $n := . }}{{ $n.Metadata.FullName }}{{"\n"}}{{end}}'
+# list all package names using jq
+leeway collect -o json | jq -r '.[].metadata.name'
+```
+
+### How can I find out more about a package?
+```bash
+# print package description on the console
+leeway describe some/components:package
+# dump package description as json
+leeway describe some/components:package -o json
+```
+
+### How can I inspect a packages depdencies?
+```bash
+# print the dependency tree on the console
+leeway describe dependencies some/components:package
+# print the denendency graph as Graphviz dot
+leeway describe dependencies --dot some/components:package
+# serve an interactive version of the dependency graph
+leeway describe dependencies --serve=:8080 some/components:package
+```
+
+### How can I print a component constant?
+```bash
+# print all constants of the component in the current working directory
+leeway describe const .
+# print all constants of a component
+leeway describe const some/component/name
+# print the value of the `someName` constant of `some/component/name`
+leeway describe const some/component/name -o json | jq -r '.[] | select(.name=="foo").value'
+```
 
 ### How can I find all components with a particular constant?
-`leeway collect --components -l someConstant`
+```bash
+leeway collect components -l someConstant
+```
 
 ### How can I export only a workspace the way leeway sees it, i.e. based on the packages?
-`LEEWAY_EXPERIMENTAL=true leeway export --strict /some/destination`
+```bash
+LEEWAY_EXPERIMENTAL=true leeway export --strict /some/destination
+```
