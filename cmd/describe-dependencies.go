@@ -111,7 +111,7 @@ func printDepGraphAsDot(pkgs []*leeway.Package) error {
 	}
 
 	fmt.Println("digraph G {")
-	for n := range nodes {
+	for _, n := range nodes {
 		fmt.Printf("  %s\n", n)
 	}
 	for _, e := range edges {
