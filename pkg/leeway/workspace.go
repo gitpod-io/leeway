@@ -1,17 +1,22 @@
 package leeway
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime/trace"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/bmatcuk/doublestar"
 	"github.com/imdario/mergo"
+	"github.com/karrick/godirwalk"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
 )
@@ -65,7 +70,7 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 		log := log.WithField("wspath", wspath)
 		log.Debug("loading (possibly nested) workspace")
 
-		sws, err := loadWorkspace(wspath, args, variant, &loadWorkspaceOpts{
+		sws, err := loadWorkspace(context.Background(), wspath, args, variant, &loadWorkspaceOpts{
 			PrelinkModifier: func(packages map[string]*Package) {
 				for otherloc, otherws := range loadedWorkspaces {
 					relativeOrigin := filepathTrimPrefix(otherloc, wspath)
@@ -115,7 +120,10 @@ type loadWorkspaceOpts struct {
 	PrelinkModifier func(map[string]*Package)
 }
 
-func loadWorkspace(path string, args Arguments, variant string, opts *loadWorkspaceOpts) (Workspace, error) {
+func loadWorkspace(ctx context.Context, path string, args Arguments, variant string, opts *loadWorkspaceOpts) (Workspace, error) {
+	ctx, task := trace.NewTask(ctx, "loadWorkspace")
+	defer task.End()
+
 	root := filepath.Join(path, "WORKSPACE.yaml")
 	fc, err := ioutil.ReadFile(root)
 	if err != nil {
@@ -178,7 +186,7 @@ func loadWorkspace(path string, args Arguments, variant string, opts *loadWorksp
 		args[key] = val
 	}
 
-	comps, err := discoverComponents(&workspace, args, workspace.SelectedVariant, opts)
+	comps, err := discoverComponents(ctx, &workspace, args, workspace.SelectedVariant, opts)
 	if err != nil {
 		return workspace, err
 	}
@@ -241,36 +249,96 @@ func loadWorkspace(path string, args Arguments, variant string, opts *loadWorksp
 // FindWorkspace looks for a WORKSPACE.yaml file within the path. If multiple such files are found,
 // an error is returned.
 func FindWorkspace(path string, args Arguments, variant string) (Workspace, error) {
-	return loadWorkspace(path, args, variant, &loadWorkspaceOpts{})
+	return loadWorkspace(context.Background(), path, args, variant, &loadWorkspaceOpts{})
 }
 
 // discoverComponents discovers components in a workspace
-func discoverComponents(workspace *Workspace, args Arguments, variant *PackageVariant, opts *loadWorkspaceOpts) ([]*Component, error) {
+func discoverComponents(ctx context.Context, workspace *Workspace, args Arguments, variant *PackageVariant, opts *loadWorkspaceOpts) ([]*Component, error) {
+	defer trace.StartRegion(context.Background(), "discoverComponents").End()
+
 	path := workspace.Origin
-	pths, err := doublestar.Glob(filepath.Join(path, "**/BUILD.yaml"))
+	pths, err := findFiles(workspace, path, "BUILD.yaml")
 	if err != nil {
 		return nil, err
 	}
 
-	var comps []*Component
+	eg, ctx := errgroup.WithContext(ctx)
+	cchan := make(chan *Component, 20)
+
 	for _, pth := range pths {
 		if workspace.ShouldIngoreComponent(pth) {
 			continue
 		}
 
-		comp, err := loadComponent(workspace, pth, args, variant)
-		if err != nil {
-			return nil, err
-		}
-
-		comps = append(comps, &comp)
+		pth := pth
+		eg.Go(func() error {
+			comp, err := loadComponent(ctx, workspace, pth, args, variant)
+			if err != nil {
+				return err
+			}
+			cchan <- &comp
+			return nil
+		})
 	}
+	var (
+		comps []*Component
+		wg    sync.WaitGroup
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		for c := range cchan {
+			comps = append(comps, c)
+		}
+	}()
+	err = eg.Wait()
+	close(cchan)
+	if err != nil {
+		return nil, err
+	}
+	wg.Wait()
 
 	return comps, nil
 }
 
+func findFiles(workspace *Workspace, path string, suffix string) ([]string, error) {
+	var pths []string
+
+	err := godirwalk.Walk(path, &godirwalk.Options{
+		Callback: func(path string, info *godirwalk.Dirent) error {
+			if workspace.ShouldIngoreSource(path) {
+				return filepath.SkipDir
+			}
+
+			if info.IsDir() {
+				return nil
+			}
+			if info.Name() == "BUILD.yaml" {
+				pths = append(pths, path)
+			}
+
+			return nil
+		},
+		ErrorCallback: func(path string, err error) godirwalk.ErrorAction {
+			log.WithError(err).Debug("error while discovering components")
+			return godirwalk.SkipNode
+		},
+		FollowSymbolicLinks: true,
+		Unsorted:            true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return pths, err
+}
+
 // loadComponent loads a component from a BUILD.yaml file
-func loadComponent(workspace *Workspace, path string, args Arguments, variant *PackageVariant) (Component, error) {
+func loadComponent(ctx context.Context, workspace *Workspace, path string, args Arguments, variant *PackageVariant) (Component, error) {
+	defer trace.StartRegion(context.Background(), "loadComponent").End()
+	trace.Log(ctx, "component", path)
+
 	fc, err := ioutil.ReadFile(path)
 	if err != nil {
 		return Component{}, err

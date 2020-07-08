@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"runtime/trace"
 	"strings"
 
 	"github.com/gookit/color"
@@ -99,6 +101,24 @@ variables have an effect on leeway:
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
+	tp := os.Getenv("LEEWAY_TRACE")
+	if tp != "" {
+		f, err := os.OpenFile(tp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+		if err != nil {
+			log.WithError(err).Fatal("cannot start trace but LEEWAY_TRACE is set")
+			return
+		}
+		defer f.Close()
+		err = trace.Start(f)
+		if err != nil {
+			log.WithError(err).Fatal("cannot start trace but LEEWAY_TRACE is set")
+			return
+		}
+		defer trace.Stop()
+
+		defer trace.StartRegion(context.Background(), "main").End()
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
