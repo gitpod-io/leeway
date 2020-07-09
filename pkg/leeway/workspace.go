@@ -12,10 +12,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bmatcuk/doublestar"
 	"github.com/imdario/mergo"
-	"github.com/karrick/godirwalk"
 	log "github.com/sirupsen/logrus"
+	"github.com/typefox/leeway/pkg/doublestar"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
@@ -54,7 +53,7 @@ func (ws *Workspace) ShouldIngoreSource(path string) bool {
 
 // FindNestedWorkspaces loads nested workspaces
 func FindNestedWorkspaces(path string, args Arguments, variant string) (res Workspace, err error) {
-	wss, err := doublestar.Glob(filepath.Join(path, "**/WORKSPACE.yaml"))
+	wss, err := doublestar.Glob(path, "**/WORKSPACE.yaml", func(path string) bool { return false })
 	if err != nil {
 		return
 	}
@@ -157,7 +156,7 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		}
 		ignores = strings.Split(string(fc), "\n")
 	}
-	otherWS, err := doublestar.Glob(filepath.Join(workspace.Origin, "**/WORKSPACE.yaml"))
+	otherWS, err := doublestar.Glob(workspace.Origin, "**/WORKSPACE.yaml", doublestar.NoIgnore)
 	if err != nil {
 		return Workspace{}, err
 	}
@@ -257,7 +256,7 @@ func discoverComponents(ctx context.Context, workspace *Workspace, args Argument
 	defer trace.StartRegion(context.Background(), "discoverComponents").End()
 
 	path := workspace.Origin
-	pths, err := findFiles(workspace, path, "BUILD.yaml")
+	pths, err := doublestar.Glob(path, "**/BUILD.yaml", workspace.ShouldIngoreSource)
 	if err != nil {
 		return nil, err
 	}
@@ -300,38 +299,6 @@ func discoverComponents(ctx context.Context, workspace *Workspace, args Argument
 	wg.Wait()
 
 	return comps, nil
-}
-
-func findFiles(workspace *Workspace, path string, suffix string) ([]string, error) {
-	var pths []string
-
-	err := godirwalk.Walk(path, &godirwalk.Options{
-		Callback: func(path string, info *godirwalk.Dirent) error {
-			if workspace.ShouldIngoreSource(path) {
-				return filepath.SkipDir
-			}
-
-			if info.IsDir() {
-				return nil
-			}
-			if info.Name() == "BUILD.yaml" {
-				pths = append(pths, path)
-			}
-
-			return nil
-		},
-		ErrorCallback: func(path string, err error) godirwalk.ErrorAction {
-			log.WithError(err).Debug("error while discovering components")
-			return godirwalk.SkipNode
-		},
-		FollowSymbolicLinks: true,
-		Unsorted:            true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return pths, err
 }
 
 // loadComponent loads a component from a BUILD.yaml file

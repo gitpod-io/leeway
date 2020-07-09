@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/bmatcuk/doublestar"
 	"github.com/minio/highwayhash"
+	"github.com/typefox/leeway/pkg/doublestar"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
 )
@@ -540,7 +539,7 @@ func (v *PackageVariant) ResolveSources(workspace *Workspace, loc string) (incl 
 
 func resolveSources(workspace *Workspace, loc string, globs []string, includeDirs bool) (res []string, err error) {
 	for _, glb := range globs {
-		srcs, err := doublestar.Glob(filepath.Join(loc, glb))
+		srcs, err := doublestar.Glob(loc, glb, workspace.ShouldIngoreSource)
 		if err != nil {
 			return nil, err
 		}
