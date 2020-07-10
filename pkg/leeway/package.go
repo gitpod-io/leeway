@@ -517,8 +517,9 @@ func (v *PackageVariant) UnmarshalYAML(unmarshal func(interface{}) error) error 
 }
 
 // Config returns this package variants configuration
-func (v *PackageVariant) Config(t PackageType) PackageConfig {
-	return v.config[t]
+func (v *PackageVariant) Config(t PackageType) (cfg PackageConfig, ok bool) {
+	cfg, ok = v.config[t]
+	return
 }
 
 // ResolveSources lists all files which are explicitely included or excluded by this variant.

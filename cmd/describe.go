@@ -176,26 +176,41 @@ func newPackageDesription(pkg *leeway.Package) packageDescription {
 	}
 	sort.Slice(deps, func(i, j int) bool { return deps[i].FullName < deps[j].FullName })
 
-	cfg := make(map[string]interface{})
-	switch pkg.Type {
+	return packageDescription{
+		Metadata:     newMetadataDescription(pkg),
+		Type:         string(pkg.Type),
+		ArgDeps:      pkg.ArgumentDependencies,
+		Dependencies: deps,
+		Env:          pkg.Environment,
+		Manifest:     manifest,
+		Config:       newConfigDescription(pkg.Type, pkg.Config),
+		Definition:   string(pkg.Definition),
+	}
+}
+
+type configDescription map[string]interface{}
+
+func newConfigDescription(tpe leeway.PackageType, c leeway.PackageConfig) configDescription {
+	cfg := make(configDescription)
+	switch tpe {
 	case leeway.DockerPackage:
-		c := pkg.Config.(leeway.DockerPkgConfig)
+		c := c.(leeway.DockerPkgConfig)
 		cfg["buildArgs"] = c.BuildArgs
 		cfg["dockerfile"] = c.Dockerfile
 		cfg["image"] = c.Image
 		cfg["squash"] = c.Squash
 	case leeway.GenericPackage:
-		c := pkg.Config.(leeway.GenericPkgConfig)
+		c := c.(leeway.GenericPkgConfig)
 		cfg["commands"] = c.Commands
 	case leeway.GoPackage:
-		c := pkg.Config.(leeway.GoPkgConfig)
+		c := c.(leeway.GoPkgConfig)
 		cfg["buildFlags"] = c.BuildFlags
 		cfg["dontCheckGoFmt"] = c.DontCheckGoFmt
 		cfg["dontTest"] = c.DontTest
 		cfg["generate"] = c.Generate
 		cfg["packaging"] = c.Packaging
 	case leeway.TypescriptPackage:
-		c := pkg.Config.(leeway.TypescriptPkgConfig)
+		c := c.(leeway.TypescriptPkgConfig)
 		cfg["dontTest"] = c.DontTest
 		cfg["packaging"] = c.Packaging
 		cfg["tsConfig"] = c.TSConfig
@@ -206,20 +221,8 @@ func newPackageDesription(pkg *leeway.Package) packageDescription {
 			"test":    c.Commands.Test,
 		}
 	}
-
-	return packageDescription{
-		Metadata:     newMetadataDescription(pkg),
-		Type:         string(pkg.Type),
-		ArgDeps:      pkg.ArgumentDependencies,
-		Dependencies: deps,
-		Env:          pkg.Environment,
-		Manifest:     manifest,
-		Config:       cfg,
-		Definition:   string(pkg.Definition),
-	}
+	return cfg
 }
-
-type configDescription map[string]interface{}
 
 func describePackage(out *prettyprint.Writer, pkg *leeway.Package) {
 	if out.Format == prettyprint.TemplateFormat && out.FormatString == "" {

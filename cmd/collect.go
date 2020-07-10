@@ -16,6 +16,16 @@ type fileDescription struct {
 	Package string `json:"package" yaml:"package"`
 }
 
+type variantDescription struct {
+	Name    string `json:"name" yaml:"name"`
+	Sources struct {
+		Include []string `json:"include" yaml:"include"`
+		Exclude []string `json:"exclude" yaml:"exclude"`
+	} `json:"srcs" yaml:"srcs"`
+	Environment []string                                 `json:"env" yaml:"env"`
+	Config      map[leeway.PackageType]configDescription `json:"config" yaml:"config"`
+}
+
 // collectCmd represents the collect command
 var collectCmd = &cobra.Command{
 	Use:   "collect [components|packages|scripts|files]",
@@ -130,6 +140,31 @@ var collectCmd = &cobra.Command{
 				decs = append(decs, fs...)
 			}
 			sort.Slice(decs, func(i, j int) bool { return decs[i].Name < decs[j].Name })
+			err = w.Write(decs)
+			if err != nil {
+				log.Fatal(err)
+			}
+		case "variants":
+			if w.Format == prettyprint.TemplateFormat && w.FormatString == "" {
+				w.FormatString = `{{ range . }}{{ .Name }}{{"\n"}}{{ end }}`
+			}
+			decs := make([]variantDescription, len(workspace.Variants))
+			for i, v := range workspace.Variants {
+				decs[i] = variantDescription{
+					Name:        v.Name,
+					Environment: v.Environment,
+					Config:      make(map[leeway.PackageType]configDescription),
+				}
+				decs[i].Sources.Exclude = v.Sources.Exclude
+				decs[i].Sources.Include = v.Sources.Include
+				for _, t := range []leeway.PackageType{leeway.DockerPackage, leeway.GenericPackage, leeway.GoPackage, leeway.TypescriptPackage} {
+					vntcfg, ok := v.Config(t)
+					if !ok {
+						continue
+					}
+					decs[i].Config[t] = newConfigDescription(t, vntcfg)
+				}
+			}
 			err = w.Write(decs)
 			if err != nil {
 				log.Fatal(err)

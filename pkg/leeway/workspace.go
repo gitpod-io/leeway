@@ -481,9 +481,11 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 
 		// apply variant config
 		if vnt := pkg.C.W.SelectedVariant; vnt != nil {
-			err = mergeConfig(pkg, vnt.Config(pkg.Type))
-			if err != nil {
-				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+			if vntcfg, ok := vnt.Config(pkg.Type); ok {
+				err = mergeConfig(pkg, vntcfg)
+				if err != nil {
+					return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+				}
 			}
 
 			err = mergeEnv(pkg, vnt.Environment)
