@@ -53,7 +53,18 @@ func (ws *Workspace) ShouldIngoreSource(path string) bool {
 
 // FindNestedWorkspaces loads nested workspaces
 func FindNestedWorkspaces(path string, args Arguments, variant string) (res Workspace, err error) {
-	wss, err := doublestar.Glob(path, "**/WORKSPACE.yaml", func(path string) bool { return false })
+	fc, _ := ioutil.ReadFile(filepath.Join(path, ".leewayignore"))
+	ignores := strings.Split(string(fc), "\n")
+	ignore := func(path string) bool {
+		for _, ptn := range ignores {
+			if strings.Contains(path, ptn) {
+				return true
+			}
+		}
+		return false
+	}
+
+	wss, err := doublestar.Glob(path, "**/WORKSPACE.yaml", ignore)
 	if err != nil {
 		return
 	}
@@ -156,7 +167,7 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		}
 		ignores = strings.Split(string(fc), "\n")
 	}
-	otherWS, err := doublestar.Glob(workspace.Origin, "**/WORKSPACE.yaml", doublestar.NoIgnore)
+	otherWS, err := doublestar.Glob(workspace.Origin, "**/WORKSPACE.yaml", workspace.ShouldIngoreSource)
 	if err != nil {
 		return Workspace{}, err
 	}
