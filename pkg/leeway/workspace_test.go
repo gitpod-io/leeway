@@ -35,7 +35,7 @@ func TestFixtureLoadWorkspace(t *testing.T) {
 			Args:              []string{"collect", "-w", "fixtures/nested-ws", "components"},
 			NoNestedWorkspace: true,
 			ExitCode:          1,
-			StderrSub:         "pkg0:app: package \\\"wsa/pkg1:app\\\" is unkown",
+			StderrSub:         "pkg0:app: package \\\"wsa/pkg1:app\\\" is unknown",
 		},
 		{
 			Name:      "nested workspace packages",
