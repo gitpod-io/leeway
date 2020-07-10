@@ -4,3 +4,7 @@ packages:
   config:
     commands:
     - ["echo", "${message}"]
+scripts:
+- name: echo
+  script: |
+    echo ${message}

@@ -101,17 +101,37 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 	}
 
 	// now that we've loaded and linked the main workspace, we need to fix the location names and indices
-	nc := make(map[string]*Component)
+	var (
+		newComps   = make(map[string]*Component)
+		newScripts = make(map[string]*Script)
+	)
 	for _, pkg := range res.Packages {
 		name := filepathTrimPrefix(pkg.C.Origin, res.Origin)
 		if name == "" {
 			name = "//"
 		}
 		pkg.C.Name = name
-		nc[name] = pkg.C
+		newComps[name] = pkg.C
 		log.WithField("origin", pkg.C.Origin).WithField("name", name).Debug("renamed component")
 	}
-	res.Components = nc
+	for otherloc, otherws := range loadedWorkspaces {
+		relativeOrigin := filepathTrimPrefix(otherloc, path)
+
+		for k, p := range otherws.Scripts {
+			var otherKey string
+			if strings.HasPrefix(k, "//") {
+				otherKey = fmt.Sprintf("%s%s", relativeOrigin, strings.TrimPrefix(k, "//"))
+			} else if relativeOrigin == "" {
+				otherKey = k
+			} else {
+				otherKey = fmt.Sprintf("%s/%s", relativeOrigin, k)
+			}
+			newScripts[otherKey] = p
+			log.WithField("k", otherKey).WithField("otherloc", otherloc).Debug("new script")
+		}
+	}
+	res.Components = newComps
+	res.Scripts = newScripts
 
 	return
 }

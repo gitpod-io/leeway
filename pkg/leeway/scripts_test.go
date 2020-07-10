@@ -26,16 +26,18 @@ func TestScriptArgs(t *testing.T) {
 
 	tests := []*CommandFixtureTest{
 		{
-			Name:     "unresolved arg",
-			T:        t,
-			Args:     []string{"run", "fixtures/scripts:echo"},
-			ExitCode: 1,
+			Name:              "unresolved arg",
+			T:                 t,
+			Args:              []string{"run", "fixtures/scripts:echo"},
+			NoNestedWorkspace: true,
+			ExitCode:          1,
 		},
 		{
-			Name:     "resovled args",
-			T:        t,
-			Args:     []string{"run", "fixtures/scripts:echo", "-Dmsg=foobar"},
-			ExitCode: 0,
+			Name:              "resovled args",
+			T:                 t,
+			Args:              []string{"run", "fixtures/scripts:echo", "-Dmsg=foobar"},
+			NoNestedWorkspace: true,
+			ExitCode:          0,
 		},
 	}
 
@@ -49,18 +51,38 @@ func TestWorkingDirLayout(t *testing.T) {
 
 	tests := []*CommandFixtureTest{
 		{
-			Name:     "origin",
-			T:        t,
-			Args:     []string{"run", "fixtures/scripts:pwd-origin"},
-			ExitCode: 0,
+			Name:              "origin",
+			T:                 t,
+			Args:              []string{"run", "fixtures/scripts:pwd-origin"},
+			ExitCode:          0,
+			NoNestedWorkspace: true,
 			StdoutSub: `.
 ./BUILD.yaml`,
 		},
 		{
-			Name:     "packages",
-			T:        t,
-			Args:     []string{"run", "fixtures/scripts:pwd-packages"},
-			ExitCode: 0,
+			Name:              "packages",
+			T:                 t,
+			Args:              []string{"run", "fixtures/scripts:pwd-packages"},
+			ExitCode:          0,
+			NoNestedWorkspace: true,
+			StdoutSub: `.
+./fixtures-pkgs-generic--something`,
+		},
+		{
+			Name:              "origin nested",
+			T:                 t,
+			Args:              []string{"run", "fixtures/scripts:pwd-origin"},
+			ExitCode:          0,
+			NoNestedWorkspace: false,
+			StdoutSub: `.
+./BUILD.yaml`,
+		},
+		{
+			Name:              "packages nested",
+			T:                 t,
+			Args:              []string{"run", "fixtures/scripts:pwd-packages"},
+			ExitCode:          0,
+			NoNestedWorkspace: false,
 			StdoutSub: `.
 ./fixtures-pkgs-generic--something`,
 		},

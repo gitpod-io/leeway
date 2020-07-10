@@ -13,7 +13,7 @@
           "LEEWAY_EXPERIMENTAL": "true",
           "LEEWAY_NESTED_WORKSPACE": "true",
       },
-      "args": ["collect", "-w", "fixtures/nested-ws"]
+      "args": ["run", "-w", "fixtures/nested-ws", "wsa/pkg1:echo"]
     }
   ]
 }
