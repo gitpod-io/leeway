@@ -13,7 +13,7 @@
           "LEEWAY_EXPERIMENTAL": "true",
           "LEEWAY_NESTED_WORKSPACE": "true",
       },
-      "args": ["run", "-w", "fixtures/nested-ws", "wsa/pkg1:echo"]
+      "args": ["fmt", "fixtures/nested-ws/pkg0/BUILD.yaml"]
     }
   ]
 }

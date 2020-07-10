@@ -1,8 +1,8 @@
 packages:
-- name: something
-  type: generic
-  srcs:
-  - "*.txt"
-  config:
-    commands:
-    - ["echo"]
+  - name: something
+    type: generic
+    srcs:
+      - "*.txt"
+    config:
+      commands:
+        - ["echo"]

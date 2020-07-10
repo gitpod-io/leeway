@@ -3,6 +3,7 @@ packages:
   type: generic
   deps:
   - wsa/pkg1:app
+  - wsa:app
   config:
     commands:
     - ["echo"]
