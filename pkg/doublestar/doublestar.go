@@ -7,15 +7,33 @@ import (
 	"github.com/karrick/godirwalk"
 )
 
-// NoIgnore ignores nothing
-var NoIgnore = func(path string) bool { return false }
+// IgnoreFunc checks if a path ought to be ignored
+type IgnoreFunc func(path string) bool
+
+// IgnoreNone ignores nothing
+var IgnoreNone IgnoreFunc = func(path string) bool { return false }
+
+// IgnoreStrings ignores all paths which contain one of the ignores substrings
+func IgnoreStrings(ignores []string) IgnoreFunc {
+	return func(path string) bool {
+		for _, ptn := range ignores {
+			if ptn == "" {
+				continue
+			}
+			if strings.Contains(path, ptn) {
+				return true
+			}
+		}
+		return false
+	}
+}
 
 // Glob finds all files that match the pattern and not the ignore func
-func Glob(base, pattern string, ignore func(path string) bool) ([]string, error) {
+func Glob(base, pattern string, ignore IgnoreFunc) ([]string, error) {
 	var res []string
 	err := godirwalk.Walk(base, &godirwalk.Options{
 		Callback: func(osPathname string, directoryEntry *godirwalk.Dirent) error {
-			if ignore(osPathname) {
+			if ignore != nil && ignore(osPathname) {
 				if directoryEntry.IsDir() {
 					return filepath.SkipDir
 				}

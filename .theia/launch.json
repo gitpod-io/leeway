@@ -11,7 +11,7 @@
       "program": "${workspaceFolder}/main.go",
       "env": {
           "LEEWAY_EXPERIMENTAL": "true",
-          "LEEWAY_IGNORE_NESTED_WORKSPACES": "true",
+          "LEEWAY_NESTED_WORKSPACE": "true",
       },
       "args": ["collect", "-w", "fixtures/nested-ws"]
     }

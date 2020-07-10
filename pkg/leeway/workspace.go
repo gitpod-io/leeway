@@ -53,15 +53,9 @@ func (ws *Workspace) ShouldIngoreSource(path string) bool {
 
 // FindNestedWorkspaces loads nested workspaces
 func FindNestedWorkspaces(path string, args Arguments, variant string) (res Workspace, err error) {
-	fc, _ := ioutil.ReadFile(filepath.Join(path, ".leewayignore"))
-	ignores := strings.Split(string(fc), "\n")
-	ignore := func(path string) bool {
-		for _, ptn := range ignores {
-			if strings.Contains(path, ptn) {
-				return true
-			}
-		}
-		return false
+	var ignore doublestar.IgnoreFunc
+	if fc, _ := ioutil.ReadFile(filepath.Join(path, ".leewayignore")); len(fc) > 0 {
+		ignore = doublestar.IgnoreStrings(strings.Split(string(fc), "\n"))
 	}
 
 	wss, err := doublestar.Glob(path, "**/WORKSPACE.yaml", ignore)
