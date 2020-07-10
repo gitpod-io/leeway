@@ -182,6 +182,57 @@ config:
   - ["sh", "-c", "ls *"]
 ```
 
+## Package Variants
+Leeway supports build-time variance through "package variants". Those variants are defined on the workspace level and can modify the list of sources, environment variables and config of packages.
+For example consider a `WORKSPACE.YAML` with this variants section:
+```YAML
+variants:
+- name: nogo
+  srcs:
+    exclude:
+    - "**/*.go"
+  config:
+    go:
+      buildFlags:
+        - tags: foo
+```
+
+This workspace has a (nonsensical) `nogo` variant that, when enabled, excludes all go source files from all packages.
+It also changes the config of all Go packages to include the `-tags foo` flag. You can explore the effects of a variant using `collect` and `describe`, e.g. `leeway --variant nogo collect files` vs `leeway collect files`.
+You can list all variants in a workspace using `leeway collect variants`.
+
+## Nested Workspaces
+Leeway has some experimental support for nested workspaces, e.g. a structure like this one:
+```
+/workspace
+/workspace/WORKSPACE.yaml
+/workspace/comp1/BUILD.yaml
+/workspace/otherWorkspace/WORKSPACE.yaml
+/workspace/otherWorkspace/comp2/BUILD.yaml
+```
+
+By default leeway would just ignore the nested `otherWorkspace/` folder and everything below, because of `otherWorkspace/WORKSPACE.yaml`. When nested workspace support is enabled though, the `otherWorkspace/` would be loaded as if it stood alone and merged into `/workspace`. For example:
+```
+$ export LEEWAY_NESTED_WORKSPACE=true
+$ leeway collect
+comp1:app
+otherWorkspace/comp2:app
+otherWorkspace/comp2:lib
+```
+
+- **inner workspaces are loaded as if they stood alone**: when leeway loads any nested workspace it does so as if that workspace stood for itself, i.e. were not nested. This means that all components are relative to that workspace root. In particular, dependencies remain stable no matter if a workspace is nested or not. E.g. `comp2:app` depending on `comp2:lib` works irregardless of workspace nesting.
+- **nested dependencies**: dependencies from an oter workspace into a nested one are possible and behave as if all packages were in the same workspace, e.g. `comp1:app` could depend on `otherWorkspace/comp2:app`. Dependencies out of a nested workspace are not allowed, e.g. `otherWorkspace/comp2:app` cannot depend on `comp1:app`.
+- **default arguments**: there is one exception to the "standalone", that is `defaultArgs`. The `defaultArgs` of the root workspace override the defaults of the nested workspaces. This is demonstrated by leeways test fixtures, where the message changes depending on the workspace that's loaded:
+  ```
+  $ export LEEWAY_NESTED_WORKSPACE=true
+  $ leeway run fixtures/nested-ws/wsa/pkg1:echo
+  hello world
+
+  $ leeway run -w fixtures/nested-ws wsa/pkg1:echo
+  hello root
+  ```
+- **variants**: only the root workspace's variants matter. Even if the nested workspace defined any, they'd simply be ignored.
+
 # Configuration
 Leeway is configured exclusively through the WORKSPACE.yaml/BUILD.yaml files and environment variables. The following environment
 variables have an effect on leeway:
