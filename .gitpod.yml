@@ -7,4 +7,6 @@ ports:
 
 # List the start up tasks. You can start them in parallel in multiple terminals. See https://www.gitpod.io/docs/44_config_start_tasks/
 tasks:
-- init: go get -v ./... && go generate -v ./...
+- init: |
+    git config core.hooksPath .githooks;
+    go get -v ./... && go generate -v ./...
