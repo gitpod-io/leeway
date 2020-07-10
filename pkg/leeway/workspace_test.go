@@ -66,10 +66,10 @@ func TestFixtureLoadWorkspace(t *testing.T) {
 			ExitCode:  0,
 		},
 		{
-			Name:      "nested workspace run scripts",
+			Name:      "nested workspace override default args",
 			T:         t,
 			Args:      []string{"run", "-w", "fixtures/nested-ws", "wsa/pkg1:echo"},
-			StdoutSub: "hello world",
+			StdoutSub: "hello root",
 			ExitCode:  0,
 		},
 	}

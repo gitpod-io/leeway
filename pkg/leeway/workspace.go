@@ -53,6 +53,11 @@ func (ws *Workspace) ShouldIngoreSource(path string) bool {
 
 // FindNestedWorkspaces loads nested workspaces
 func FindNestedWorkspaces(path string, args Arguments, variant string) (res Workspace, err error) {
+	rootWS, err := loadWorkspaceYAML(path)
+	if err != nil {
+		return Workspace{}, err
+	}
+
 	var ignore doublestar.IgnoreFunc
 	if fc, _ := ioutil.ReadFile(filepath.Join(path, ".leewayignore")); len(fc) > 0 {
 		ignore = doublestar.IgnoreStrings(strings.Split(string(fc), "\n"))
@@ -92,6 +97,7 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 					}
 				}
 			},
+			ArgumentDefaults: rootWS.ArgumentDefaults,
 		})
 		if err != nil {
 			return res, err
@@ -140,14 +146,9 @@ func filepathTrimPrefix(path, prefix string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(path, prefix), string(os.PathSeparator))
 }
 
-type loadWorkspaceOpts struct {
-	PrelinkModifier func(map[string]*Package)
-}
-
-func loadWorkspace(ctx context.Context, path string, args Arguments, variant string, opts *loadWorkspaceOpts) (Workspace, error) {
-	ctx, task := trace.NewTask(ctx, "loadWorkspace")
-	defer task.End()
-
+// loadWorkspaceYAML loads a workspace's YAML file only - does not linking or processing of any kind.
+// Probably you want to use loadWorkspace instead.
+func loadWorkspaceYAML(path string) (Workspace, error) {
 	root := filepath.Join(path, "WORKSPACE.yaml")
 	fc, err := ioutil.ReadFile(root)
 	if err != nil {
@@ -159,6 +160,22 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		return Workspace{}, err
 	}
 	workspace.Origin, err = filepath.Abs(filepath.Dir(root))
+	if err != nil {
+		return Workspace{}, err
+	}
+	return workspace, nil
+}
+
+type loadWorkspaceOpts struct {
+	PrelinkModifier  func(map[string]*Package)
+	ArgumentDefaults map[string]string
+}
+
+func loadWorkspace(ctx context.Context, path string, args Arguments, variant string, opts *loadWorkspaceOpts) (Workspace, error) {
+	ctx, task := trace.NewTask(ctx, "loadWorkspace")
+	defer task.End()
+
+	workspace, err := loadWorkspaceYAML(path)
 	if err != nil {
 		return Workspace{}, err
 	}
@@ -195,6 +212,16 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	}
 	workspace.ignores = ignores
 	log.WithField("ingores", workspace.ignores).Debug("computed workspace ignores")
+
+	if len(opts.ArgumentDefaults) > 0 {
+		if workspace.ArgumentDefaults == nil {
+			workspace.ArgumentDefaults = make(map[string]string)
+		}
+		for k, v := range opts.ArgumentDefaults {
+			workspace.ArgumentDefaults[k] = v
+		}
+		log.WithField("rootDefaultArgs", opts.ArgumentDefaults).Debug("installed root workspace defaults")
+	}
 
 	log.WithField("defaultArgs", workspace.ArgumentDefaults).Debug("applying workspace defaults")
 	for key, val := range workspace.ArgumentDefaults {
