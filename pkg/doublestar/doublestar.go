@@ -110,6 +110,7 @@ func match(patterns, paths []string) (matches bool, err error) {
 			return false, err
 		}
 		if match {
+			pathIndex++
 			continue
 		}
 

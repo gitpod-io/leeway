@@ -34,6 +34,7 @@ func TestMatch(t *testing.T) {
 		{"/a/b/**/**/c", "/a/b/1/c", true},
 		{"/a/b/**/c/**/d", "/a/b/1/c/2/d", true},
 		{"/a/b/**/c/**/d", "/a/b/1/c/2", false},
+		{"*/*.go", "src/foo.go", true},
 	}
 	for i, test := range tests {
 		t.Run(fmt.Sprintf("%03d_%s_%s", i, test.Pattern, test.Path), func(t *testing.T) {
