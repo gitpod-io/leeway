@@ -107,7 +107,7 @@ type PackageNotFoundErr struct {
 }
 
 func (n PackageNotFoundErr) Error() string {
-	return fmt.Sprintf("package \"%s\" is unkown", n.Package)
+	return fmt.Sprintf("package \"%s\" is unknown", n.Package)
 }
 
 type packageInternal struct {
