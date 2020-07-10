@@ -45,7 +45,7 @@ func sortPackageDeps(n *yaml.Node) {
 			}
 
 			nde := nde.Content[pkgIdx+1]
-			sort.Slice(nde.Content, func(i, j int) bool { return nde.Content[j].Value < nde.Content[i].Value })
+			sort.Slice(nde.Content, func(i, j int) bool { return nde.Content[i].Value < nde.Content[j].Value })
 		}
 	}
 }
