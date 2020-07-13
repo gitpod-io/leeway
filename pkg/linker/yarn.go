@@ -1,0 +1,163 @@
+package linker
+
+import (
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"os/exec"
+	"sort"
+	"strings"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/typefox/leeway/pkg/leeway"
+	"golang.org/x/xerrors"
+)
+
+// LinkTypescriptPackagesWithYarn2 uses `yarn link` to link all TS packages in-situ.
+func LinkTypescriptPackagesWithYarn2(workspace *leeway.Workspace) error {
+	var (
+		pkgIdx     = make(map[string]string)
+		pkgJSONIdx = make(map[string]string)
+	)
+	for n, p := range workspace.Packages {
+		if p.Type != leeway.TypescriptPackage {
+			continue
+		}
+
+		var pkgjsonFn string
+		for _, src := range p.Sources {
+			if strings.HasSuffix(src, "/package.json") {
+				pkgjsonFn = src
+				break
+			}
+		}
+		if pkgjsonFn == "" {
+			log.WithField("pkg", n).Warn("no package.json found - skipping")
+			continue
+		}
+		pkgJSONIdx[n] = pkgjsonFn
+
+		fc, err := ioutil.ReadFile(pkgjsonFn)
+		if err != nil {
+			return err
+		}
+		var pkgjson struct {
+			Name string `json:"name"`
+		}
+		err = json.Unmarshal(fc, &pkgjson)
+		if err != nil {
+			return err
+		}
+		pkgIdx[n] = pkgjson.Name
+	}
+
+	for n, p := range workspace.Packages {
+		if p.Type != leeway.TypescriptPackage {
+			continue
+		}
+		pkgjsonFn := pkgJSONIdx[n]
+
+		fc, err := ioutil.ReadFile(pkgjsonFn)
+		if err != nil {
+			return err
+		}
+		var pkgjson map[string]interface{}
+		err = json.Unmarshal(fc, &pkgjson)
+		if err != nil {
+			return err
+		}
+
+		var resolutions map[string]interface{}
+		if res, ok := pkgjson["resolutions"]; ok {
+			resolutions, ok = res.(map[string]interface{})
+			if !ok {
+				return xerrors.Errorf("%s: found resolutions but they're not a map", n)
+			}
+		} else {
+			resolutions = make(map[string]interface{})
+		}
+		for _, dep := range p.GetTransitiveDependencies() {
+			if dep.Type != leeway.TypescriptPackage {
+				continue
+			}
+
+			yarnPkg, ok := pkgIdx[dep.FullName()]
+			if !ok {
+				log.WithField("dep", dep.FullName()).WithField("pkg", n).Warn("did not find yarn package name - linking might be broken")
+				continue
+			}
+			resolutions[yarnPkg] = fmt.Sprintf("portal://%s", dep.C.Origin)
+		}
+		if len(resolutions) > 0 {
+			pkgjson["resolutions"] = resolutions
+		}
+
+		fd, err := os.OpenFile(pkgjsonFn, os.O_TRUNC|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		enc := json.NewEncoder(fd)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		err = enc.Encode(pkgjson)
+		fd.Close()
+		if err != nil {
+			return err
+		}
+
+		log.WithField("pkg", n).WithField("resolutions", resolutions).Debug("linked package")
+	}
+
+	var lerr error
+	for n, p := range workspace.Packages {
+		if p.Type != leeway.TypescriptPackage {
+			continue
+		}
+
+		cmd := exec.Command("yarn")
+		log.WithField("pkg", n).WithField("cwd", p.C.Origin).WithField("cmd", "yarn").Debug("running yarn")
+		cmd.Dir = p.C.Origin
+		cmd.Stdout = os.Stdout
+		cmd.Stdin = os.Stdin
+		cmd.Stderr = os.Stderr
+		err := cmd.Run()
+		if err != nil {
+			log.WithError(err).Error("error while running yarn")
+			lerr = xerrors.Errorf("yarn failed for %s: %w", n, err)
+		}
+	}
+
+	return lerr
+}
+
+func topologicalSort(pkgs []*leeway.Package) {
+	var (
+		idx  = make(map[string]int)
+		walk func(p *leeway.Package, depth int)
+	)
+	walk = func(p *leeway.Package, depth int) {
+		pn := p.FullName()
+		deps := p.GetDependencies()
+
+		d := idx[pn]
+		if d < depth {
+			d = depth
+		}
+		idx[pn] = d
+
+		for _, d := range deps {
+			walk(d, depth+1)
+		}
+	}
+	for _, p := range pkgs {
+		walk(p, 0)
+	}
+
+	log.WithField("idx", idx).Debug("found sorting")
+	sort.Slice(pkgs, func(i, j int) bool {
+		di := idx[pkgs[i].FullName()]
+		dj := idx[pkgs[j].FullName()]
+		return di > dj
+	})
+}

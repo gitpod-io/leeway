@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/linker"
 )
@@ -15,9 +16,22 @@ var linkCmd = &cobra.Command{
 			return err
 		}
 
-		err = linker.LinkGoModules(&ws)
-		if err != nil {
-			return err
+		if ok, _ := cmd.Flags().GetBool("go-link"); ok {
+			err = linker.LinkGoModules(&ws)
+			if err != nil {
+				return err
+			}
+		} else {
+			log.Info("go module linking disabled")
+		}
+
+		if ok, _ := cmd.Flags().GetBool("yarn2-link"); ok {
+			err = linker.LinkTypescriptPackagesWithYarn2(&ws)
+			if err != nil {
+				return err
+			}
+		} else {
+			log.Info("yarn2 package linking disabled")
 		}
 
 		return nil
@@ -26,4 +40,7 @@ var linkCmd = &cobra.Command{
 
 func init() {
 	addExperimentalCommand(rootCmd, linkCmd)
+
+	linkCmd.Flags().Bool("yarn2-link", false, "link typescript packages using yarn2 resolutions")
+	linkCmd.Flags().Bool("go-link", true, "link Go modules")
 }
