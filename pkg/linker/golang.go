@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
@@ -26,24 +27,30 @@ func LinkGoModules(workspace *leeway.Workspace) error {
 			continue
 		}
 
+		var apmods []goModule
 		for _, dep := range p.GetTransitiveDependencies() {
 			mod, ok := mods[dep.FullName()]
 			if !ok {
 				log.WithField("dep", dep.FullName()).Warn("did not find go.mod for this package - linking will probably be broken")
 			}
 
-			err = linkGoModule(p, mod)
-			if err != nil {
-				return err
-			}
+			apmods = append(apmods, mod)
 		}
 
+		sort.Slice(apmods, func(i, j int) bool {
+			return apmods[i].Name < apmods[j].Name
+		})
+
+		err = linkGoModule(p, apmods)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func linkGoModule(dst *leeway.Package, mod goModule) error {
+func linkGoModule(dst *leeway.Package, mods []goModule) error {
 	var goModFn string
 	for _, f := range dst.Sources {
 		if strings.HasSuffix(f, "go.mod") {
@@ -54,25 +61,28 @@ func linkGoModule(dst *leeway.Package, mod goModule) error {
 	if goModFn == "" {
 		return xerrors.Errorf("%w: go.mod not found", os.ErrNotExist)
 	}
-
-	relpath, err := filepath.Rel(filepath.Dir(goModFn), mod.OriginPath)
-	if err != nil {
-		return err
-	}
-
 	fc, err := ioutil.ReadFile(goModFn)
 	if err != nil {
 		return err
 	}
-
 	gomod, err := modfile.Parse(goModFn, fc, nil)
 	if err != nil {
 		return err
 	}
 
-	addReplace(gomod, module.Version{Path: mod.Name}, module.Version{Path: relpath}, true, mod.OriginPackage)
-	for _, r := range mod.Replacements {
-		addReplace(gomod, r.Old, r.New, false, mod.OriginPackage)
+	for _, mod := range mods {
+		relpath, err := filepath.Rel(filepath.Dir(goModFn), mod.OriginPath)
+		if err != nil {
+			return err
+		}
+
+		addReplace(gomod, module.Version{Path: mod.Name}, module.Version{Path: relpath}, true, mod.OriginPackage)
+		log.WithField("dst", dst.FullName()).WithField("dep", mod.Name).Debug("linked Go modules")
+	}
+	for _, mod := range mods {
+		for _, r := range mod.Replacements {
+			addReplace(gomod, r.Old, r.New, false, mod.OriginPackage)
+		}
 	}
 
 	gomod.Cleanup()
@@ -86,11 +96,27 @@ func linkGoModule(dst *leeway.Package, mod goModule) error {
 		return err
 	}
 
-	log.WithField("dst", dst.FullName()).WithField("dep", mod.Name).Info("linked Go modules")
 	return nil
 }
 
 func addReplace(gomod *modfile.File, old, new module.Version, direct bool, source string) error {
+	for _, rep := range gomod.Replace {
+		if rep.Old.Path != old.Path || rep.Old.Version != old.Version {
+			continue
+		}
+		if ok, tpe := isLeewayReplace(rep); ok && tpe != leewayReplaceIgnore {
+			err := gomod.DropReplace(old.Path, old.Version)
+			if err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		// replacement already exists - cannot replace
+		return xerrors.Errorf("replacement for %s exists already, but was not added by leeway", old.String())
+	}
+
 	err := gomod.AddReplace(old.Path, old.Version, new.Path, new.Version)
 	if err != nil {
 		return err
@@ -102,6 +128,7 @@ func addReplace(gomod *modfile.File, old, new module.Version, direct bool, sourc
 	}
 	for _, rep := range gomod.Replace {
 		if rep.Old.Path == old.Path && rep.Old.Version == old.Version {
+			rep.Syntax.InBlock = true
 			rep.Syntax.Comments.Suffix = []modfile.Comment{{Token: comment, Suffix: true}}
 		}
 	}
@@ -164,14 +191,30 @@ func collectReplacements(workspace *leeway.Workspace) (mods map[string]goModule,
 	return mods, nil
 }
 
-func isLeewayReplace(rep *modfile.Replace) (ok, direct bool) {
+type leewayReplaceType int
+
+const (
+	leewayReplaceDirect leewayReplaceType = iota
+	leewayReplaceIndirect
+	leewayReplaceIgnore
+)
+
+func isLeewayReplace(rep *modfile.Replace) (ok bool, tpe leewayReplaceType) {
 	for _, c := range rep.Syntax.Suffix {
 		if strings.Contains(c.Token, "leeway") {
 			ok = true
-			direct = !strings.Contains(c.Token, "indirect")
+
+			if strings.Contains(c.Token, " indirect ") {
+				tpe = leewayReplaceIndirect
+			} else if strings.Contains(c.Token, " ignore ") {
+				tpe = leewayReplaceIgnore
+			} else {
+				tpe = leewayReplaceDirect
+			}
+
 			return
 		}
 	}
 
-	return false, false
+	return false, leewayReplaceDirect
 }
