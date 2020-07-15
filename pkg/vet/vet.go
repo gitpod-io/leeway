@@ -22,20 +22,23 @@ type Check struct {
 
 // Finding describes a check finding. If the package is nil, the finding applies to the component
 type Finding struct {
+	Check       string
 	Component   *leeway.Component
-	Package     *leeway.Package `json:"package"`
-	Description string          `json:"description"`
-	Error       bool            `json:"error"`
+	Package     *leeway.Package
+	Description string
+	Error       bool
 }
 
 // MarshalJSON marshals a finding to JSON
 func (f Finding) MarshalJSON() ([]byte, error) {
 	var p struct {
+		Check       string `json:"check"`
 		Component   string `json:"component"`
 		Package     string `json:"package,omitempty"`
 		Description string `json:"description,omitempty"`
 		Error       bool   `json:"error"`
 	}
+	p.Check = f.Check
 	p.Component = f.Component.Name
 	if f.Package != nil {
 		p.Package = f.Package.FullName()
@@ -112,6 +115,7 @@ func Run(workspace leeway.Workspace, options ...RunOpt) ([]Finding, []error) {
 			checks = append(checks, c)
 		}
 	} else {
+		log.WithField("checks", opts.Checks).Debug("running selected checks only")
 		for _, cn := range opts.Checks {
 			c, ok := _checks[cn]
 			if !ok {
@@ -133,8 +137,11 @@ func Run(workspace leeway.Workspace, options ...RunOpt) ([]Finding, []error) {
 			log.WithField("check", c.Name).WithField("cmp", comp.Name).Debug("running component check")
 			f, err := c.RunCmp(comp)
 			if err != nil {
-				errs = append(errs, err)
+				errs = append(errs, fmt.Errorf("%s: %w", comp.Name, err))
 				return
+			}
+			for i := range f {
+				f[i].Check = c.Name
 			}
 			findings = append(findings, f...)
 		}
@@ -149,8 +156,11 @@ func Run(workspace leeway.Workspace, options ...RunOpt) ([]Finding, []error) {
 			log.WithField("check", c.Name).WithField("pkg", pkg.FullName()).Debug("running package check")
 			f, err := c.RunPkg(pkg)
 			if err != nil {
-				errs = append(errs, err)
+				errs = append(errs, fmt.Errorf("%s: %w", pkg.FullName(), err))
 				return
+			}
+			for i := range f {
+				f[i].Check = c.Name
 			}
 			findings = append(findings, f...)
 		}

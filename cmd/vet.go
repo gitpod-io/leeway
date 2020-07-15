@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+
 	"github.com/typefox/leeway/pkg/prettyprint"
 	"github.com/typefox/leeway/pkg/vet"
 
@@ -16,7 +18,7 @@ var vetCmd = &cobra.Command{
 		w := getWriterFromFlags(cmd)
 		if len(args) > 0 && args[0] == "ls" {
 			if w.FormatString == "" && w.Format == prettyprint.TemplateFormat {
-				w.FormatString = `{{ range . }}
+				w.FormatString = `{{ range . -}}
 {{ .Name }}{{"\t"}}{{ .Description }}
 {{ end }}`
 			}
@@ -49,22 +51,31 @@ var vetCmd = &cobra.Command{
 
 		findings, errs := vet.Run(ws)
 		if len(errs) != 0 {
-			log.Error(err.Error())
+			for _, err := range errs {
+				log.Error(err.Error())
+			}
 			return nil
 		}
 
 		if w.FormatString == "" && w.Format == prettyprint.TemplateFormat {
-			w.FormatString = `{{ range . -}}
-{{ if .Component -}}
-on "{{ .Component.Name }}"
-{{ end }}
-{{ if .Package -}}
-on "{{ .Package.FullName }}"
-{{ end }}
-	{{ .Description }}
+			w.FormatString = `{{ range . }}
+{{"\033"}}[90m{{ if .Package -}}📦{{"\t"}}{{ .Package.FullName }}{{ else if .Component }}🗃️{{"\t"}}{{ .Component.Name }}{{ end }}
+✔️ {{ .Check }}{{"\033"}}[0m
+{{ if .Error -}}❌{{ else }}⚠️{{ end -}}{{"\t"}}{{ .Description }}
 {{ end }}`
 		}
-		return w.Write(findings)
+		err = w.Write(findings)
+		if err != nil {
+			return err
+		}
+
+		if len(findings) == 0 {
+			os.Exit(0)
+		} else {
+			os.Exit(128)
+		}
+
+		return nil
 	},
 }
 
