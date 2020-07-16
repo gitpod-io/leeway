@@ -263,15 +263,17 @@ func (p *Package) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 func unmarshalTypeDependentConfig(tpe PackageType, unmarshal func(interface{}) error) (PackageConfig, error) {
 	switch tpe {
-	case TypescriptPackage:
+	case DeprecatedTypescriptPackage:
+		fallthrough
+	case YarnPackage:
 		var cfg struct {
-			Config TypescriptPkgConfig `yaml:"config"`
+			Config YarnPkgConfig `yaml:"config"`
 		}
 		if err := unmarshal(&cfg); err != nil {
 			return nil, err
 		}
 		if cfg.Config.Packaging == "" {
-			cfg.Config.Packaging = TypescriptApp
+			cfg.Config.Packaging = YarnApp
 		}
 		if err := cfg.Config.Validate(); err != nil {
 			return nil, err
@@ -316,17 +318,17 @@ func unmarshalTypeDependentConfig(tpe PackageType, unmarshal func(interface{}) e
 }
 
 // PackageConfig is the YAML unmarshalling config type of packages.
-// This is one of TypescriptPkgConfig, GoPkgConfig, DockerPkgConfig or GenericPkgConfig.
+// This is one of YarnPkgConfig, GoPkgConfig, DockerPkgConfig or GenericPkgConfig.
 type PackageConfig interface {
 	AdditionalSources() []string
 }
 
-// TypescriptPkgConfig configures a typescript package
-type TypescriptPkgConfig struct {
-	YarnLock  string              `yaml:"yarnLock,omitempty"`
-	TSConfig  string              `yaml:"tsconfig"`
-	Packaging TypescriptPackaging `yaml:"packaging,omitempty"`
-	DontTest  bool                `yaml:"dontTest,omitempty"`
+// YarnPkgConfig configures a typescript package
+type YarnPkgConfig struct {
+	YarnLock  string        `yaml:"yarnLock,omitempty"`
+	TSConfig  string        `yaml:"tsconfig"`
+	Packaging YarnPackaging `yaml:"packaging,omitempty"`
+	DontTest  bool          `yaml:"dontTest,omitempty"`
 	Commands  struct {
 		Install []string `yaml:"install,omitempty"`
 		Build   []string `yaml:"build,omitempty"`
@@ -335,12 +337,12 @@ type TypescriptPkgConfig struct {
 }
 
 // Validate ensures this config can be acted upon/is valid
-func (cfg TypescriptPkgConfig) Validate() error {
+func (cfg YarnPkgConfig) Validate() error {
 	switch cfg.Packaging {
-	case TypescriptLibrary:
-	case TypescriptOfflineMirror:
-	case TypescriptApp:
-	case TypescriptArchive:
+	case YarnLibrary:
+	case YarnOfflineMirror:
+	case YarnApp:
+	case YarnArchive:
 	default:
 		return xerrors.Errorf("unknown packaging: %s", cfg.Packaging)
 	}
@@ -348,22 +350,22 @@ func (cfg TypescriptPkgConfig) Validate() error {
 	return nil
 }
 
-// TypescriptPackaging configures the packaging method of a typescript package
-type TypescriptPackaging string
+// YarnPackaging configures the packaging method of a typescript package
+type YarnPackaging string
 
 const (
-	// TypescriptLibrary means the package will be created using `yarn pack`
-	TypescriptLibrary TypescriptPackaging = "library"
-	// TypescriptOfflineMirror means that the package will become a yarn offline mirror
-	TypescriptOfflineMirror TypescriptPackaging = "offline-mirror"
-	// TypescriptApp installs the package using an empty package.json and tars the resulting node_modules/
-	TypescriptApp TypescriptPackaging = "app"
-	// TypescriptArchive simply tars the build directory
-	TypescriptArchive TypescriptPackaging = "archive"
+	// YarnLibrary means the package will be created using `yarn pack`
+	YarnLibrary YarnPackaging = "library"
+	// YarnOfflineMirror means that the package will become a yarn offline mirror
+	YarnOfflineMirror YarnPackaging = "offline-mirror"
+	// YarnApp installs the package using an empty package.json and tars the resulting node_modules/
+	YarnApp YarnPackaging = "app"
+	// YarnArchive simply tars the build directory
+	YarnArchive YarnPackaging = "archive"
 )
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
-func (cfg TypescriptPkgConfig) AdditionalSources() []string {
+func (cfg YarnPkgConfig) AdditionalSources() []string {
 	var res []string
 	if cfg.YarnLock != "" {
 		res = append(res, cfg.YarnLock)
@@ -437,8 +439,11 @@ func (cfg GenericPkgConfig) AdditionalSources() []string {
 type PackageType string
 
 const (
-	// TypescriptPackage runs tsc in a package and produces a yarn offline mirror
-	TypescriptPackage PackageType = "typescript"
+	// DeprecatedTypescriptPackage runs tsc in a package and produces a yarn offline mirror
+	DeprecatedTypescriptPackage PackageType = "typescript"
+
+	// YarnPackage uses the yarn package manager to download dependencies and build the package
+	YarnPackage PackageType = "yarn"
 
 	// GoPackage runs go build and produces a binary file
 	GoPackage PackageType = "go"
@@ -460,7 +465,7 @@ func (p *PackageType) UnmarshalYAML(unmarshal func(interface{}) error) (err erro
 
 	*p = PackageType(val)
 	switch *p {
-	case TypescriptPackage, GoPackage, DockerPackage, GenericPackage:
+	case DeprecatedTypescriptPackage, YarnPackage, GoPackage, DockerPackage, GenericPackage:
 	default:
 		return fmt.Errorf("invalid package type: %s", err)
 	}

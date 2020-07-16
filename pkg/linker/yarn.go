@@ -14,14 +14,14 @@ import (
 	"golang.org/x/xerrors"
 )
 
-// LinkTypescriptPackagesWithYarn2 uses `yarn link` to link all TS packages in-situ.
-func LinkTypescriptPackagesWithYarn2(workspace *leeway.Workspace) error {
+// LinkYarnPackagesWithYarn2 uses `yarn link` to link all TS packages in-situ.
+func LinkYarnPackagesWithYarn2(workspace *leeway.Workspace) error {
 	var (
 		pkgIdx     = make(map[string]string)
 		pkgJSONIdx = make(map[string]string)
 	)
 	for n, p := range workspace.Packages {
-		if p.Type != leeway.TypescriptPackage {
+		if p.Type != leeway.YarnPackage {
 			continue
 		}
 
@@ -53,7 +53,7 @@ func LinkTypescriptPackagesWithYarn2(workspace *leeway.Workspace) error {
 	}
 
 	for n, p := range workspace.Packages {
-		if p.Type != leeway.TypescriptPackage {
+		if p.Type != leeway.YarnPackage {
 			continue
 		}
 		pkgjsonFn := pkgJSONIdx[n]
@@ -78,7 +78,7 @@ func LinkTypescriptPackagesWithYarn2(workspace *leeway.Workspace) error {
 			resolutions = make(map[string]interface{})
 		}
 		for _, dep := range p.GetTransitiveDependencies() {
-			if dep.Type != leeway.TypescriptPackage {
+			if dep.Type != leeway.YarnPackage {
 				continue
 			}
 
@@ -111,7 +111,7 @@ func LinkTypescriptPackagesWithYarn2(workspace *leeway.Workspace) error {
 
 	var lerr error
 	for n, p := range workspace.Packages {
-		if p.Type != leeway.TypescriptPackage {
+		if p.Type != leeway.YarnPackage {
 			continue
 		}
 

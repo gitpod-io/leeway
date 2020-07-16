@@ -209,8 +209,8 @@ func newConfigDescription(tpe leeway.PackageType, c leeway.PackageConfig) config
 		cfg["dontTest"] = c.DontTest
 		cfg["generate"] = c.Generate
 		cfg["packaging"] = c.Packaging
-	case leeway.TypescriptPackage:
-		c := c.(leeway.TypescriptPkgConfig)
+	case leeway.YarnPackage:
+		c := c.(leeway.YarnPkgConfig)
 		cfg["dontTest"] = c.DontTest
 		cfg["packaging"] = c.Packaging
 		cfg["tsConfig"] = c.TSConfig

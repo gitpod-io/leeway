@@ -157,7 +157,7 @@ var collectCmd = &cobra.Command{
 				}
 				decs[i].Sources.Exclude = v.Sources.Exclude
 				decs[i].Sources.Include = v.Sources.Include
-				for _, t := range []leeway.PackageType{leeway.DockerPackage, leeway.GenericPackage, leeway.GoPackage, leeway.TypescriptPackage} {
+				for _, t := range []leeway.PackageType{leeway.DockerPackage, leeway.GenericPackage, leeway.GoPackage, leeway.YarnPackage} {
 					vntcfg, ok := v.Config(t)
 					if !ok {
 						continue

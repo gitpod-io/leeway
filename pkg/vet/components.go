@@ -23,7 +23,7 @@ func checkComponentsFmt(comp *leeway.Component) ([]Finding, error) {
 	}
 
 	buf := bytes.NewBuffer(nil)
-	err = leeway.FormatBUILDyaml(buf, bytes.NewReader(fc))
+	err = leeway.FormatBUILDyaml(buf, bytes.NewReader(fc), false)
 	if err != nil {
 		return nil, err
 	}

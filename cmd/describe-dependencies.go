@@ -66,8 +66,8 @@ func printDepTree(pkg *leeway.Package, indent int) {
 		tpe = "generic"
 	case leeway.GoPackage:
 		tpe = "go"
-	case leeway.TypescriptPackage:
-		tpe = "ts"
+	case leeway.YarnPackage:
+		tpe = "yarn"
 	}
 
 	fmt.Printf("%*s%s %s\n", indent, "", color.Gray.Sprintf("[%7s]", tpe), pkg.FullName())
