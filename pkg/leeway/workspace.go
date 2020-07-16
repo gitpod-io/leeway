@@ -355,9 +355,14 @@ func discoverComponents(ctx context.Context, workspace *Workspace, args Argument
 }
 
 // loadComponent loads a component from a BUILD.yaml file
-func loadComponent(ctx context.Context, workspace *Workspace, path string, args Arguments, variant *PackageVariant) (Component, error) {
+func loadComponent(ctx context.Context, workspace *Workspace, path string, args Arguments, variant *PackageVariant) (c Component, err error) {
 	defer trace.StartRegion(context.Background(), "loadComponent").End()
 	trace.Log(ctx, "component", path)
+	defer func() {
+		if err != nil {
+			err = xerrors.Errorf("%s: %w", path, err)
+		}
+	}()
 
 	fc, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -412,6 +417,10 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 	comp.Origin = filepath.Dir(path)
 	for i, pkg := range comp.Packages {
 		pkg.C = &comp
+		if pkg.Type == "typescript" {
+			log.WithField("pkg", pkg.FullName()).Warn("package uses deprecated \"typescript\" type - use \"yarn\" instead")
+			pkg.Type = YarnPackage
+		}
 
 		pkg.Definition, err = yaml.Marshal(&rawcomp.Packages[i])
 		if err != nil {
@@ -527,9 +536,9 @@ func mergeConfig(pkg *Package, src PackageConfig) error {
 	}
 
 	switch pkg.Config.(type) {
-	case TypescriptPkgConfig:
-		dst := pkg.Config.(TypescriptPkgConfig)
-		in, ok := src.(TypescriptPkgConfig)
+	case YarnPkgConfig:
+		dst := pkg.Config.(YarnPkgConfig)
+		in, ok := src.(YarnPkgConfig)
 		if !ok {
 			return xerrors.Errorf("cannot merge %s onto %s", reflect.TypeOf(src).String(), reflect.TypeOf(dst).String())
 		}

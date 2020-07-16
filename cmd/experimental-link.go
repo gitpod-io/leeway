@@ -26,7 +26,7 @@ var linkCmd = &cobra.Command{
 		}
 
 		if ok, _ := cmd.Flags().GetBool("yarn2-link"); ok {
-			err = linker.LinkTypescriptPackagesWithYarn2(&ws)
+			err = linker.LinkYarnPackagesWithYarn2(&ws)
 			if err != nil {
 				return err
 			}

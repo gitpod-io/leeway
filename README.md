@@ -1,11 +1,11 @@
 ![Leeway](logo.png)
 
-Leeway is a heavily caching build system for Go, Typescript and Docker projects.
+Leeway is a heavily caching build system for Go, Yarn and Docker projects.
 Its features are:
 - **source dependent versions**: leeway computes the version of a package based on the sources, dependencies and configuration that make up this package. There's no need (or means) to manually version packages.
 - **two-level package cache**: leeway caches its build results locally and remotely. The remote cache (a Google Cloud Storage bucket) means builds can share their results and thus become drastically faster.
 - **parallel builds**: because leeway understands the dependencies of your packages it can build them as parallel as possible.
-- **built-in support for Typescript and Go**: leeway knows how to link, build and test Typescript and Go packages and applications. This makes building software written in those languages straight forward.
+- **built-in support for Yarn and Go**: leeway knows how to link, build and test Yarn and Go packages and applications. This makes building software written in those languages straight forward.
 - **build arguments**: leeway supports build arguments which can parametrize packages at build time. We support version dependent arguments (where the version depends on the argument value), component-wide constants and workspace-level defaults.
 - **rich CLI**: leeways CLI supports deep inspection of the workspace and its structure. Its output is easy to understand and looks good.
 
@@ -55,7 +55,7 @@ A package is an entry in a `BUILD.yaml` in the `packages` section. All packages 
 ```YAML
 # name is the component-wide unique name of this package
 name: must-not-contain-spaces
-# Package type must be one of: go, typescript, docker, generic
+# Package type must be one of: go, yarn, docker, generic
 type: generic
 # Sources list all sources of this package. Entries can be double-star globs and are relative to the component root.
 # Avoid listing sources outside the component folder.
@@ -136,7 +136,7 @@ config:
   buildFlags: []
 ```
 
-### Typescript packages
+### Yarn packages
 ```YAML
 config:
   # yarnlock is the path to the yarn.lock used to build this package. Defaults to `yarn.lock`. Useful when building packages in a Yarn workspace setup.
@@ -145,7 +145,7 @@ config:
   # tsconfig is the path to the tsconfig.json used to build this package. Detauls to `tsconfig.json`
   # Automatically added to the package sources.
   tsconfig: "tsconfig.json"
-  # packaging method. See https://godoc.org/github.com/TypeFox/leeway/pkg/leeway#TypescriptPackaging for details.
+  # packaging method. See https://godoc.org/github.com/TypeFox/leeway/pkg/leeway#YarnPackaging for details.
   # Defaults to library
   packaging: library
   # If true disables `yarn test`
@@ -153,7 +153,7 @@ config:
   # commands overrides the default commands executed during build
   commands:
     install: ["yarn", "install"]
-    build: ["npx", "tsc"]
+    build: ["yarn", "build"]
     test: ["yarn", "test"]
 ```
 

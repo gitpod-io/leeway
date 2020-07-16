@@ -107,7 +107,7 @@ func getPackageType(pkg *leeway.Package) (typen string) {
 		typen = "generic"
 	case leeway.GoPkgConfig:
 		typen = "go-" + string(c.Packaging)
-	case leeway.TypescriptPkgConfig:
+	case leeway.YarnPkgConfig:
 		typen = "typescript-" + string(c.Packaging)
 	}
 	return typen

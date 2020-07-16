@@ -27,9 +27,12 @@ var fmtCmd = &cobra.Command{
 			}
 		}
 
-		inPlace, _ := cmd.Flags().GetBool("in-place")
+		var (
+			inPlace, _ = cmd.Flags().GetBool("in-place")
+			fix, _     = cmd.Flags().GetBool("fix")
+		)
 		for _, fn := range fns {
-			err := formatBuildYaml(fn, inPlace)
+			err := formatBuildYaml(fn, inPlace, fix)
 			if err != nil {
 				return err
 			}
@@ -39,7 +42,7 @@ var fmtCmd = &cobra.Command{
 	},
 }
 
-func formatBuildYaml(fn string, inPlace bool) error {
+func formatBuildYaml(fn string, inPlace, fix bool) error {
 	f, err := os.OpenFile(fn, os.O_RDWR, 0644)
 	if err != nil {
 		return err
@@ -60,7 +63,7 @@ func formatBuildYaml(fn string, inPlace bool) error {
 		fmt.Printf("---\n# %s\n", fn)
 	}
 
-	err = leeway.FormatBUILDyaml(out, f)
+	err = leeway.FormatBUILDyaml(out, f, fix)
 	if err != nil {
 		return err
 	}
@@ -72,4 +75,5 @@ func init() {
 	rootCmd.AddCommand(fmtCmd)
 
 	fmtCmd.Flags().BoolP("in-place", "i", false, "format file in place rather than printing it to stdout")
+	fmtCmd.Flags().BoolP("fix", "f", false, "fix issues other than formatting (e.g. deprecated package types)")
 }

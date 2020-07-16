@@ -74,10 +74,10 @@ const (
 // buildProcessVersions contain the current version of the respective build processes.
 // Increment this value if you change any of the build procedures.
 var buildProcessVersions = map[PackageType]int{
-	TypescriptPackage: 6,
-	GoPackage:         1,
-	DockerPackage:     1,
-	GenericPackage:    1,
+	YarnPackage:    6,
+	GoPackage:      1,
+	DockerPackage:  1,
+	GenericPackage: 1,
 }
 
 func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
@@ -504,8 +504,8 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	result, _ := buildctx.LocalCache.Location(p)
 
 	switch p.Type {
-	case TypescriptPackage:
-		err = p.buildTypescript(buildctx, builddir, result)
+	case YarnPackage:
+		err = p.buildYarn(buildctx, builddir, result)
 	case GoPackage:
 		err = p.buildGo(buildctx, builddir, result)
 	case DockerPackage:
@@ -552,10 +552,10 @@ rm -r yarn.lock _temp_yarn_cache
 	installerPackageJSONTemplate = `{"name":"local","version":"%s","license":"UNLICENSED","dependencies":{"%s":"%s"}}`
 )
 
-// buildTypescript implements the build process for Typescript packages.
+// buildYarn implements the build process for Typescript packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
-func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (err error) {
-	cfg, ok := p.Config.(TypescriptPkgConfig)
+func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err error) {
+	cfg, ok := p.Config.(YarnPkgConfig)
 	if !ok {
 		return xerrors.Errorf("package should have typescript config")
 	}
@@ -585,7 +585,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		commands = append(commands, []string{"cp", filepath.Join(p.C.Origin, cfg.TSConfig), "."})
 	}
 
-	if cfg.Packaging == TypescriptOfflineMirror {
+	if cfg.Packaging == YarnOfflineMirror {
 		err := os.Mkdir(filepath.Join(wd, "_mirror"), 0755)
 		if err != nil {
 			return err
@@ -618,16 +618,16 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		}
 
 		tgt := deppkg.FilesystemSafeName()
-		if cfg.Packaging == TypescriptOfflineMirror {
+		if cfg.Packaging == YarnOfflineMirror {
 			fn := fmt.Sprintf("%s.tar.gz", tgt)
 			commands = append(commands, []string{"cp", builtpkg, filepath.Join("_mirror", fn)})
 			builtpkg = filepath.Join(wd, "_mirror", fn)
 		}
 
 		var isTSLibrary bool
-		if deppkg.Type == TypescriptPackage {
-			cfg, ok := deppkg.Config.(TypescriptPkgConfig)
-			if ok && cfg.Packaging == TypescriptLibrary {
+		if deppkg.Type == YarnPackage {
+			cfg, ok := deppkg.Config.(YarnPkgConfig)
+			if ok && cfg.Packaging == YarnLibrary {
 				isTSLibrary = true
 			}
 		}
@@ -653,7 +653,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
 	}
 	var modifiedPackageJSON bool
-	if cfg.Packaging == TypescriptLibrary {
+	if cfg.Packaging == YarnLibrary {
 		// We can't modify the `yarn pack` generated tar file without runnign the risk of yarn blocking when attempting to unpack it again. Thus, we must include the pkgYarnLock in the npm
 		// package we're building. To this end, we modify the package.json of the source package.
 		var packageJSONFiles []interface{}
@@ -670,7 +670,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 
 		modifiedPackageJSON = true
 	}
-	if cfg.Packaging == TypescriptApp {
+	if cfg.Packaging == YarnApp {
 		// We have to give this package a unique version to make sure we do not "poison" the yarn cache with this particular application version.
 		// The yarn package name and leeway package name do not have to be the same which makes it possible to "reuse" the npm package name for
 		// different things. This yarn cache can't handle that.
@@ -715,7 +715,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		commands = append(commands, cfg.Commands.Install)
 	}
 	if len(cfg.Commands.Build) == 0 {
-		commands = append(commands, []string{"npx", "tsc"})
+		commands = append(commands, []string{"yarn", "build"})
 	} else {
 		commands = append(commands, cfg.Commands.Build)
 	}
@@ -727,7 +727,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 		}
 	}
 
-	if cfg.Packaging == TypescriptOfflineMirror {
+	if cfg.Packaging == YarnOfflineMirror {
 		builtinScripts := map[string]string{
 			"get_yarn_lock.sh":       getYarnLockScript,
 			"install.sh":             installScript,
@@ -747,12 +747,12 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 			{"yarn", "pack", "--filename", dst},
 			{"tar", "cfz", result, "-C", "_mirror", "."},
 		}...)
-	} else if cfg.Packaging == TypescriptLibrary {
+	} else if cfg.Packaging == YarnLibrary {
 		commands = append(commands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://%s > %s", result, pkgYarnLock)},
 			{"yarn", "pack", "--filename", result},
 		}...)
-	} else if cfg.Packaging == TypescriptApp {
+	} else if cfg.Packaging == YarnApp {
 		err := os.Mkdir(filepath.Join(wd, "_pkg"), 0755)
 		if err != nil {
 			return err
@@ -770,7 +770,7 @@ func (p *Package) buildTypescript(buildctx *buildContext, wd, result string) (er
 			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
 			{"tar", "cfz", result, "-C", "_pkg", "."},
 		}...)
-	} else if cfg.Packaging == TypescriptArchive {
+	} else if cfg.Packaging == YarnArchive {
 		commands = append(commands, []string{"tar", "cfz", result, "."})
 	} else {
 		return xerrors.Errorf("unknown Typescript packaging: %s", cfg.Packaging)
