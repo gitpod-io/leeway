@@ -133,7 +133,8 @@ type Package struct {
 	// Definition is the raw package definition YAML
 	Definition []byte `yaml:"-"`
 
-	dependencies []*Package
+	dependencies    []*Package
+	originalSources []string
 }
 
 // link connects resolves the references to the dependencies

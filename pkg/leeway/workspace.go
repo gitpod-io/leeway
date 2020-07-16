@@ -417,6 +417,7 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 			return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 		}
 
+		pkg.originalSources = pkg.Sources
 		pkg.Sources, err = resolveSources(pkg.C.W, pkg.C.Origin, pkg.Sources, false)
 		if err != nil {
 			return comp, xerrors.Errorf("%s: %w", comp.Name, err)
