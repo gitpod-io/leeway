@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -25,66 +26,127 @@ var buildCmd = &cobra.Command{
 		if pkg == nil {
 			log.Fatal("tree needs a package")
 		}
-
 		opts, localCache := getBuildOpts(cmd)
+
+		var (
+			watch, _ = cmd.Flags().GetBool("watch")
+			save, _  = cmd.Flags().GetString("save")
+			serve, _ = cmd.Flags().GetString("serve")
+		)
+		if watch {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			err := leeway.Build(pkg, opts...)
+			if err != nil {
+				log.Fatal(err)
+			}
+			ctx, cancel = context.WithCancel(context.Background())
+			if save != "" {
+				saveBuildResult(ctx, save, localCache, pkg)
+			}
+			if serve != "" {
+				go serveBuildResult(ctx, serve, localCache, pkg)
+			}
+
+			evt, errs := leeway.WatchSources(context.Background(), append(pkg.GetTransitiveDependencies(), pkg))
+			for {
+				select {
+				case <-evt:
+					_, pkg, _, _ := getTarget(args, false)
+					err := leeway.Build(pkg, opts...)
+					if err != nil {
+						log.Fatal(err)
+					}
+
+					cancel()
+					ctx, cancel = context.WithCancel(context.Background())
+					if save != "" {
+						saveBuildResult(ctx, save, localCache, pkg)
+					}
+					if serve != "" {
+						go serveBuildResult(ctx, serve, localCache, pkg)
+					}
+				case err = <-errs:
+					log.Fatal(err)
+				}
+			}
+		}
+
 		err := leeway.Build(pkg, opts...)
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		save, _ := cmd.Flags().GetString("save")
 		if save != "" {
-			br, exists := localCache.Location(pkg)
-			if !exists {
-				log.Fatal("build result is not in local cache despite just being built. Something's wrong with the cache.")
-			}
-
-			fout, err := os.OpenFile(save, os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				log.WithError(err).Fatal("cannot open result file for writing")
-			}
-			fin, err := os.OpenFile(br, os.O_RDONLY, 0644)
-			if err != nil {
-				fout.Close()
-				log.WithError(err).Fatal("cannot copy build result")
-			}
-
-			_, err = io.Copy(fout, fin)
-			fout.Close()
-			fin.Close()
-			if err != nil {
-				log.WithError(err).Fatal("cannot copy build result")
-			}
-
-			fmt.Printf("\n💾  saving build result to %s\n", color.Cyan.Render(save))
+			saveBuildResult(context.Background(), save, localCache, pkg)
 		}
-
-		serve, _ := cmd.Flags().GetString("serve")
 		if serve != "" {
-			br, exists := localCache.Location(pkg)
-			if !exists {
-				log.Fatal("build result is not in local cache despite just being built. Something's wrong with the cache.")
-			}
-
-			tmp, err := ioutil.TempDir("", "leeway_serve")
-			if err != nil {
-				log.WithError(err).Fatal("cannot serve build result")
-			}
-
-			cmd := exec.Command("tar", "xzf", br)
-			cmd.Dir = tmp
-			_, err = cmd.CombinedOutput()
-			if err != nil {
-				log.WithError(err).Fatal("cannot serve build result")
-			}
-
-			fmt.Printf("\n📢  serving build result on %s\n", color.Cyan.Render(serve))
-			err = http.ListenAndServe(serve, http.FileServer(http.Dir(tmp)))
-			if err != nil {
-				log.Fatal(err)
-			}
+			serveBuildResult(context.Background(), serve, localCache, pkg)
 		}
 	},
+}
+
+func serveBuildResult(ctx context.Context, addr string, localCache *leeway.FilesystemCache, pkg *leeway.Package) {
+	br, exists := localCache.Location(pkg)
+	if !exists {
+		log.Fatal("build result is not in local cache despite just being built. Something's wrong with the cache.")
+	}
+
+	tmp, err := ioutil.TempDir("", "leeway_serve")
+	if err != nil {
+		log.WithError(err).Fatal("cannot serve build result")
+	}
+
+	cmd := exec.Command("tar", "xzf", br)
+	cmd.Dir = tmp
+	_, err = cmd.CombinedOutput()
+	if err != nil {
+		log.WithError(err).Fatal("cannot serve build result")
+	}
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	fmt.Printf("\n📢  serving build result on %s\n", color.Cyan.Render(addr))
+	server := &http.Server{Addr: addr, Handler: http.FileServer(http.Dir(tmp))}
+	go func() {
+		err = server.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+	<-ctx.Done()
+	err = server.Close()
+	if err != nil {
+		log.WithError(err).Error("cannot close server")
+	}
+}
+
+func saveBuildResult(ctx context.Context, loc string, localCache *leeway.FilesystemCache, pkg *leeway.Package) {
+	br, exists := localCache.Location(pkg)
+	if !exists {
+		log.Fatal("build result is not in local cache despite just being built. Something's wrong with the cache.")
+	}
+
+	fout, err := os.OpenFile(loc, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.WithError(err).Fatal("cannot open result file for writing")
+	}
+	fin, err := os.OpenFile(br, os.O_RDONLY, 0644)
+	if err != nil {
+		fout.Close()
+		log.WithError(err).Fatal("cannot copy build result")
+	}
+
+	_, err = io.Copy(fout, fin)
+	fout.Close()
+	fin.Close()
+	if err != nil {
+		log.WithError(err).Fatal("cannot copy build result")
+	}
+
+	fmt.Printf("\n💾  saving build result to %s\n", color.Cyan.Render(loc))
 }
 
 func init() {
@@ -93,6 +155,7 @@ func init() {
 	addBuildFlags(buildCmd)
 	buildCmd.Flags().String("serve", "", "After a successful build this starts a webserver on the given address serving the build result (e.g. --serve localhost:8080)")
 	buildCmd.Flags().String("save", "", "After a successful build this saves the build result as tar.gz file in the local filesystem (e.g. --save build-result.tar.gz)")
+	buildCmd.Flags().Bool("watch", false, "Watch source files and re-build on change")
 }
 
 func addBuildFlags(cmd *cobra.Command) {
