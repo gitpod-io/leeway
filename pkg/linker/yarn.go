@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
@@ -129,35 +128,4 @@ func LinkTypescriptPackagesWithYarn2(workspace *leeway.Workspace) error {
 	}
 
 	return lerr
-}
-
-func topologicalSort(pkgs []*leeway.Package) {
-	var (
-		idx  = make(map[string]int)
-		walk func(p *leeway.Package, depth int)
-	)
-	walk = func(p *leeway.Package, depth int) {
-		pn := p.FullName()
-		deps := p.GetDependencies()
-
-		d := idx[pn]
-		if d < depth {
-			d = depth
-		}
-		idx[pn] = d
-
-		for _, d := range deps {
-			walk(d, depth+1)
-		}
-	}
-	for _, p := range pkgs {
-		walk(p, 0)
-	}
-
-	log.WithField("idx", idx).Debug("found sorting")
-	sort.Slice(pkgs, func(i, j int) bool {
-		di := idx[pkgs[i].FullName()]
-		dj := idx[pkgs[j].FullName()]
-		return di > dj
-	})
 }
