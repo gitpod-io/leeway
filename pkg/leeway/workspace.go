@@ -91,6 +91,7 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 						} else {
 							otherKey = fmt.Sprintf("%s/%s", relativeOrigin, k)
 						}
+						p.fullNameOverride = otherKey
 						packages[otherKey] = p
 
 						log.WithField("relativeOrigin", relativeOrigin).WithField("package", otherKey).Debug("prelinking previously loaded workspace")

@@ -133,8 +133,9 @@ type Package struct {
 	// Definition is the raw package definition YAML
 	Definition []byte `yaml:"-"`
 
-	dependencies    []*Package
-	originalSources []string
+	dependencies     []*Package
+	originalSources  []string
+	fullNameOverride string
 }
 
 // link connects resolves the references to the dependencies
@@ -617,6 +618,9 @@ func (c CacheLevel) RemoteUpload() bool {
 
 // FullName returns the packages fully qualified name (component:package)
 func (p *Package) FullName() string {
+	if p.fullNameOverride != "" {
+		return p.fullNameOverride
+	}
 	return fmt.Sprintf("%s:%s", p.C.Name, p.Name)
 }
 
