@@ -3,11 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
-	"os/signal"
-	"syscall"
+	"sync"
 
+	"github.com/creack/pty"
+	"github.com/gookit/color"
+	"github.com/segmentio/textio"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/leeway"
@@ -114,12 +117,8 @@ Example use:
 			return res, pkgs
 		}
 
-		var procs []func() error
+		var wg sync.WaitGroup
 		execute := func(locs []loc) error {
-			for _, p := range procs {
-				p()
-			}
-
 			execCmd := args[1:]
 			for _, loc := range locs {
 				if loc.Package != nil {
@@ -127,31 +126,38 @@ Example use:
 				} else {
 					log.WithField("dir", loc.Dir).Infof("running %q", execCmd)
 				}
+				prefix := color.Gray.Render(fmt.Sprintf("[%s] ", loc.Name))
+
 				cmd := exec.Command(execCmd[0], execCmd[1:]...)
-				cmd.Stdin = os.Stdin
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
 				cmd.Dir = loc.Dir
+				ptmx, err := pty.Start(cmd)
+				if err != nil {
+					return fmt.Errorf("execution failed in %s (%s): %w", loc.Name, loc.Dir, err)
+				}
+				pty.InheritSize(ptmx, os.Stdin)
+				defer ptmx.Close()
+
+				go io.Copy(textio.NewPrefixWriter(os.Stdout, prefix), ptmx)
+				go io.Copy(ptmx, os.Stdin)
 				if parallel {
-					err := cmd.Start()
-					if err != nil {
-						return fmt.Errorf("execution failed in %s (%s): %w", loc.Name, loc.Dir, err)
-					}
-					procs = append(procs, cmd.Process.Kill)
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+
+						err = cmd.Wait()
+						if err != nil {
+							log.Errorf("execution failed in %s (%s): %v", loc.Name, loc.Dir, err)
+						}
+					}()
 				} else {
-					err := cmd.Run()
+					err = cmd.Wait()
 					if err != nil {
-						return fmt.Errorf("execution failed in %s (%s): %w", loc.Name, loc.Dir, err)
+						return fmt.Errorf("execution failed in %s (%s): %v", loc.Name, loc.Dir, err)
 					}
 				}
 			}
 			if parallel {
-				sigChan := make(chan os.Signal, 1)
-				signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-				<-sigChan
-				for _, p := range procs {
-					p()
-				}
+				wg.Wait()
 			}
 
 			return nil
@@ -181,6 +187,11 @@ Example use:
 		locs, _ := selectDirectories()
 		execute(locs)
 	},
+}
+
+type readWriter struct {
+	io.Reader
+	io.Writer
 }
 
 func init() {

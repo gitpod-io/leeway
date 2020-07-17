@@ -4,6 +4,7 @@ go 1.14
 
 require (
 	github.com/GeertJohan/go.rice v1.0.0
+	github.com/creack/pty v1.1.11
 	github.com/disiqueira/gotree v1.0.0
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/google/go-cmp v0.5.0
