@@ -815,3 +815,34 @@ func (p *Package) Version() (string, error) {
 
 	return p.versionCache, nil
 }
+
+// TopologicalSort sorts the list of packages by its build order according to the dependency tree
+func TopologicalSort(pkgs []*Package) {
+	var (
+		idx  = make(map[string]int)
+		walk func(p *Package, depth int)
+	)
+	walk = func(p *Package, depth int) {
+		pn := p.FullName()
+		deps := p.GetDependencies()
+
+		d := idx[pn]
+		if d < depth {
+			d = depth
+		}
+		idx[pn] = d
+
+		for _, d := range deps {
+			walk(d, depth+1)
+		}
+	}
+	for _, p := range pkgs {
+		walk(p, 0)
+	}
+
+	sort.Slice(pkgs, func(i, j int) bool {
+		di := idx[pkgs[i].FullName()]
+		dj := idx[pkgs[j].FullName()]
+		return di > dj
+	})
+}

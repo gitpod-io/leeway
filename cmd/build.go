@@ -24,7 +24,7 @@ var buildCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		_, pkg, _, _ := getTarget(args, false)
 		if pkg == nil {
-			log.Fatal("tree needs a package")
+			log.Fatal("build needs a package")
 		}
 		opts, localCache := getBuildOpts(cmd)
 
@@ -55,17 +55,17 @@ var buildCmd = &cobra.Command{
 				case <-evt:
 					_, pkg, _, _ := getTarget(args, false)
 					err := leeway.Build(pkg, opts...)
-					if err != nil {
-						log.Fatal(err)
-					}
-
-					cancel()
-					ctx, cancel = context.WithCancel(context.Background())
-					if save != "" {
-						saveBuildResult(ctx, save, localCache, pkg)
-					}
-					if serve != "" {
-						go serveBuildResult(ctx, serve, localCache, pkg)
+					if err == nil {
+						cancel()
+						ctx, cancel = context.WithCancel(context.Background())
+						if save != "" {
+							saveBuildResult(ctx, save, localCache, pkg)
+						}
+						if serve != "" {
+							go serveBuildResult(ctx, serve, localCache, pkg)
+						}
+					} else {
+						log.Error(err)
 					}
 				case err = <-errs:
 					log.Fatal(err)
@@ -99,9 +99,9 @@ func serveBuildResult(ctx context.Context, addr string, localCache *leeway.Files
 
 	cmd := exec.Command("tar", "xzf", br)
 	cmd.Dir = tmp
-	_, err = cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		log.WithError(err).Fatal("cannot serve build result")
+		log.WithError(err).WithField("output", string(out)).Fatal("cannot serve build result")
 	}
 
 	if ctx.Err() != nil {
