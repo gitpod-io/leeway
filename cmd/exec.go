@@ -27,8 +27,8 @@ To avoid executing the command in the same directory multiple times (e.g. when a
 matching packages), use --components which selects the components isntead of the packages.
 
 Example use:
-  # list all component directories of all transitive dependencies which are typescript packages:
-  leeway exec some/other:package --transitive-dependencies --filter-type typescript -- pwd
+  # list all component directories of all transitive dependencies which are yarn packages:
+  leeway exec some/other:package --transitive-dependencies --filter-type yarn -- pwd
   
   # execute go build in all direct Go dependencies when any of the relevant source files changes:
   leeway exec some/other:package --dependencies --filter-type go --parallel --watch -- go build
@@ -36,8 +36,8 @@ Example use:
   # run go get in all transitively dependend Go packages
   leeway exec some/other:package --transitive-dependencies --filter-type go -- go get -v ./...
   
-  # run tsc watch for all dependent typescript packages (once per component origin):
-  leeway exec some/other:package --transitive-dependencies --filter-type typescript --parallel -- tsc -w --preserveWatchOutput
+  # run tsc watch for all dependent yarn packages (once per component origin):
+  leeway exec some/other:package --transitive-dependencies --filter-type yarn --parallel -- tsc -w --preserveWatchOutput
 `,
 	Args: cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -52,6 +52,12 @@ Example use:
 		_, pkg, _, _ := getTarget(args, false)
 		if pkg == nil {
 			log.Fatal("build needs a package")
+		}
+
+		for i, ft := range filterType {
+			if ft == string(leeway.DeprecatedTypescriptPackage) {
+				filterType[i] = string(leeway.YarnPackage)
+			}
 		}
 
 		type loc struct {

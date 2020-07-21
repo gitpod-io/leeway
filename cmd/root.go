@@ -67,7 +67,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "leeway",
 	Short: "A caching meta-build system",
-	Long: color.Render(`<light_yellow>Leeway is a heavily caching build system</> for Go, Typescript and Docker projects. It knows three core concepts:
+	Long: color.Render(`<light_yellow>Leeway is a heavily caching build system</> for Go, Yarn and Docker projects. It knows three core concepts:
   Workspace: the workspace is the root of all operations. All component names are relative to this path. No relevant
              file must be placed outside the workspace. The workspace root is marked with a WORKSPACE file.
   Component: a component is single piece of standalone software. Every folder in the workspace which contains a BUILD file

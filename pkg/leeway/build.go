@@ -557,7 +557,7 @@ rm -r yarn.lock _temp_yarn_cache
 func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err error) {
 	cfg, ok := p.Config.(YarnPkgConfig)
 	if !ok {
-		return xerrors.Errorf("package should have typescript config")
+		return xerrors.Errorf("package should have yarn config")
 	}
 
 	ok = false
@@ -569,7 +569,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		}
 	}
 	if !ok {
-		return xerrors.Errorf("%s: typescript packages must have a package.json", p.FullName())
+		return xerrors.Errorf("%s: yarn packages must have a package.json", p.FullName())
 	}
 
 	version, err := p.Version()
@@ -646,11 +646,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 	var packageJSON map[string]interface{}
 	fc, err := ioutil.ReadFile(pkgJSONFilename)
 	if err != nil {
-		return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
+		return xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 	}
 	err = json.Unmarshal(fc, &packageJSON)
 	if err != nil {
-		return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
+		return xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 	}
 	var modifiedPackageJSON bool
 	if cfg.Packaging == YarnLibrary {
@@ -681,11 +681,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 	if modifiedPackageJSON {
 		fc, err = json.Marshal(packageJSON)
 		if err != nil {
-			return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
+			return xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 		}
 		err = ioutil.WriteFile(pkgJSONFilename, fc, 0644)
 		if err != nil {
-			return xerrors.Errorf("cannot patch package.json of typescript package: %w", err)
+			return xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 		}
 	}
 	pkgname, ok := packageJSON["name"].(string)

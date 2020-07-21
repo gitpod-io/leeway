@@ -325,7 +325,7 @@ type PackageConfig interface {
 	AdditionalSources() []string
 }
 
-// YarnPkgConfig configures a typescript package
+// YarnPkgConfig configures a yarn package
 type YarnPkgConfig struct {
 	YarnLock  string        `yaml:"yarnLock,omitempty"`
 	TSConfig  string        `yaml:"tsconfig"`
@@ -352,7 +352,7 @@ func (cfg YarnPkgConfig) Validate() error {
 	return nil
 }
 
-// YarnPackaging configures the packaging method of a typescript package
+// YarnPackaging configures the packaging method of a yarn package
 type YarnPackaging string
 
 const (
