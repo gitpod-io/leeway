@@ -560,15 +560,17 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		return xerrors.Errorf("package should have yarn config")
 	}
 
-	ok = false
+	var (
+		fn           = filepath.Join(p.C.Origin, "package.json")
+		pkgjsonFound bool
+	)
 	for _, src := range p.Sources {
-		fn := filepath.Base(src)
-		if fn == "package.json" {
-			ok = true
+		if src == fn {
+			pkgjsonFound = true
 			break
 		}
 	}
-	if !ok {
+	if !pkgjsonFound {
 		return xerrors.Errorf("%s: yarn packages must have a package.json", p.FullName())
 	}
 
