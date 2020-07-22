@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/typefox/leeway/pkg/leeway"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
@@ -44,8 +45,8 @@ func checkYarnDeprecatedType(pkg *leeway.Package) ([]Finding, error) {
 }
 
 type pkgJSON struct {
-	Name         string            `json:"name"`
-	Dependencies map[string]string `json:"dependencies"`
+	Name         string                 `json:"name"`
+	Dependencies map[string]interface{} `json:"dependencies"`
 }
 
 type checkImplicitTransitiveDependencies struct {
@@ -83,14 +84,17 @@ func (c *checkImplicitTransitiveDependencies) Init(ws leeway.Workspace) error {
 }
 
 func (c *checkImplicitTransitiveDependencies) getPkgJSON(pkg *leeway.Package) (*pkgJSON, error) {
-	var pkgFN string
+	var (
+		found bool
+		pkgFN = filepath.Join(pkg.C.Origin, "package.json")
+	)
 	for _, src := range pkg.Sources {
-		if filepath.Base(src) == "package.json" {
-			pkgFN = src
+		if src == pkgFN {
+			found = true
 			break
 		}
 	}
-	if pkgFN == "" {
+	if !found {
 		return nil, xerrors.Errorf("package %s has no package.json", pkg.FullName())
 	}
 
@@ -102,6 +106,10 @@ func (c *checkImplicitTransitiveDependencies) getPkgJSON(pkg *leeway.Package) (*
 	err = json.Unmarshal(fc, &res)
 	if err != nil {
 		return nil, err
+	}
+
+	if res.Name == "" {
+		return nil, xerrors.Errorf("package %s has no Yarn package name", pkg.FullName())
 	}
 
 	return &res, nil
@@ -191,6 +199,7 @@ func (c *checkImplicitTransitiveDependencies) RunPkg(pkg *leeway.Package) ([]Fin
 			continue
 		}
 
+		log.WithField("pkg", pkg.FullName()).WithField("pkgJsonDeclaredDeps", pkgjson.Dependencies).WithField("yarnName", pkgjson.Name).Debug("found use of implicit transitive dependency")
 		findings = append(findings, Finding{
 			Description: fmt.Sprintf("%s depends on the workspace Yarn-package %s but does not declare that dependency in its package.json", src, yarnDep),
 			Component:   pkg.C,
