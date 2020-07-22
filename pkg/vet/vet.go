@@ -10,14 +10,75 @@ import (
 	"golang.org/x/xerrors"
 )
 
+type checkFunc struct {
+	info CheckInfo
+
+	runPkg func(pkg *leeway.Package) ([]Finding, error)
+	runCmp func(pkg *leeway.Component) ([]Finding, error)
+}
+
+func (cf *checkFunc) Info() CheckInfo {
+	return cf.info
+}
+
+func (cf *checkFunc) Init(leeway.Workspace) error {
+	return nil
+}
+
+func (cf *checkFunc) RunPkg(pkg *leeway.Package) ([]Finding, error) {
+	if cf.runPkg == nil {
+		return nil, xerrors.Errorf("not a package check")
+	}
+	return cf.runPkg(pkg)
+}
+
+func (cf *checkFunc) RunCmp(pkg *leeway.Component) ([]Finding, error) {
+	if cf.runCmp == nil {
+		return nil, xerrors.Errorf("has no component check")
+	}
+	return cf.runCmp(pkg)
+}
+
+// PackageCheck produces a new check for a leeway package
+func PackageCheck(name, desc string, tpe leeway.PackageType, chk func(pkg *leeway.Package) ([]Finding, error)) Check {
+	return &checkFunc{
+		info: CheckInfo{
+			Name:          name,
+			Description:   desc,
+			AppliesToType: &tpe,
+			PackageCheck:  true,
+		},
+		runPkg: chk,
+	}
+}
+
+// ComponentCheck produces a new check for a leeway component
+func ComponentCheck(name, desc string, chk func(pkg *leeway.Component) ([]Finding, error)) Check {
+	return &checkFunc{
+		info: CheckInfo{
+			Name:         name,
+			Description:  desc,
+			PackageCheck: false,
+		},
+		runCmp: chk,
+	}
+}
+
 // Check implements a vet check
-type Check struct {
+type Check interface {
+	Info() CheckInfo
+
+	Init(ws leeway.Workspace) error
+	RunPkg(pkg *leeway.Package) ([]Finding, error)
+	RunCmp(pkg *leeway.Component) ([]Finding, error)
+}
+
+// CheckInfo describes a check
+type CheckInfo struct {
 	Name          string
 	Description   string
+	PackageCheck  bool
 	AppliesToType *leeway.PackageType
-
-	RunPkg func(pkg *leeway.Package) ([]Finding, error)
-	RunCmp func(pkg *leeway.Component) ([]Finding, error)
 }
 
 // Finding describes a check finding. If the package is nil, the finding applies to the component
@@ -52,10 +113,11 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 var _checks = make(map[string]Check)
 
 func register(c Check) {
-	if _, exists := _checks[c.Name]; exists {
-		panic(fmt.Sprintf("check %s is already registered", c.Name))
+	cn := c.Info().Name
+	if _, exists := _checks[cn]; exists {
+		panic(fmt.Sprintf("check %s is already registered", cn))
 	}
-	_checks[c.Name] = c
+	_checks[cn] = c
 }
 
 // Checks returns a list of all available checks
@@ -64,7 +126,7 @@ func Checks() []Check {
 	for _, c := range _checks {
 		l = append(l, c)
 	}
-	sort.Slice(l, func(i, j int) bool { return l[i].Name < l[j].Name })
+	sort.Slice(l, func(i, j int) bool { return l[i].Info().Name < l[j].Info().Name })
 	return l
 }
 
@@ -124,43 +186,52 @@ func Run(workspace leeway.Workspace, options ...RunOpt) ([]Finding, []error) {
 			checks = append(checks, c)
 		}
 	}
+	for _, check := range checks {
+		err := check.Init(workspace)
+		if err != nil {
+			return nil, []error{err}
+		}
+	}
 
 	var (
 		findings []Finding
 		errs     []error
 
 		runCompCheck = func(c Check, comp *leeway.Component) {
-			if c.RunCmp == nil {
+			info := c.Info()
+			if info.PackageCheck {
 				return
 			}
 
-			log.WithField("check", c.Name).WithField("cmp", comp.Name).Debug("running component check")
+			log.WithField("check", info.Name).WithField("cmp", comp.Name).Debug("running component check")
 			f, err := c.RunCmp(comp)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", comp.Name, err))
 				return
 			}
 			for i := range f {
-				f[i].Check = c.Name
+				f[i].Check = info.Name
 			}
 			findings = append(findings, f...)
 		}
 		runPkgCheck = func(c Check, pkg *leeway.Package) {
-			if c.RunPkg == nil {
-				return
-			}
-			if c.AppliesToType != nil && *c.AppliesToType != pkg.Type {
+			info := c.Info()
+			if !info.PackageCheck {
 				return
 			}
 
-			log.WithField("check", c.Name).WithField("pkg", pkg.FullName()).Debug("running package check")
+			if info.AppliesToType != nil && *info.AppliesToType != pkg.Type {
+				return
+			}
+
+			log.WithField("check", info.Name).WithField("pkg", pkg.FullName()).Debug("running package check")
 			f, err := c.RunPkg(pkg)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", pkg.FullName(), err))
 				return
 			}
 			for i := range f {
-				f[i].Check = c.Name
+				f[i].Check = info.Name
 			}
 			findings = append(findings, f...)
 		}

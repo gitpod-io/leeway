@@ -9,11 +9,7 @@ import (
 )
 
 func init() {
-	register(Check{
-		Name:        "components:fmt",
-		Description: "ensures the BUILD.yaml of a component is leeway fmt'ed",
-		RunCmp:      checkComponentsFmt,
-	})
+	register(ComponentCheck("fmt", "ensures the BUILD.yaml of a component is leeway fmt'ed", checkComponentsFmt))
 }
 
 func checkComponentsFmt(comp *leeway.Component) ([]Finding, error) {

@@ -12,13 +12,7 @@ import (
 )
 
 func init() {
-	tpe := leeway.DockerPackage
-	register(Check{
-		Name:          "docker:copy-from-package",
-		AppliesToType: &tpe,
-		Description:   "attempts to find broken package paths in COPY and ADD statements",
-		RunPkg:        checkDockerCopyFromPackage,
-	})
+	register(PackageCheck("copy-from-pacakge", "attempts to find broken package paths in COPY and ADD statements", leeway.DockerPackage, checkDockerCopyFromPackage))
 }
 
 var (

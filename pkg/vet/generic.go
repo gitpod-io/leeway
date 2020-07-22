@@ -8,13 +8,7 @@ import (
 )
 
 func init() {
-	tpe := leeway.GenericPackage
-	register(Check{
-		Name:          "generic:use-package",
-		Description:   "attempts to find broken package paths in the commands",
-		AppliesToType: &tpe,
-		RunPkg:        checkArgsReferingToPackage,
-	})
+	register(PackageCheck("use-package", "attempts to find broken package paths in the commands", leeway.GenericPackage, checkArgsReferingToPackage))
 }
 
 func checkArgsReferingToPackage(pkg *leeway.Package) ([]Finding, error) {

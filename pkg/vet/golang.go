@@ -7,13 +7,7 @@ import (
 )
 
 func init() {
-	tpe := leeway.GoPackage
-	register(Check{
-		Name:          "golang:has-gomod",
-		Description:   "ensures all Go packages have a go.mod file in their source list",
-		AppliesToType: &tpe,
-		RunPkg:        checkGolangHasGomod,
-	})
+	register(PackageCheck("has-gomod", "ensures all Go packages have a go.mod file in their source list", leeway.GoPackage, checkGolangHasGomod))
 }
 
 func checkGolangHasGomod(pkg *leeway.Package) ([]Finding, error) {

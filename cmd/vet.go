@@ -49,7 +49,18 @@ var vetCmd = &cobra.Command{
 			opts = append(opts, vet.OnComponents(idx))
 		}
 
-		findings, errs := vet.Run(ws)
+		findings, errs := vet.Run(ws, opts...)
+		if ignoreWarnings, _ := cmd.Flags().GetBool("ignore-warnings"); ignoreWarnings {
+			n := 0
+			for _, x := range findings {
+				if x.Error {
+					findings[n] = x
+					n++
+				}
+			}
+			findings = findings[:n]
+		}
+
 		if len(errs) != 0 {
 			for _, err := range errs {
 				log.Error(err.Error())
@@ -85,5 +96,6 @@ func init() {
 	vetCmd.Flags().StringArray("checks", nil, "run these checks only")
 	vetCmd.Flags().StringArray("packages", nil, "run checks on these packages only")
 	vetCmd.Flags().StringArray("components", nil, "run checks on these components only")
+	vetCmd.Flags().Bool("ignore-warnings", false, "ignores all warnings")
 	addFormatFlags(vetCmd)
 }
