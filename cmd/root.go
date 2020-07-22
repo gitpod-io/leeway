@@ -79,6 +79,7 @@ var rootCmd = &cobra.Command{
 Leeway is configured exclusively through the WORKSPACE/BUILD files and environment variables. The following environment
 variables have an effect on leeway:
        <light_blue>LEEWAY_WORKSPACE_ROOT</>  Contains the path where to look for a WORKSPACE file. Can also be set using --workspace.
+     <light_blue>LEEWAY_NESTED_WORKSPACE</>  Enables (experimental) support for nested workspaces.
   <light_blue>LEEWAY_REMOTE_CACHE_BUCKET</>  Enables remote caching using GCP buckets. Set this variable to the bucket name used for caching.
                               When this variable is set, leeway expects "gsutil" in the path configured and authenticated so
                               that it can work with the bucket.
