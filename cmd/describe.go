@@ -74,32 +74,7 @@ func getTarget(args []string, findScript bool) (comp *leeway.Component, pkg *lee
 		return
 	}
 
-	if strings.HasPrefix(target, ".:") {
-		wd, err := os.Getwd()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// This uses seperate trims and is not part of origin to support BUILD files in the workspace root.
-		// In that case there's no "/" left over at the origin.
-		cn := strings.TrimPrefix(wd, workspace.Origin)
-		cn = strings.TrimPrefix(cn, "/")
-
-		pn := strings.TrimPrefix(target, ".:")
-
-		target = fmt.Sprintf("%s:%s", cn, pn)
-	} else if target == "." {
-		wd, err := os.Getwd()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// This uses seperate trims and is not part of origin to support BUILD files in the workspace root.
-		// In that case there's no "/" left over at the origin.
-		cn := strings.TrimPrefix(wd, workspace.Origin)
-		cn = strings.TrimPrefix(cn, "/")
-		target = cn
-	}
+	target = absPackageName(workspace, target)
 
 	if isInCmp := strings.Contains(target, ":"); isInCmp {
 		if findScript {
@@ -125,6 +100,36 @@ func getTarget(args []string, findScript bool) (comp *leeway.Component, pkg *lee
 	}
 
 	return
+}
+
+func absPackageName(workspace leeway.Workspace, name string) string {
+	if strings.HasPrefix(name, ".:") {
+		wd, err := os.Getwd()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// This uses seperate trims and is not part of origin to support BUILD files in the workspace root.
+		// In that case there's no "/" left over at the origin.
+		cn := strings.TrimPrefix(wd, workspace.Origin)
+		cn = strings.TrimPrefix(cn, "/")
+
+		pn := strings.TrimPrefix(name, ".:")
+
+		return fmt.Sprintf("%s:%s", cn, pn)
+	} else if name == "." {
+		wd, err := os.Getwd()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// This uses seperate trims and is not part of origin to support BUILD files in the workspace root.
+		// In that case there's no "/" left over at the origin.
+		cn := strings.TrimPrefix(wd, workspace.Origin)
+		cn = strings.TrimPrefix(cn, "/")
+		return cn
+	}
+	return name
 }
 
 type packageMetadataDescription struct {
