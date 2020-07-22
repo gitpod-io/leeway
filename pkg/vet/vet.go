@@ -43,7 +43,7 @@ func (cf *checkFunc) RunCmp(pkg *leeway.Component) ([]Finding, error) {
 func PackageCheck(name, desc string, tpe leeway.PackageType, chk func(pkg *leeway.Package) ([]Finding, error)) Check {
 	return &checkFunc{
 		info: CheckInfo{
-			Name:          name,
+			Name:          fmt.Sprintf("%s:%s", tpe, name),
 			Description:   desc,
 			AppliesToType: &tpe,
 			PackageCheck:  true,
@@ -56,7 +56,7 @@ func PackageCheck(name, desc string, tpe leeway.PackageType, chk func(pkg *leewa
 func ComponentCheck(name, desc string, chk func(pkg *leeway.Component) ([]Finding, error)) Check {
 	return &checkFunc{
 		info: CheckInfo{
-			Name:         name,
+			Name:         fmt.Sprintf("component:%s", name),
 			Description:  desc,
 			PackageCheck: false,
 		},
