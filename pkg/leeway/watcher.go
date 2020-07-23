@@ -93,8 +93,8 @@ type pathMatcher struct {
 	Patterns []string
 }
 
-func (pm *pathMatcher) Matches(path string) bool {
-	if strings.HasPrefix(path, pm.Base) {
+func (pm *pathMatcher) Matches(path string) (matches bool) {
+	if !strings.HasPrefix(path, pm.Base) {
 		return false
 	}
 	for _, p := range pm.Patterns {
