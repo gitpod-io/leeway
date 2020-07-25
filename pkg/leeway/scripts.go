@@ -45,11 +45,15 @@ type Script struct {
 	Type          ScriptType    `yaml:"type"`
 	Script        string        `yaml:"script"`
 
-	dependencies []*Package
+	fullNameOverride string
+	dependencies     []*Package
 }
 
 // FullName returns the packages fully qualified name (component:package)
 func (p *Script) FullName() string {
+	if p.fullNameOverride != "" {
+		return p.fullNameOverride
+	}
 	return fmt.Sprintf("%s:%s", p.C.Name, p.Name)
 }
 

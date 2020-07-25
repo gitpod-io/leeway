@@ -59,17 +59,31 @@ func TestFixtureLoadWorkspace(t *testing.T) {
 			ExitCode:  0,
 		},
 		{
-			Name:      "nested workspace scripts (root)",
-			T:         t,
-			Args:      []string{"collect", "scripts"},
-			StdoutSub: "fixtures/nested-ws/wsa:echo\nfixtures/scripts:echo",
-			ExitCode:  0,
-		},
-		{
 			Name:      "nested workspace override default args",
 			T:         t,
 			Args:      []string{"run", "-w", "fixtures/nested-ws", "wsa/pkg1:echo"},
 			StdoutSub: "hello root",
+			ExitCode:  0,
+		},
+		{
+			Name:      "linked workspace packages",
+			T:         t,
+			Args:      []string{"collect", "-w", "fixtures/linked-ws/ws0"},
+			StdoutSub: "otherws/comp:app",
+			ExitCode:  0,
+		},
+		{
+			Name:      "linked workspace scripts",
+			T:         t,
+			Args:      []string{"collect", "-w", "fixtures/linked-ws/ws0", "scripts"},
+			StdoutSub: "otherws/comp:echo",
+			ExitCode:  0,
+		},
+		{
+			Name:      "linked workspace dont override default args",
+			T:         t,
+			Args:      []string{"run", "-w", "fixtures/linked-ws/ws0", "otherws/comp:echo"},
+			StdoutSub: "ws1",
 			ExitCode:  0,
 		},
 	}

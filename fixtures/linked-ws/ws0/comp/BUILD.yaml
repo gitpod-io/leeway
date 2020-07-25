@@ -1,0 +1,12 @@
+packages:
+- name: app
+  type: generic
+  deps:
+  - otherws/comp:app
+  config:
+    commands:
+    - ["echo", "${message}"]
+scripts:
+- name: echo
+  script: |
+    echo ${message}

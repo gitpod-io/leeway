@@ -1,0 +1,5 @@
+defaultArgs:
+  message: "ws0"
+includeWorkspaces:
+- alias: otherws
+  path: ../ws1

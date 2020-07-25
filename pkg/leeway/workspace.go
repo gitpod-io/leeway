@@ -23,9 +23,10 @@ import (
 // Workspace is the root container of all compoments. All components are named relative
 // to the origin of this workspace.
 type Workspace struct {
-	DefaultTarget    string            `yaml:"defaultTarget,omitempty"`
-	ArgumentDefaults map[string]string `yaml:"defaultArgs,omitempty"`
-	Variants         []*PackageVariant `yaml:"variants,omitempty"`
+	DefaultTarget     string            `yaml:"defaultTarget,omitempty"`
+	ArgumentDefaults  map[string]string `yaml:"defaultArgs,omitempty"`
+	Variants          []*PackageVariant `yaml:"variants,omitempty"`
+	IncludeWorkspaces []WorkspaceLink   `yaml:"includeWorkspaces,omitempty"`
 
 	Origin          string                `yaml:"-"`
 	Components      map[string]*Component `yaml:"-"`
@@ -34,6 +35,19 @@ type Workspace struct {
 	SelectedVariant *PackageVariant       `yaml:"-"`
 
 	ignores []string
+}
+
+// WorkspaceLink links one workspace to another
+type WorkspaceLink struct {
+	Alias               string `yaml:"alias"`
+	Path                string `yaml:"path"`
+	OverrideDefaultArgs bool   `yaml:"overrideDefaultArgs"`
+
+	Nested bool `yaml:"-"`
+}
+
+func (l WorkspaceLink) String() string {
+	return fmt.Sprintf("%s as %s (nested: %v, overrideArgs: %v)", l.Path, l.Alias, l.Nested, l.OverrideDefaultArgs)
 }
 
 // ShouldIngoreComponent returns true if a file should be ignored for a component listing
@@ -68,42 +82,86 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 		return
 	}
 
-	// deepest workspaces first
-	sort.Slice(wss, func(i, j int) bool {
-		return strings.Count(wss[i], string(os.PathSeparator)) > strings.Count(wss[j], string(os.PathSeparator))
-	})
+	linkedWS := make([]WorkspaceLink, 0, len(wss)+len(rootWS.IncludeWorkspaces))
+	for _, l := range rootWS.IncludeWorkspaces {
+		abs, err := filepath.Abs(filepath.Join(path, l.Path))
+		if err != nil {
+			return Workspace{}, err
+		}
+		l.Path = abs
+		linkedWS = append(linkedWS, l)
+	}
+	for _, ws := range wss {
+		wspath := strings.TrimSuffix(strings.TrimSuffix(ws, "WORKSPACE.yaml"), "/")
+		linkedWS = append(linkedWS, WorkspaceLink{
+			Alias:  filepathTrimPrefix(wspath, path),
+			Path:   wspath,
+			Nested: true,
+		})
+	}
 
-	loadedWorkspaces := make(map[string]*Workspace)
-	for _, wspath := range wss {
-		wspath = strings.TrimSuffix(strings.TrimSuffix(wspath, "WORKSPACE.yaml"), "/")
-		log := log.WithField("wspath", wspath)
+	// included workspaces first, then sorted by the deepest workspaces first
+	sort.Slice(linkedWS, func(i, j int) bool {
+		var (
+			wsi = linkedWS[i]
+			wsj = linkedWS[j]
+		)
+
+		if wsi.Nested != wsj.Nested {
+			return wsj.Nested
+		}
+		if !wsi.Nested {
+			return wsi.Alias < wsj.Alias
+		}
+		return strings.Count(wsi.Path, string(os.PathSeparator)) > strings.Count(wsj.Path, string(os.PathSeparator))
+	})
+	log.WithField("links", linkedWS).Debug("found linked workspaces")
+
+	type loadedLinkedWS struct {
+		*Workspace
+		WorkspaceLink
+	}
+	loadedWorkspaces := make(map[string]loadedLinkedWS)
+	for _, lnk := range linkedWS {
+		log := log.WithField("wspath", lnk.Path)
 		log.Debug("loading (possibly nested) workspace")
 
-		sws, err := loadWorkspace(context.Background(), wspath, args, variant, &loadWorkspaceOpts{
-			PrelinkModifier: func(packages map[string]*Package) {
-				for otherloc, otherws := range loadedWorkspaces {
-					relativeOrigin := filepathTrimPrefix(otherloc, wspath)
+		var opts loadWorkspaceOpts
 
-					for k, p := range otherws.Packages {
-						var otherKey string
-						if strings.HasPrefix(k, "//") {
-							otherKey = fmt.Sprintf("%s%s", relativeOrigin, strings.TrimPrefix(k, "//"))
-						} else {
-							otherKey = fmt.Sprintf("%s/%s", relativeOrigin, k)
+		if lnk.Nested {
+			opts = loadWorkspaceOpts{
+				PrelinkModifier: func(packages map[string]*Package) {
+					for otherloc, otherws := range loadedWorkspaces {
+						alias := otherws.Alias
+						if otherws.Nested {
+							alias = filepathTrimPrefix(otherloc, lnk.Path)
 						}
-						p.fullNameOverride = otherKey
-						packages[otherKey] = p
 
-						log.WithField("relativeOrigin", relativeOrigin).WithField("package", otherKey).Debug("prelinking previously loaded workspace")
+						for k, p := range otherws.Packages {
+							var otherKey string
+							if strings.HasPrefix(k, "//") {
+								otherKey = fmt.Sprintf("%s%s", alias, strings.TrimPrefix(k, "//"))
+							} else {
+								otherKey = fmt.Sprintf("%s/%s", alias, k)
+							}
+							p.fullNameOverride = otherKey
+							packages[otherKey] = p
+
+							log.WithField("alias", alias).WithField("package", otherKey).Debug("prelinking previously loaded workspace")
+						}
 					}
-				}
-			},
-			ArgumentDefaults: rootWS.ArgumentDefaults,
-		})
+				},
+				ArgumentDefaults: rootWS.ArgumentDefaults,
+			}
+		}
+		sws, err := loadWorkspace(context.Background(), lnk.Path, args, variant, &opts)
 		if err != nil {
 			return res, err
 		}
-		loadedWorkspaces[wspath] = &sws
+		loadedWorkspaces[lnk.Path] = loadedLinkedWS{
+			Workspace:     &sws,
+			WorkspaceLink: lnk,
+		}
 		res = sws
 	}
 
@@ -121,20 +179,19 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 		newComps[name] = pkg.C
 		log.WithField("origin", pkg.C.Origin).WithField("name", name).Debug("renamed component")
 	}
-	for otherloc, otherws := range loadedWorkspaces {
-		relativeOrigin := filepathTrimPrefix(otherloc, path)
-
+	for _, otherws := range loadedWorkspaces {
 		for k, p := range otherws.Scripts {
 			var otherKey string
 			if strings.HasPrefix(k, "//") {
-				otherKey = fmt.Sprintf("%s%s", relativeOrigin, strings.TrimPrefix(k, "//"))
-			} else if relativeOrigin == "" {
+				otherKey = fmt.Sprintf("%s%s", otherws.Alias, strings.TrimPrefix(k, "//"))
+			} else if otherws.Alias == "" {
 				otherKey = k
 			} else {
-				otherKey = fmt.Sprintf("%s/%s", relativeOrigin, k)
+				otherKey = fmt.Sprintf("%s/%s", otherws.Alias, k)
 			}
+			p.fullNameOverride = otherKey
 			newScripts[otherKey] = p
-			log.WithField("k", otherKey).WithField("otherloc", otherloc).Debug("new script")
+			log.WithField("k", otherKey).WithField("alias", otherws.Alias).Debug("new script")
 		}
 	}
 	res.Components = newComps
