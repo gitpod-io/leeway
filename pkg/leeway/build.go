@@ -655,6 +655,27 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		return xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 	}
 	var modifiedPackageJSON bool
+	// to ensure that the linking works we'll set the versions of all leeway-built yarn dependencies
+	// to their exact version.
+	var deps map[string]interface{}
+	if rawDeps, ok := packageJSON["dependencies"]; !ok {
+		deps = make(map[string]interface{})
+	} else if deps, ok = rawDeps.(map[string]interface{}); !ok {
+		deps = make(map[string]interface{})
+	}
+	for _, dep := range p.GetDependencies() {
+		if dep.Type != YarnPackage {
+			continue
+		}
+		name, version, err := getYarnPackageInfo(dep)
+		if err != nil {
+			return xerrors.Errorf("cannot read package JSON of package %s: %w", dep.FullName(), err)
+		}
+		deps[name] = version
+		modifiedPackageJSON = true
+	}
+	packageJSON["depenedencies"] = deps
+
 	if cfg.Packaging == YarnLibrary {
 		// We can't modify the `yarn pack` generated tar file without runnign the risk of yarn blocking when attempting to unpack it again. Thus, we must include the pkgYarnLock in the npm
 		// package we're building. To this end, we modify the package.json of the source package.
@@ -779,6 +800,23 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 	}
 
 	return executeCommandsForPackage(buildctx, p, wd, commands)
+}
+
+func getYarnPackageInfo(pkg *Package) (name, version string, err error) {
+	fc, err := ioutil.ReadFile(filepath.Join(pkg.C.Origin, "package.json"))
+	if err != nil {
+		return
+	}
+
+	var pkgJSON struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	err = json.Unmarshal(fc, &pkgJSON)
+	if err != nil {
+		return
+	}
+	return pkgJSON.Name, pkgJSON.Version, nil
 }
 
 // buildGo implements the build process for Go packages.

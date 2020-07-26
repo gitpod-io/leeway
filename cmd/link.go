@@ -16,22 +16,31 @@ var linkCmd = &cobra.Command{
 			return err
 		}
 
-		if ok, _ := cmd.Flags().GetBool("go-link"); ok {
+		if ws.Linker.GoModules {
 			err = linker.LinkGoModules(&ws)
 			if err != nil {
 				return err
 			}
 		} else {
-			log.Info("go module linking disabled")
+			log.Debug("go module linking disabled")
 		}
 
-		if ok, _ := cmd.Flags().GetBool("yarn2-link"); ok {
+		if ws.Linker.Yarn {
+			err = linker.LinkYarnPackagesCrossWorkspace(&ws)
+			if err != nil {
+				return err
+			}
+		} else {
+			log.Debug("yarn cross-workspace package linking disabled")
+		}
+
+		if ws.Linker.Yarn2 {
 			err = linker.LinkYarnPackagesWithYarn2(&ws)
 			if err != nil {
 				return err
 			}
 		} else {
-			log.Info("yarn2 package linking disabled")
+			log.Debug("yarn2 package linking disabled")
 		}
 
 		return nil
@@ -39,8 +48,5 @@ var linkCmd = &cobra.Command{
 }
 
 func init() {
-	addExperimentalCommand(rootCmd, linkCmd)
-
-	linkCmd.Flags().Bool("yarn2-link", false, "link yarn packages using yarn2 resolutions")
-	linkCmd.Flags().Bool("go-link", true, "link Go modules")
+	rootCmd.AddCommand(linkCmd)
 }

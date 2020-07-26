@@ -6,9 +6,11 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/typefox/leeway/pkg/internal/jsonmap"
+	"github.com/typefox/leeway/pkg/internal/yarn"
 	"github.com/typefox/leeway/pkg/leeway"
 	"golang.org/x/xerrors"
 )
@@ -24,31 +26,12 @@ func LinkYarnPackagesWithYarn2(workspace *leeway.Workspace) error {
 			continue
 		}
 
-		var pkgjsonFn string
-		for _, src := range p.Sources {
-			if strings.HasSuffix(src, "/package.json") {
-				pkgjsonFn = src
-				break
-			}
-		}
-		if pkgjsonFn == "" {
-			log.WithField("pkg", n).Warn("no package.json found - skipping")
-			continue
-		}
-		pkgJSONIdx[n] = pkgjsonFn
-
-		fc, err := ioutil.ReadFile(pkgjsonFn)
+		pkgjson, err := yarn.GetPackageJSON(p)
 		if err != nil {
 			return err
 		}
-		var pkgjson struct {
-			Name string `json:"name"`
-		}
-		err = json.Unmarshal(fc, &pkgjson)
-		if err != nil {
-			return err
-		}
-		pkgIdx[n] = pkgjson.Name
+		pkgJSONIdx[n] = pkgjson.Origin
+		pkgIdx[n] = string(pkgjson.Name)
 	}
 
 	for n, p := range workspace.Packages {
@@ -128,4 +111,112 @@ func LinkYarnPackagesWithYarn2(workspace *leeway.Workspace) error {
 	}
 
 	return lerr
+}
+
+// LinkYarnPackagesCrossWorkspace links yarn packages across yarn workspaces using relative paths
+// in the dependency version. This method does not work with the yarn2 linker.
+func LinkYarnPackagesCrossWorkspace(ws *leeway.Workspace) error {
+	_, yarnToPkgJSON, err := yarn.MapYarnToLeeway(ws)
+	if err != nil {
+		return err
+	}
+
+	yarnPkgLocIdx := make(map[yarn.PackageName]string, len(yarnToPkgJSON))
+	for yarnName, pkgJSON := range yarnToPkgJSON {
+		origin := filepath.Dir(pkgJSON.Origin)
+		if val, exists := yarnPkgLocIdx[yarnName]; exists && val != origin {
+			return xerrors.Errorf("found multiple locations for \"%s\": %s and %s", yarnName, val, origin)
+		}
+	}
+
+	for _, pkg := range ws.Packages {
+		if pkg.Type != leeway.YarnPackage {
+			continue
+		}
+
+		pkgJSON, err := yarn.GetPackageJSON(pkg)
+		if err != nil {
+			return err
+		}
+		fn := pkgJSON.Origin
+		yarnPkg := pkgJSON.Name
+
+		for _, dep := range pkg.GetDependencies() {
+			if dep.Type != leeway.YarnPackage {
+				continue
+			}
+
+			pjs, err := yarn.GetPackageJSON(dep)
+			if err != nil {
+				return err
+			}
+			var (
+				depName    = pjs.Name
+				depVersion = pjs.Version
+			)
+			if depName == pkgJSON.Name {
+				continue
+			}
+
+			fc, err := ioutil.ReadFile(fn)
+			if err != nil {
+				return err
+			}
+			pkgJSON := &jsonmap.OrderedMap{}
+			err = json.Unmarshal(fc, pkgJSON)
+			if err != nil {
+				return xerrors.Errorf("cannot unmarshal %s: %w", fn, err)
+			}
+
+			var depsMap *jsonmap.OrderedMap
+			deps, ok := pkgJSON.Get("dependencies")
+			if !ok {
+				depsMap = &jsonmap.OrderedMap{}
+			} else {
+				depsMap, ok = deps.(*jsonmap.OrderedMap)
+				if !ok {
+					return xerrors.Errorf("%s: dependencies are not a map", fn)
+				}
+			}
+
+			var version string
+			if dep.C.W.Origin == pkg.C.W.Origin {
+				// dep satisfying leeway package is in the same leeway/yarn workspace,
+				// set the version directly
+				version = depVersion
+			} else {
+				// dep satisfying leeway package is located outside of the main package's leeway/yarn workspace.
+				// Use the relative location as version.
+				relLoc, err := filepath.Rel(pkg.C.Origin, dep.C.Origin)
+				if err != nil {
+					return err
+				}
+				version = relLoc
+			}
+
+			log.WithFields(log.Fields{
+				"pkg":       pkg.FullName(),
+				"dep":       dep.FullName(),
+				"yarnPkg":   yarnPkg,
+				"yarnDep":   depName,
+				"pkgOrigin": pkg.C.W.Origin,
+				"depOrigin": dep.C.W.Origin,
+				"version":   version,
+			}).Debug("linking yarn dep to pkg")
+
+			depsMap.Set(string(depName), version)
+			pkgJSON.Set("dependencies", depsMap)
+
+			fc, err = jsonmap.MarshalJSON(pkgJSON, "  ", false)
+			if err != nil {
+				return err
+			}
+			err = ioutil.WriteFile(fn, fc, 0644)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

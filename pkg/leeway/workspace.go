@@ -27,6 +27,11 @@ type Workspace struct {
 	ArgumentDefaults  map[string]string `yaml:"defaultArgs,omitempty"`
 	Variants          []*PackageVariant `yaml:"variants,omitempty"`
 	IncludeWorkspaces []WorkspaceLink   `yaml:"includeWorkspaces,omitempty"`
+	Linker            struct {
+		GoModules bool `yaml:"go"`
+		Yarn      bool `yaml:"yarn"`
+		Yarn2     bool `yaml:"yarn2"`
+	} `yaml:"inWorkspaceLinker"`
 
 	Origin          string                `yaml:"-"`
 	Components      map[string]*Component `yaml:"-"`
@@ -39,15 +44,15 @@ type Workspace struct {
 
 // WorkspaceLink links one workspace to another
 type WorkspaceLink struct {
-	Alias               string `yaml:"alias"`
-	Path                string `yaml:"path"`
-	OverrideDefaultArgs bool   `yaml:"overrideDefaultArgs"`
+	Alias            string            `yaml:"alias"`
+	Path             string            `yaml:"path"`
+	ArgumentDefaults map[string]string `yaml:"defaultArgs,omitempty"`
 
 	Nested bool `yaml:"-"`
 }
 
 func (l WorkspaceLink) String() string {
-	return fmt.Sprintf("%s as %s (nested: %v, overrideArgs: %v)", l.Path, l.Alias, l.Nested, l.OverrideDefaultArgs)
+	return fmt.Sprintf("%s as %s (nested: %v, defaultArgs: %v)", l.Path, l.Alias, l.Nested, l.ArgumentDefaults)
 }
 
 // ShouldIngoreComponent returns true if a file should be ignored for a component listing
@@ -153,6 +158,12 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 				},
 				ArgumentDefaults: rootWS.ArgumentDefaults,
 			}
+		} else if lnk.ArgumentDefaults != nil {
+			args := make(map[string]string)
+			mergo.MergeWithOverwrite(&args, rootWS.ArgumentDefaults)
+			mergo.MergeWithOverwrite(&args, lnk.ArgumentDefaults)
+
+			opts = loadWorkspaceOpts{ArgumentDefaults: args}
 		}
 		sws, err := loadWorkspace(context.Background(), lnk.Path, args, variant, &opts)
 		if err != nil {
