@@ -32,7 +32,7 @@ func checkArgsReferingToPackage(pkg *leeway.Package) ([]Finding, error) {
 			// we've found something that looks like a path - check if we have a dependency that could satisfy it
 			var satisfied bool
 			for _, dep := range pkg.GetDependencies() {
-				if dep.FilesystemSafeName() == pth {
+				if pkg.BuildLayoutLocation(dep) == pth {
 					satisfied = true
 					break
 				}

@@ -489,6 +489,18 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 
 			pkg.Dependencies[idx] = comp.Name + dep
 		}
+		// make all layout entries full qualified
+		if pkg.Layout == nil {
+			pkg.Layout = make(map[string]string)
+		}
+		for dep, loc := range pkg.Layout {
+			if !strings.HasPrefix(dep, ":") {
+				continue
+			}
+
+			delete(pkg.Layout, dep)
+			pkg.Layout[comp.Name+dep] = loc
+		}
 
 		// apply variant config
 		if vnt := pkg.C.W.SelectedVariant; vnt != nil {

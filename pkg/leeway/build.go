@@ -619,7 +619,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 			return PkgNotBuiltErr{deppkg}
 		}
 
-		tgt := deppkg.FilesystemSafeName()
+		tgt := p.BuildLayoutLocation(deppkg)
 		if cfg.Packaging == YarnOfflineMirror {
 			fn := fmt.Sprintf("%s.tar.gz", tgt)
 			commands = append(commands, []string{"cp", builtpkg, filepath.Join("_mirror", fn)})
@@ -803,7 +803,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 				return PkgNotBuiltErr{dep}
 			}
 
-			tgt := filepath.Join("_deps", dep.FilesystemSafeName())
+			tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
 			commands = append(commands, [][]string{
 				{"mkdir", tgt},
 				{"tar", "xfz", builtpkg, "-C", tgt},
@@ -869,7 +869,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 			return PkgNotBuiltErr{dep}
 		}
 
-		tgt := dep.FilesystemSafeName()
+		tgt := p.BuildLayoutLocation(dep)
 		commands = append(commands, [][]string{
 			{"mkdir", tgt},
 			{"tar", "xfz", fn, "-C", tgt},
@@ -941,7 +941,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 			return PkgNotBuiltErr{dep}
 		}
 
-		tgt := dep.FilesystemSafeName()
+		tgt := p.BuildLayoutLocation(dep)
 		commands = append(commands, [][]string{
 			{"mkdir", tgt},
 			{"tar", "xfz", fn, "-C", tgt},
