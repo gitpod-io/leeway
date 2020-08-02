@@ -159,6 +159,7 @@ type packageDescription struct {
 	Manifest     map[string]string            `json:"manifest" yaml:"manifest"`
 	ArgDeps      []string                     `json:"argdeps,omitempty" yaml:"argdeps,omitempty"`
 	Dependencies []packageMetadataDescription `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
+	Layout       map[string]string            `json:"layout,omitempty" yaml:"layout,omitempty"`
 	Config       configDescription            `json:"config,omitempty" yaml:"config,omitempty"`
 	Env          []string                     `json:"env,omitempty" yaml:"env,omitempty"`
 	Definition   string                       `json:"definition,omitempty"`
@@ -181,11 +182,17 @@ func newPackageDesription(pkg *leeway.Package) packageDescription {
 	}
 	sort.Slice(deps, func(i, j int) bool { return deps[i].FullName < deps[j].FullName })
 
+	layout := make(map[string]string)
+	for _, dep := range pkg.GetDependencies() {
+		layout[dep.FullName()] = pkg.BuildLayoutLocation(dep)
+	}
+
 	return packageDescription{
 		Metadata:     newMetadataDescription(pkg),
 		Type:         string(pkg.Type),
 		ArgDeps:      pkg.ArgumentDependencies,
 		Dependencies: deps,
+		Layout:       layout,
 		Env:          pkg.Environment,
 		Manifest:     manifest,
 		Config:       newConfigDescription(pkg.Type, pkg.Config),
@@ -249,6 +256,10 @@ Version Relevant Arguments:
 Dependencies:
 {{- range $k, $v := .Dependencies }}
 {{"\t"}}{{ $v.FullName -}}{{"\t"}}{{ $v.Version -}}
+{{ end }}
+Layout:
+{{- range $k, $v := .Layout }}
+{{"\t"}}{{ $k -}}{{"\t"}}{{ $v -}}
 {{ end -}}
 {{ end }}
 {{ if .Manifest -}}

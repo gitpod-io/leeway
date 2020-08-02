@@ -111,14 +111,15 @@ func (n PackageNotFoundErr) Error() string {
 }
 
 type packageInternal struct {
-	Name                 string      `yaml:"name"`
-	Type                 PackageType `yaml:"type"`
-	Sources              []string    `yaml:"srcs"`
-	Dependencies         []string    `yaml:"deps"`
-	ArgumentDependencies []string    `yaml:"argdeps"`
-	Environment          []string    `yaml:"env"`
-	Ephemeral            bool        `yaml:"ephemeral"`
-	PreparationCommands  [][]string  `yaml:"prep"`
+	Name                 string            `yaml:"name"`
+	Type                 PackageType       `yaml:"type"`
+	Sources              []string          `yaml:"srcs"`
+	Dependencies         []string          `yaml:"deps"`
+	Layout               map[string]string `yaml:"layout"`
+	ArgumentDependencies []string          `yaml:"argdeps"`
+	Environment          []string          `yaml:"env"`
+	Ephemeral            bool              `yaml:"ephemeral"`
+	PreparationCommands  [][]string        `yaml:"prep"`
 }
 
 // Package is a single buildable artifact within a component
@@ -134,6 +135,7 @@ type Package struct {
 	Definition []byte `yaml:"-"`
 
 	dependencies     []*Package
+	layout           map[*Package]string
 	originalSources  []string
 	fullNameOverride string
 }
@@ -146,11 +148,18 @@ func (p *Package) link(idx map[string]*Package) error {
 	}
 
 	p.dependencies = make([]*Package, len(p.Dependencies))
+	p.layout = make(map[*Package]string)
 	for i, dep := range p.Dependencies {
-		var ok bool
-		p.dependencies[i], ok = idx[dep]
+		deppkg, ok := idx[dep]
 		if !ok {
 			return PackageNotFoundErr{dep}
+		}
+		p.dependencies[i] = deppkg
+
+		// if the user hasn't specified a layout, tie it down at this point
+		p.layout[deppkg], ok = p.Layout[dep]
+		if !ok {
+			p.layout[deppkg] = deppkg.FilesystemSafeName()
 		}
 	}
 	return nil
@@ -237,6 +246,19 @@ func (p *Package) GetTransitiveDependencies() []*Package {
 		i++
 	}
 	return res
+}
+
+// BuildLayoutLocation returns the filesystem path a dependency is expected at during the build.
+// This path will always be relative. If the provided package is not a depedency of this package,
+// we'll still return a valid path.
+func (p *Package) BuildLayoutLocation(dependency *Package) (loc string) {
+	var ok bool
+	loc, ok = p.layout[dependency]
+	if ok {
+		return loc
+	}
+
+	return p.FilesystemSafeName()
 }
 
 // UnmarshalYAML unmarshals the package definition
