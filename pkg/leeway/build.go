@@ -266,6 +266,9 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return err
 	}
 	ctx, err := newBuildContext(options)
+	if err != nil {
+		return err
+	}
 
 	requirements := pkg.GetTransitiveDependencies()
 	allpkg := append(requirements, pkg)
