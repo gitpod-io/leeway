@@ -258,7 +258,7 @@ func (p *Package) BuildLayoutLocation(dependency *Package) (loc string) {
 		return loc
 	}
 
-	return p.FilesystemSafeName()
+	return dependency.FilesystemSafeName()
 }
 
 // UnmarshalYAML unmarshals the package definition
