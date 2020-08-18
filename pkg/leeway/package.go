@@ -569,7 +569,7 @@ func (v *PackageVariant) ResolveSources(workspace *Workspace, loc string) (incl 
 
 func resolveSources(workspace *Workspace, loc string, globs []string, includeDirs bool) (res []string, err error) {
 	for _, glb := range globs {
-		srcs, err := doublestar.Glob(loc, glb, workspace.ShouldIngoreSource)
+		srcs, err := doublestar.Glob(loc, glb, workspace.ShouldIgnoreSource)
 		if err != nil {
 			return nil, err
 		}
@@ -582,7 +582,7 @@ func resolveSources(workspace *Workspace, loc string, globs []string, includeDir
 			if !includeDirs && stat.IsDir() {
 				continue
 			}
-			if workspace.ShouldIngoreSource(src) {
+			if workspace.ShouldIgnoreSource(src) {
 				continue
 			}
 			res = append(res, src)
@@ -785,6 +785,10 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 		return xerrors.Errorf("package is not linked")
 	}
 
+	envhash, err := p.C.W.EnvironmentManifest.Hash()
+	if err != nil {
+		return err
+	}
 	defhash, err := p.DefinitionHash()
 	if err != nil {
 		return err
@@ -795,6 +799,10 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 	}
 
 	_, err = fmt.Fprintf(out, "buildProcessVersion: %d\n", buildProcessVersions[p.Type])
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "environment: %s\n", envhash)
 	if err != nil {
 		return err
 	}
