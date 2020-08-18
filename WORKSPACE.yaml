@@ -1,6 +1,11 @@
 defaultTarget: "//:app"
 defaultArgs:
   version: dev
+environmentManifest:
+  - name: "node"
+    command: ["node", "--version"]
+  - name: "yarn"
+    command: ["yarn", "--version"]
 variants:
 - name: nogit
   srcs:

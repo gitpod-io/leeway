@@ -1,18 +1,25 @@
 package leeway
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"runtime/trace"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/imdario/mergo"
+	"github.com/minio/highwayhash"
 	log "github.com/sirupsen/logrus"
 	"github.com/typefox/leeway/pkg/doublestar"
 	"golang.org/x/sync/errgroup"
@@ -23,9 +30,10 @@ import (
 // Workspace is the root container of all compoments. All components are named relative
 // to the origin of this workspace.
 type Workspace struct {
-	DefaultTarget    string            `yaml:"defaultTarget,omitempty"`
-	ArgumentDefaults map[string]string `yaml:"defaultArgs,omitempty"`
-	Variants         []*PackageVariant `yaml:"variants,omitempty"`
+	DefaultTarget       string              `yaml:"defaultTarget,omitempty"`
+	ArgumentDefaults    map[string]string   `yaml:"defaultArgs,omitempty"`
+	Variants            []*PackageVariant   `yaml:"variants,omitempty"`
+	EnvironmentManifest EnvironmentManifest `yaml:"environmentManifest,omitempty"`
 
 	Origin          string                `yaml:"-"`
 	Components      map[string]*Component `yaml:"-"`
@@ -36,13 +44,79 @@ type Workspace struct {
 	ignores []string
 }
 
-// ShouldIngoreComponent returns true if a file should be ignored for a component listing
-func (ws *Workspace) ShouldIngoreComponent(path string) bool {
-	return ws.ShouldIngoreSource(path)
+// EnvironmentManifest is a collection of environment manifest entries
+type EnvironmentManifest []EnvironmentManifestEntry
+
+// Write writes the manifest to the writer
+func (mf EnvironmentManifest) Write(out io.Writer) error {
+	for _, e := range mf {
+		_, err := fmt.Fprintf(out, "%s: %s\n", e.Name, e.Value)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// ShouldIngoreSource returns true if a file should be ignored for a source listing
-func (ws *Workspace) ShouldIngoreSource(path string) bool {
+// Hash produces the hash of this manifest
+func (mf EnvironmentManifest) Hash() (string, error) {
+	key, err := hex.DecodeString(contentHashKey)
+	if err != nil {
+		return "", err
+	}
+
+	hash, err := highwayhash.New(key)
+	if err != nil {
+		return "", err
+	}
+
+	err = mf.Write(hash)
+	if err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// EnvironmentManifestEntry represents an entry in the environment manifest
+type EnvironmentManifestEntry struct {
+	Name    string   `yaml:"name"`
+	Command []string `yaml:"command"`
+
+	Value   string `yaml:"-"`
+	Builtin bool   `yaml:"-"`
+}
+
+const (
+	builtinEnvManifestGOOS   = "goos"
+	builtinEnvManifestGOARCH = "goarch"
+)
+
+var defaultEnvManifestEntries = map[PackageType]EnvironmentManifest{
+	"": []EnvironmentManifestEntry{
+		{Name: "os", Command: []string{builtinEnvManifestGOOS}, Builtin: true},
+		{Name: "arch", Command: []string{builtinEnvManifestGOARCH}, Builtin: true},
+	},
+	GenericPackage: []EnvironmentManifestEntry{},
+	DockerPackage: []EnvironmentManifestEntry{
+		{Name: "docker", Command: []string{"docker", "version", "--format", "{{.Client.Version}} {{.Server.Version}}"}},
+	},
+	GoPackage: []EnvironmentManifestEntry{
+		{Name: "go", Command: []string{"go", "version"}},
+	},
+	YarnPackage: []EnvironmentManifestEntry{
+		{Name: "yarn", Command: []string{"yarn", "-v"}},
+		{Name: "node", Command: []string{"node", "--version"}},
+	},
+}
+
+// ShouldIgnoreComponent returns true if a file should be ignored for a component listing
+func (ws *Workspace) ShouldIgnoreComponent(path string) bool {
+	return ws.ShouldIgnoreSource(path)
+}
+
+// ShouldIgnoreSource returns true if a file should be ignored for a source listing
+func (ws *Workspace) ShouldIgnoreSource(path string) bool {
 	for _, ptn := range ws.ignores {
 		if strings.Contains(path, ptn) {
 			return true
@@ -199,7 +273,7 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		}
 		ignores = strings.Split(string(fc), "\n")
 	}
-	otherWS, err := doublestar.Glob(workspace.Origin, "**/WORKSPACE.yaml", workspace.ShouldIngoreSource)
+	otherWS, err := doublestar.Glob(workspace.Origin, "**/WORKSPACE.yaml", workspace.ShouldIgnoreSource)
 	if err != nil {
 		return Workspace{}, err
 	}
@@ -212,7 +286,7 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		ignores = append(ignores, dir)
 	}
 	workspace.ignores = ignores
-	log.WithField("ingores", workspace.ignores).Debug("computed workspace ignores")
+	log.WithField("ignores", workspace.ignores).Debug("computed workspace ignores")
 
 	if len(opts.ArgumentDefaults) > 0 {
 		if workspace.ArgumentDefaults == nil {
@@ -245,15 +319,24 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	workspace.Components = make(map[string]*Component)
 	workspace.Packages = make(map[string]*Package)
 	workspace.Scripts = make(map[string]*Script)
+	packageTypesUsed := make(map[PackageType]struct{})
 	for _, comp := range comps {
 		workspace.Components[comp.Name] = comp
 
 		for _, pkg := range comp.Packages {
 			workspace.Packages[pkg.FullName()] = pkg
+			packageTypesUsed[pkg.Type] = struct{}{}
 		}
 		for _, script := range comp.Scripts {
 			workspace.Scripts[script.FullName()] = script
 		}
+	}
+
+	// with all packages loaded we can compute the env manifest, becuase now we know which package types are actually
+	// used, hence know the default env manifest entries.
+	workspace.EnvironmentManifest, err = buildEnvironmentManifest(workspace.EnvironmentManifest, packageTypesUsed)
+	if err != nil {
+		return Workspace{}, err
 	}
 
 	// now that we have all components/packages, we can link things
@@ -298,6 +381,55 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	return workspace, nil
 }
 
+// buildEnvironmentManifest executes the commands of an env manifest and updates the values
+func buildEnvironmentManifest(entries EnvironmentManifest, pkgtpes map[PackageType]struct{}) (res EnvironmentManifest, err error) {
+	t0 := time.Now()
+
+	envmf := make(map[string]EnvironmentManifestEntry, len(entries))
+	for _, e := range defaultEnvManifestEntries[""] {
+		envmf[e.Name] = e
+	}
+	for tpe := range pkgtpes {
+		for _, e := range defaultEnvManifestEntries[tpe] {
+			envmf[e.Name] = e
+		}
+	}
+	for _, e := range entries {
+		e := e
+		envmf[e.Name] = e
+	}
+
+	for k, e := range envmf {
+		if e.Builtin {
+			switch e.Command[0] {
+			case builtinEnvManifestGOARCH:
+				e.Value = runtime.GOARCH
+			case builtinEnvManifestGOOS:
+				e.Value = runtime.GOOS
+			}
+			res = append(res, e)
+			continue
+		}
+
+		out := bytes.NewBuffer(nil)
+		cmd := exec.Command(e.Command[0], e.Command[1:]...)
+		cmd.Stdout = out
+		err := cmd.Run()
+		if err != nil {
+			return nil, xerrors.Errorf("cannot resolve env manifest entry %v: %w", k, err)
+		}
+		e.Value = strings.TrimSpace(out.String())
+
+		res = append(res, e)
+	}
+
+	sort.Slice(res, func(i, j int) bool { return res[i].Name < res[j].Name })
+
+	log.WithField("time", time.Since(t0).String()).WithField("res", res).Debug("built environment manifest")
+
+	return
+}
+
 // FindWorkspace looks for a WORKSPACE.yaml file within the path. If multiple such files are found,
 // an error is returned.
 func FindWorkspace(path string, args Arguments, variant string) (Workspace, error) {
@@ -309,7 +441,7 @@ func discoverComponents(ctx context.Context, workspace *Workspace, args Argument
 	defer trace.StartRegion(context.Background(), "discoverComponents").End()
 
 	path := workspace.Origin
-	pths, err := doublestar.Glob(path, "**/BUILD.yaml", workspace.ShouldIngoreSource)
+	pths, err := doublestar.Glob(path, "**/BUILD.yaml", workspace.ShouldIgnoreSource)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +450,7 @@ func discoverComponents(ctx context.Context, workspace *Workspace, args Argument
 	cchan := make(chan *Component, 20)
 
 	for _, pth := range pths {
-		if workspace.ShouldIngoreComponent(pth) {
+		if workspace.ShouldIgnoreComponent(pth) {
 			continue
 		}
 

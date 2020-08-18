@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,6 +72,19 @@ func TestFixtureLoadWorkspace(t *testing.T) {
 			Args:      []string{"run", "-w", "fixtures/nested-ws", "wsa/pkg1:echo"},
 			StdoutSub: "hello root",
 			ExitCode:  0,
+		},
+		{
+			Name: "environment manifest",
+			T: t,
+			Args: []string{"describe", "-w", "fixtures/nested-ws/wsa", "environment-manifest"},
+			Eval: func(t *testing.T, stdout, stderr string) {
+				for _, k := range []string{"os", "arch", "foobar"} {
+					if !strings.Contains(stdout, fmt.Sprintf("%s: ", k)) {
+						t.Errorf("missing %s entry in environment manifest", k)
+					}
+				}
+			},
+			ExitCode: 0,
 		},
 	}
 

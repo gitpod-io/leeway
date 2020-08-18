@@ -201,6 +201,23 @@ This workspace has a (nonsensical) `nogo` variant that, when enabled, excludes a
 It also changes the config of all Go packages to include the `-tags foo` flag. You can explore the effects of a variant using `collect` and `describe`, e.g. `leeway --variant nogo collect files` vs `leeway collect files`.
 You can list all variants in a workspace using `leeway collect variants`.
 
+## Environment Manifest
+Leeway does not control the environment in which it builds the packages, but assumes that all required tools are available already (e.g. `go` or `yarn`).
+This however can lead to subtle failure modes where a package built in one enviroment ends up being used in another, because no matter of the environment they were built in, they get the same version.
+
+To prevent such issues, leeway computes an _environment manifest_ which contains the versions of the tools used, as well as some platform information.
+The entries in that manifest depend on the package types used by that workspace, e.g. if only `Go` packages exist in the workspace, only `go version`, [GOOS and GOARCH](https://golang.org/pkg/runtime/#pkg-constants) will be part of the manifest.
+You can inspect a workspace's environment manifest using `leeway describe environment-manifest`. 
+
+You can add your own entries to a workspace's environment manifest in the `WORKSPACE.yaml` like so:
+```YAML
+environmentManifest:
+  - name: gcc
+    command: ["gcc", "--version"]
+```
+
+Using this mechanism you can also overwrite the default manifest entries, e.g. "go" or "yarn".
+
 ## Nested Workspaces
 Leeway has some experimental support for nested workspaces, e.g. a structure like this one:
 ```

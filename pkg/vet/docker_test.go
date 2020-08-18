@@ -62,7 +62,7 @@ ADD from-some-pkg--build/hello.txt hello.txt`,
 			// defer os.RemoveAll(tmpdir)
 
 			var pkgdeps string
-			failOnErr(ioutil.WriteFile(filepath.Join(tmpdir, "WORKSPACE.yaml"), nil, 0644))
+			failOnErr(ioutil.WriteFile(filepath.Join(tmpdir, "WORKSPACE.yaml"), []byte("environmentManifest:\n  - name: \"docker\"\n    command: [\"echo\"]"), 0644))
 			for _, dep := range test.Deps {
 				segs := strings.Split(dep, ":")
 				loc := filepath.Join(tmpdir, segs[0])
