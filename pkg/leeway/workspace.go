@@ -98,8 +98,16 @@ var defaultEnvManifestEntries = map[PackageType]EnvironmentManifest{
 		{Name: "arch", Command: []string{builtinEnvManifestGOARCH}, Builtin: true},
 	},
 	GenericPackage: []EnvironmentManifestEntry{},
-	DockerPackage: []EnvironmentManifestEntry{
-		{Name: "docker", Command: []string{"docker", "version", "--format", "{{.Client.Version}} {{.Server.Version}}"}},
+	DockerPackage:  []EnvironmentManifestEntry{
+		// We do not pull the docker version here as that would make package versions dependent on a connection
+		// to a Docker daemon. As the environment manifest is resolved on workspace load one would always need
+		// a connection to a Docker daemon just to run e.g. leeway collect.
+		//
+		// If you want the behaviour described above, add the following to your WORKSPACE.yaml:
+		//   environmentManifest:
+		//     - name: docker
+		//       command: ["docker", "version", "--format", "{{.Client.Version}} {{.Server.Version}}"]
+		//
 	},
 	GoPackage: []EnvironmentManifestEntry{
 		{Name: "go", Command: []string{"go", "version"}},

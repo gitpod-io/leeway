@@ -75,7 +75,7 @@ func TestFixtureLoadWorkspace(t *testing.T) {
 		},
 		{
 			Name: "environment manifest",
-			T: t,
+			T:    t,
 			Args: []string{"describe", "-w", "fixtures/nested-ws/wsa", "environment-manifest"},
 			Eval: func(t *testing.T, stdout, stderr string) {
 				for _, k := range []string{"os", "arch", "foobar"} {
