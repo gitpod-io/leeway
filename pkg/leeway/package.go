@@ -502,6 +502,9 @@ type packageVariantInternal struct {
 		Include []string `yaml:"include"`
 		Exclude []string `yaml:"exclude"`
 	} `yaml:"srcs"`
+	Components struct {
+		Exclude []string `yaml:"exclude"`
+	} `yaml:"components"`
 	Environment []string                  `yaml:"env"`
 	RawConfig   map[PackageType]yaml.Node `yaml:"config"`
 }
@@ -549,6 +552,16 @@ func (v *PackageVariant) UnmarshalYAML(unmarshal func(interface{}) error) error 
 func (v *PackageVariant) Config(t PackageType) (cfg PackageConfig, ok bool) {
 	cfg, ok = v.config[t]
 	return
+}
+
+// ExcludeComponent returns true if this variants excludes the component
+func (v *PackageVariant) ExcludeComponent(name string) bool {
+	for _, c := range v.Components.Exclude {
+		if c == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolveSources lists all files which are explicitely included or excluded by this variant.

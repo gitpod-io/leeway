@@ -481,6 +481,11 @@ func discoverComponents(ctx context.Context, workspace *Workspace, args Argument
 		defer wg.Done()
 
 		for c := range cchan {
+			// filter variant-excluded components and all their packages
+			if filterExcludedComponents(variant, c) {
+				continue
+			}
+
 			comps = append(comps, c)
 		}
 	}()
@@ -492,6 +497,33 @@ func discoverComponents(ctx context.Context, workspace *Workspace, args Argument
 	wg.Wait()
 
 	return comps, nil
+}
+
+// filterExcludedComponents returns true if the component is excluded by the variant.
+// This function also removes all dependencies to excluded components.
+func filterExcludedComponents(variant *PackageVariant, c *Component) (ignoreComponent bool) {
+	if variant == nil {
+		return false
+	}
+	if variant.ExcludeComponent(c.Name) {
+		log.WithField("component", c.Name).Debug("selected variant excludes this component")
+		return true
+	}
+
+	for _, p := range c.Packages {
+		for i, dep := range p.Dependencies {
+			segs := strings.Split(dep, ":")
+			if len(segs) != 2 {
+				continue
+			}
+
+			if variant.ExcludeComponent(segs[0]) {
+				p.Dependencies[i] = p.Dependencies[len(p.Dependencies)-1]
+				p.Dependencies = p.Dependencies[:len(p.Dependencies)-1]
+			}
+		}
+	}
+	return false
 }
 
 // loadComponent loads a component from a BUILD.yaml file
