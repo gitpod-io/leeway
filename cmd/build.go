@@ -14,6 +14,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/typefox/leeway/pkg/remotereporter"
+	"google.golang.org/grpc"
 )
 
 // buildCmd represents the build command
@@ -241,6 +243,14 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		reporter = leeway.NewWerftReporter()
 	} else {
 		reporter = leeway.NewConsoleReporter()
+	}
+	if statsCollector := os.Getenv(EnvvarStatsCollector); statsCollector != "" {
+		sc, err := remotereporter.NewRemoteReporter(statsCollector, grpc.WithInsecure())
+		if err != nil {
+			log.WithError(err).WithField("statsCollector", statsCollector).Warn("cannot connect to stats collector - ignoring it")
+		}
+		sc.Delegate = reporter
+		reporter = sc
 	}
 
 	dontTest, err := cmd.Flags().GetBool("dont-test")

@@ -20,6 +20,9 @@ const (
 
 	// EnvvarRemoteCacheBucket configures a GCP bucket name. This enables the use of GSUtilRemoteStorage
 	EnvvarRemoteCacheBucket = "LEEWAY_REMOTE_CACHE_BUCKET"
+
+	// EnvvarStatsCollector configures a remote reporter which collects build stats
+	EnvvarStatsCollector = "LEEWAY_STATS_COLLECTOR"
 )
 
 const (

@@ -1,0 +1,17 @@
+packages:
+  - name: tool-protoc
+    type: generic
+    config:
+      commands:
+        - ["curl", "-OL", "https://github.com/protocolbuffers/protobuf/releases/download/v3.13.0/protoc-3.13.0-linux-x86_64.zip"]
+        - ["unzip", "protoc-3.13.0-linux-x86_64.zip"]
+scripts:
+- name: go-protocol
+  description: "Rebuilds the remote reporter protocol"
+  deps:
+    - :tool-protoc
+  script: |
+    go get -v github.com/golang/protobuf/protoc-gen-go
+    $PKG_REMOTEREPORTER__TOOL_PROTOC/bin/protoc -I=. --go_out=plugins=grpc:. reporter.proto
+    mv github.com/typefox/leeway/pkg/remotereporter/reporter.pb.go .
+    rm -r github.com

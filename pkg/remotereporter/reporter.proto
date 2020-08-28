@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package remotereporter;
+option go_package = "github.com/typefox/leeway/pkg/remotereporter";
+
+service Reporter {
+    rpc BuildStarted(BuildStartedEvent) returns (BuildStartedResponse) {}
+    rpc BuildFinished(BuildFinishedEvent) returns (NoResponse) {}
+    rpc PackageBuildStarted(PackageBuildStartedEvent) returns (NoResponse) {}
+    rpc PackageBuildLog(stream PackageBuildLogEvent) returns (NoResponse) {}
+    rpc PackageBuildFinished(PackageBuildFinishedEvent) returns (NoResponse) {}
+}
+
+message BuildStartedEvent {
+    int32 clock = 1;
+    Package package = 2;
+}
+
+message BuildStartedResponse {
+    string session = 1;
+}
+
+message PackageMetadata {
+    string fullname = 1;
+    string version = 2;
+}
+
+enum PackageStatus {
+    Unknown = 0;
+    NotBuilt = 1;
+    Building = 2;
+    Built = 3;
+}
+
+message Package {
+    PackageMetadata metadata = 1;
+    repeated Package dependencies = 2;
+    PackageStatus status = 3;
+}
+
+message BuildFinishedEvent {
+    int32 clock = 1;
+
+    string session = 2;
+    PackageMetadata package = 3;
+    bool successful = 4;
+    string message = 5;
+}
+
+message PackageBuildStartedEvent {
+    int32 clock = 1;
+
+    string session = 2;
+    PackageMetadata package = 3;
+}
+
+message PackageBuildLogEvent {
+    int32 clock = 1;
+
+    string session = 2;
+    PackageMetadata package = 3;
+    bytes data = 4;
+}
+
+message PackageBuildFinishedEvent {
+    int32 clock = 1;
+
+    string session = 2;
+    PackageMetadata package = 3;
+    bool successful = 4;
+    string message = 5;
+}
+
+message NoResponse {}
