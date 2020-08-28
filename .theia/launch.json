@@ -11,7 +11,7 @@
       "program": "${workspaceFolder}/main.go",
       "env": {
           "LEEWAY_EXPERIMENTAL": "true",
-          "LEEWAY_NESTED_WORKSPACE": "true",
+          "LEEWAY_NESTED_WORKSPACE": "true"
       },
       "args": ["fmt", "fixtures/nested-ws/pkg0/BUILD.yaml"]
     }

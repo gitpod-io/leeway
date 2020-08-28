@@ -107,7 +107,7 @@ func (p *Script) Run(opts ...BuildOption) error {
 			C:            p.C,
 			dependencies: p.dependencies,
 			packageInternal: packageInternal{
-				Name:        fmt.Sprintf("%s-dpes", p.Name),
+				Name:        fmt.Sprintf("%s-deps", p.Name),
 				Environment: p.Environment,
 				Ephemeral:   true,
 				Type:        GenericPackage,
@@ -159,7 +159,7 @@ func (p *Script) Run(opts ...BuildOption) error {
 		env = append(env, fmt.Sprintf("PATH=%s", strings.Join(paths, ":")))
 	}
 	for n, pth := range deplocs {
-		env = append(env, fmt.Sprintf("%s=%s", strings.ToUpper(n), pth))
+		env = append(env, fmt.Sprintf("%s=%s", strings.ToUpper(strings.ReplaceAll(n, "-", "_")), pth))
 	}
 
 	// execute script
