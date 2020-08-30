@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package remotereporter;
+option go_package = "github.com/typefox/leeway/pkg/remotereporter";
+
+import "reporter.proto";
+
+service StatsService {
+    // DurationSamples returns the raw data collected for a package
+    rpc DurationSamples(DurationSamplesRequest) returns (DurationSamplesResponse) {};
+
+    // EstimateDuration provides a maximum likelyhood estimate of the package's build times
+    // based on the previously collected data. This function will take the dependencies of
+    // the package into account and return estimates for all individual packages, as well as
+    // the build time overall.
+    rpc EstimateDuration(EstimateDurationRequest) returns (EstimateDurationResponse) {}; 
+}
+
+message DurationSamplesRequest {
+    string package = 1;
+}
+
+message DurationSamplesResponse {
+    repeated int64 samples = 1;
+}
+
+message EstimateDurationRequest {
+    Package package = 1;
+}
+
+message EstimateDurationResponse {
+    PackageBuildDuration total = 1;
+    repeated PackageBuildDuration packages = 2;
+}
+
+message PackageBuildDuration {
+    string package = 1;
+
+    // most_likely is the most likely build duration
+    int64 most_likely = 2;
+    // n95_low is the lower bound of 95% of probability mass
+    int64 n95_low = 3;
+    // n95_low is the upper bound of 95% of probability mass
+    int64 n95_high = 4;
+}

@@ -1,5 +1,5 @@
 checkoutLocation: leeway
-workspaceLocation: leeway
+workspaceLocation: leeway/workspace.theia-workspace
 
 # List the ports you want to expose and what to do when they are served. See https://www.gitpod.io/docs/43_config_ports/
 ports:

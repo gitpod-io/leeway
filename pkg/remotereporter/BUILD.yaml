@@ -12,6 +12,6 @@ scripts:
     - :tool-protoc
   script: |
     go get -v github.com/golang/protobuf/protoc-gen-go
-    $PKG_REMOTEREPORTER__TOOL_PROTOC/bin/protoc -I=. --go_out=plugins=grpc:. reporter.proto
-    mv github.com/typefox/leeway/pkg/remotereporter/reporter.pb.go .
+    $PKG_REMOTEREPORTER__TOOL_PROTOC/bin/protoc -I=. --go_out=plugins=grpc:. reporter.proto stats.proto
+    mv github.com/typefox/leeway/pkg/remotereporter/*.pb.go .
     rm -r github.com

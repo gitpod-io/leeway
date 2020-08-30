@@ -1,0 +1,9 @@
+{
+    "folders": [
+        {"path": ""},
+        {"path": "extra/stats-collector"}
+    ],
+    "settings": {
+        "launch": {}
+    }
+}

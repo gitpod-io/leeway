@@ -10,7 +10,9 @@ packages:
   - name: app
     type: go
     srcs:
-      - "**/*.go"
+      - "cmd/**/*.go"
+      - "pkg/**/*.go"
+      - "main.go"
       - go.mod
       - go.sum
     deps:

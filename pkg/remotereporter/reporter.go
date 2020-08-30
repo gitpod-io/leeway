@@ -12,14 +12,12 @@ import (
 
 // Reporter reports build progress using the remotereporter gRPC protocol
 type Reporter struct {
-	Delegate leeway.Reporter
+	Delegate  leeway.Reporter
 	IgnoreLog bool
 
-	client  ReporterClient
-	events  chan event
-	done    chan struct{}
-	session string
-	clock   int32
+	client ReporterClient
+	events chan event
+	done   chan struct{}
 }
 
 type event struct {
@@ -47,7 +45,7 @@ func NewRemoteReporter(host string, opts ...grpc.DialOption) (*Reporter, error) 
 
 	client := NewReporterClient(conn)
 	rep := &Reporter{
-		Delegate: leeway.NewConsoleReporter(),
+		Delegate: leeway.NewConsoleReporter(leeway.ConsoleReporterOpts{}),
 		client:   client,
 		events:   make(chan event, 100),
 		done:     make(chan struct{}),
@@ -64,6 +62,12 @@ func (r *Reporter) send() {
 		log.WithError(err).Error("cannot establish log stream")
 	}
 
+	var (
+		clock   int32
+		session string
+		times   = make(map[string]time.Time)
+	)
+
 recv:
 	for evt := range r.events {
 		var err error
@@ -72,40 +76,42 @@ recv:
 		switch evt.Type {
 		case eventBuildStarted:
 			msg := evt.Msg.(*BuildStartedEvent)
-			msg.Clock = r.clock
+			msg.Clock = clock
 			resp, err := r.client.BuildStarted(ctx, msg)
 			if err == nil {
-				r.session = resp.Session
+				session = resp.Session
 			}
 		case eventBuildFinished:
 			msg := evt.Msg.(*BuildFinishedEvent)
-			msg.Clock = r.clock
-			msg.Session = r.session
+			msg.Clock = clock
+			msg.Session = session
 			_, err = r.client.BuildFinished(ctx, msg)
 			cancel()
 
 			break recv
 		case eventPackageBuildStarted:
 			msg := evt.Msg.(*PackageBuildStartedEvent)
-			msg.Session = r.session
-			msg.Clock = r.clock
+			msg.Session = session
+			msg.Clock = clock
+			times[msg.Package.Fullname] = time.Now()
 
 			_, err = r.client.PackageBuildStarted(ctx, msg)
 		case eventPackageBuildLog:
 			if logstream != nil {
 				msg := evt.Msg.(*PackageBuildLogEvent)
-				msg.Clock = r.clock
-				msg.Session = r.session
+				msg.Clock = clock
+				msg.Session = session
 				logstream.Send(msg)
 			}
 		case eventPackageBuildFinished:
 			msg := evt.Msg.(*PackageBuildFinishedEvent)
-			msg.Clock = r.clock
-			msg.Session = r.session
+			msg.Clock = clock
+			msg.Session = session
+			msg.DurationMilliseconds = time.Since(times[msg.Package.Fullname]).Milliseconds()
 			_, err = r.client.PackageBuildFinished(ctx, msg)
 		}
 
-		r.clock++
+		clock++
 		cancel()
 		if err != nil {
 			log.WithError(err).Warn("error while reporting")
@@ -241,7 +247,7 @@ func (r *Reporter) PackageBuildLog(pkg *leeway.Package, isErr bool, buf []byte) 
 	if r.IgnoreLog {
 		return
 	}
-	
+
 	msgpkg, err := toRPCPackageMetadata(pkg)
 	if err != nil {
 		log.WithError(err).Error("remote reporter dropping message: PackageBuildLog")

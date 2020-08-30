@@ -238,13 +238,22 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 	if err != nil {
 		log.Fatal(err)
 	}
+	statsCollector := os.Getenv(EnvvarStatsCollector)
+	var repOPts leeway.ConsoleReporterOpts
+	if statsCollector != "" {
+		repOPts.DurationEstimator, err = remotereporter.NewDurationEstimator(statsCollector, grpc.WithInsecure())
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	var reporter leeway.Reporter
 	if werftlog {
-		reporter = leeway.NewWerftReporter()
+		reporter = leeway.NewWerftReporter(repOPts)
 	} else {
-		reporter = leeway.NewConsoleReporter()
+		reporter = leeway.NewConsoleReporter(repOPts)
 	}
-	if statsCollector := os.Getenv(EnvvarStatsCollector); statsCollector != "" {
+	if statsCollector != "" {
 		sc, err := remotereporter.NewRemoteReporter(statsCollector, grpc.WithInsecure())
 		if err != nil {
 			log.WithError(err).WithField("statsCollector", statsCollector).Warn("cannot connect to stats collector - ignoring it")

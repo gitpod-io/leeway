@@ -69,6 +69,7 @@ message PackageBuildFinishedEvent {
     PackageMetadata package = 3;
     bool successful = 4;
     string message = 5;
+    int64 duration_milliseconds = 6;
 }
 
 message NoResponse {}

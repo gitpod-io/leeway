@@ -12,6 +12,7 @@ import (
 
 	"github.com/gookit/color"
 	"github.com/segmentio/textio"
+	log "github.com/sirupsen/logrus"
 )
 
 // Reporter provides feedback about the build progress to the user.
@@ -44,6 +45,7 @@ type Reporter interface {
 
 // ConsoleReporter reports build progress by printing to stdout/stderr
 type ConsoleReporter struct {
+	opts   ConsoleReporterOpts
 	writer map[string]io.Writer
 	times  map[string]time.Time
 	mu     sync.RWMutex
@@ -62,9 +64,24 @@ func (w *exclusiveWriter) Write(p []byte) (n int, err error) {
 	return w.O.Write(p)
 }
 
+// ErrNoEstimate is returned by an DurationEstimator if there's not estimate available for a package
+var ErrNoEstimate = fmt.Errorf("no estimate available")
+
+// DurationEstimator estimates the build duration for a package.
+// If total is true, this function will estimate the total build time, i.e. including all dependencies
+// that require building.
+// If total is false, this function will just estimate the build time for this particular package.
+type DurationEstimator func(pkg *Package, total bool) (mostLikelyMS, n95Low, n95High int64, err error)
+
+// ConsoleReporterOpts configures a console reporter
+type ConsoleReporterOpts struct {
+	DurationEstimator func(pkg *Package, total bool) (mostLikelyMS, n95Low, n95High int64, err error)
+}
+
 // NewConsoleReporter produces a new console logger
-func NewConsoleReporter() *ConsoleReporter {
+func NewConsoleReporter(opts ConsoleReporterOpts) *ConsoleReporter {
 	return &ConsoleReporter{
+		opts:   opts,
 		writer: make(map[string]io.Writer),
 		times:  make(map[string]time.Time),
 	}
@@ -96,9 +113,16 @@ func (r *ConsoleReporter) getWriter(pkg *Package) io.Writer {
 
 // BuildStarted is called when the build of a package is started by the user.
 func (r *ConsoleReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {
+	lines := make([]string, 0, len(status))
+	if r.opts.DurationEstimator != nil {
+		mostLikely, n95low, n95high, err := r.opts.DurationEstimator(pkg, true)
+		if err != nil {
+			log.WithError(err).Debug("cannot get build time estimate")
+		}
+		lines = append(lines, fmt.Sprintf("\tEst. build duration\t%d < %d < %d\n", n95low, mostLikely, n95high))
+	}
+
 	// now that the local cache is warm, we can print the list of work we have to do
-	lines := make([]string, len(status))
-	i := 0
 	for pkg, status := range status {
 		version, err := pkg.Version()
 		if err != nil {
@@ -107,11 +131,10 @@ func (r *ConsoleReporter) BuildStarted(pkg *Package, status map[*Package]Package
 
 		format := "%s\t%s\t%s\n"
 		if status == PackageBuilt {
-			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📦\tcached"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
+			lines = append(lines, fmt.Sprintf(format, color.Green.Sprint("📦\tcached"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version)))
 		} else {
-			lines[i] = fmt.Sprintf(format, color.Yellow.Sprint("🔧\tbuild"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
+			lines = append(lines, fmt.Sprintf(format, color.Yellow.Sprint("🔧\tbuild"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version)))
 		}
-		i++
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i] < lines[j] })
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
@@ -143,6 +166,19 @@ func (r *ConsoleReporter) PackageBuildStarted(pkg *Package) {
 	r.mu.Unlock()
 
 	io.WriteString(out, color.Sprintf("<fg=yellow>build started</> <gray>(version %s)</>\n", version))
+	if r.opts.DurationEstimator != nil {
+		mostLikely, n95low, n95high, err := r.opts.DurationEstimator(pkg, false)
+		if err != nil {
+			log.WithError(err).Debug("cannot get build time estimate")
+		}
+
+		var (
+			tML   = time.Duration(mostLikely) * time.Millisecond
+			tN98L = time.Duration(n95low) * time.Millisecond
+			tN98H = time.Duration(n95high) * time.Millisecond
+		)
+		io.WriteString(out, color.Sprintf("              <gray>est. build duration\t%s < %s < %s</>\n", tN98L.String(), tML.String(), tN98H.String()))
+	}
 }
 
 // PackageBuildLog is called during a package build whenever a build command produced some output.
@@ -174,9 +210,9 @@ func getRunPrefix(p *Package) string {
 }
 
 // NewWerftReporter craetes a new werft compatible reporter
-func NewWerftReporter() *WerftReporter {
+func NewWerftReporter(opts ConsoleReporterOpts) *WerftReporter {
 	return &WerftReporter{
-		ConsoleReporter: NewConsoleReporter(),
+		ConsoleReporter: NewConsoleReporter(ConsoleReporterOpts{}),
 	}
 }
 
@@ -197,6 +233,7 @@ func (r *WerftReporter) BuildStarted(pkg *Package, status map[*Package]PackageBu
 			continue
 		}
 
+		// TODO(cw): use estimator to collect build time estimates for all packages
 		fmt.Printf("[%s|START] will be built\n", p.FullName())
 	}
 }

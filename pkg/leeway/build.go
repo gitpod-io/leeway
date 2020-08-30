@@ -241,7 +241,7 @@ func withBuildContext(ctx *buildContext) BuildOption {
 
 func applyBuildOpts(opts []BuildOption) (buildOptions, error) {
 	options := buildOptions{
-		Reporter:    NewConsoleReporter(),
+		Reporter:    NewConsoleReporter(ConsoleReporterOpts{}),
 		RemoteCache: &NoRemoteCache{},
 		DryRun:      false,
 	}
