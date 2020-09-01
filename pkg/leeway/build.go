@@ -170,12 +170,13 @@ func (c *buildContext) GetNewPackagesForCache() []*Package {
 }
 
 type buildOptions struct {
-	LocalCache  Cache
-	RemoteCache RemoteCache
-	Reporter    Reporter
-	DryRun      bool
-	BuildPlan   io.Writer
-	DontTest    bool
+	LocalCache             Cache
+	RemoteCache            RemoteCache
+	AdditionalRemoteCaches []RemoteCache
+	Reporter               Reporter
+	DryRun                 bool
+	BuildPlan              io.Writer
+	DontTest               bool
 
 	context *buildContext
 }
@@ -195,6 +196,14 @@ func WithLocalCache(cache Cache) BuildOption {
 func WithRemoteCache(cache RemoteCache) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.RemoteCache = cache
+		return nil
+	}
+}
+
+// WithAdditionalRemoteCaches configures the remote cache
+func WithAdditionalRemoteCaches(caches []RemoteCache) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.AdditionalRemoteCaches = caches
 		return nil
 	}
 }
@@ -282,6 +291,14 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	err = options.RemoteCache.Download(ctx.LocalCache, remotelyCachedReq)
 	if err != nil {
 		return err
+	}
+
+	// Download only downloads packages that do not exist locally, yet
+	for _, arc := range options.AdditionalRemoteCaches {
+		err = arc.Download(ctx.LocalCache, remotelyCachedReq)
+		if err != nil {
+			return err
+		}
 	}
 
 	pkgstatus := make(map[*Package]PackageBuildStatus)
