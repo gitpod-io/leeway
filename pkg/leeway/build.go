@@ -13,6 +13,8 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
+
+	"github.com/imdario/mergo"
 )
 
 // PkgNotBuiltErr is used when a package's dependency hasn't been built yet
@@ -74,7 +76,7 @@ const (
 // buildProcessVersions contain the current version of the respective build processes.
 // Increment this value if you change any of the build procedures.
 var buildProcessVersions = map[PackageType]int{
-	YarnPackage:    6,
+	YarnPackage:    7,
 	GoPackage:      1,
 	DockerPackage:  1,
 	GenericPackage: 1,
@@ -688,7 +690,12 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 			packageJSONFiles = fs
 		}
 		packageJSONFiles = append(packageJSONFiles, pkgYarnLock)
-		packageJSON["files"] = packageJSONFiles
+		packageJSON["files"] = packageJSONFiles 
+
+		_, err = mergeYarnWorkspaceResolutions(p.C.W.Origin, packageJSON)
+		if err != nil {
+			return xerrors.Errorf("cannot merge yarn workspace resolutions into component's package.json: %w", err)
+		}
 
 		modifiedPackageJSON = true
 	}
@@ -697,6 +704,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		// The yarn package name and leeway package name do not have to be the same which makes it possible to "reuse" the npm package name for
 		// different things. This yarn cache can't handle that.
 		packageJSON["version"] = fmt.Sprintf("0.0.0-%s", version)
+
+		_, err = mergeYarnWorkspaceResolutions(p.C.W.Origin, packageJSON)
+		if err != nil {
+			return xerrors.Errorf("cannot merge yarn workspace resolutions into component's package.json: %w", err)
+		}
 
 		modifiedPackageJSON = true
 	}
@@ -799,6 +811,53 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 	}
 
 	return executeCommandsForPackage(buildctx, p, wd, commands)
+}
+
+// mergeYarnWorkspaceResolutions reads the "resolutions" property of the package.json of the Yarn workspace, and - if
+// present - merges that into the local package's package.json "resolution" section.
+// This mimics the behaviour of yarn which applies "resolutions" specified in the workspace root to all packages in
+// the workspace
+func mergeYarnWorkspaceResolutions(workspaceOrigin string, componentPackageJSON map[string]interface{}) (bool, error) {
+	wsRootPkgJSONFilename := filepath.Join(workspaceOrigin, "package.json")
+	var wsRootPackageJSON map[string]interface{}
+	fc, err := ioutil.ReadFile(wsRootPkgJSONFilename)
+	if err != nil {
+		return false, xerrors.Errorf("cannot read package.json from workspace root: %w", err)
+	}
+	err = json.Unmarshal(fc, &wsRootPackageJSON)
+	if err != nil {
+		return false, xerrors.Errorf("cannot parse package.json from workspace root: %w", err)
+	}
+
+	rawWsResolutions, ok := wsRootPackageJSON["resolutions"]
+	if !ok {
+		// workspace root package.json has no "resolutions", nothing to do here
+		return false, nil
+	}
+	wsResolutions, ok := rawWsResolutions.(map[string]string)
+	if !ok {
+		fmt.Println(rawWsResolutions)
+		return false, xerrors.Errorf("invalid workspace root package.json: resolutions section is not a map[string]string")
+	}
+
+	var pkgResolutions map[string]string
+	rawPkgResolutions, ok := componentPackageJSON["resolutions"]
+	if ok {
+		pkgResolutions, ok = rawPkgResolutions.(map[string]string)
+		if !ok {
+			fmt.Println(rawPkgResolutions)
+			return false, xerrors.Errorf("invalid workspace root package.json: resolutions section is not a map[string]string")
+		}
+	} else {
+		pkgResolutions = make(map[string]string)
+	}
+
+	err = mergo.Merge(&pkgResolutions, wsResolutions, mergo.WithOverride)	// workspace resolutions override package-local resolutions
+	if err != nil {
+		return false, err
+	}
+	componentPackageJSON["resolutions"] = pkgResolutions
+	return true, nil
 }
 
 // buildGo implements the build process for Go packages.
