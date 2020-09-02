@@ -76,7 +76,7 @@ const (
 // buildProcessVersions contain the current version of the respective build processes.
 // Increment this value if you change any of the build procedures.
 var buildProcessVersions = map[PackageType]int{
-	YarnPackage:    7,
+	YarnPackage:    8,
 	GoPackage:      1,
 	DockerPackage:  1,
 	GenericPackage: 1,
@@ -571,7 +571,7 @@ yarn install --frozenlockfile --prod --cache-folder _temp_yarn_cache
 rm -r yarn.lock _temp_yarn_cache
 `
 
-	installerPackageJSONTemplate = `{"name":"local","version":"%s","license":"UNLICENSED","dependencies":{"%s":"%s"}}`
+	installerPackageJSONTemplate = `{"name":"local","version":"%s","license":"UNLICENSED","dependencies":{"%s":"%s"}, "resolutions":{"%s"}}`
 )
 
 // buildYarn implements the build process for Typescript packages.
@@ -761,11 +761,25 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		}
 	}
 
+	var resolutionsStrs []string
+	if rres, ok := packageJSON["resolutions"]; ok {
+		res, ok := rres.(map[string]string)
+		if !ok {
+			fmt.Println(rres)
+			return xerrors.Errorf("invalid component package.json: resolutions section is not a map[string]string")
+		}
+
+		for k, v := range res {
+			resolutionsStrs = append(resolutionsStrs, fmt.Sprintf("\"%s\": \"%s\"", k, v))
+		}
+	}
+	resolutionStr := strings.Join(resolutionsStrs, ", ")
+
 	if cfg.Packaging == YarnOfflineMirror {
 		builtinScripts := map[string]string{
 			"get_yarn_lock.sh":       getYarnLockScript,
 			"install.sh":             installScript,
-			"installer-package.json": fmt.Sprintf(installerPackageJSONTemplate, version, pkgname, pkgversion),
+			"installer-package.json": fmt.Sprintf(installerPackageJSONTemplate, version, pkgname, pkgversion, resolutionStr),
 		}
 		for fn, script := range builtinScripts {
 			err = ioutil.WriteFile(filepath.Join(wd, "_mirror", fn), []byte(script), 0755)
@@ -791,7 +805,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		if err != nil {
 			return err
 		}
-		err = ioutil.WriteFile(filepath.Join(wd, "_pkg", "package.json"), []byte(fmt.Sprintf(installerPackageJSONTemplate, version, pkgname, pkgversion)), 0755)
+		err = ioutil.WriteFile(filepath.Join(wd, "_pkg", "package.json"), []byte(fmt.Sprintf(installerPackageJSONTemplate, version, pkgname, pkgversion, resolutionStr)), 0755)
 		if err != nil {
 			return err
 		}
@@ -846,7 +860,7 @@ func mergeYarnWorkspaceResolutions(workspaceOrigin string, componentPackageJSON 
 		pkgResolutions, ok = rawPkgResolutions.(map[string]string)
 		if !ok {
 			fmt.Println(rawPkgResolutions)
-			return false, xerrors.Errorf("invalid workspace root package.json: resolutions section is not a map[string]string")
+			return false, xerrors.Errorf("invalid component package.json: resolutions section is not a map[string]string")
 		}
 	} else {
 		pkgResolutions = make(map[string]string)
