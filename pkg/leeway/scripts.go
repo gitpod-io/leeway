@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
@@ -165,12 +166,10 @@ func (p *Script) Run(opts ...BuildOption) error {
 	// execute script
 	switch p.Type {
 	case BashScript:
-		err = executeBashScript(p.Script, wd, env)
-	default:
-		return xerrors.Errorf("unknown script type: %s", p.Type)
+		return executeBashScript(p.Script, wd, env)
 	}
 
-	return nil
+	return xerrors.Errorf("unknown script type: %s", p.Type)
 }
 
 // FindUnresolvedArguments finds any still unresolved build arguments in a set of packages
@@ -248,5 +247,12 @@ func executeBashScript(script string, wd string, env []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
-	return cmd.Run()
+
+	err = cmd.Run()
+	if exiterr, ok := err.(*exec.ExitError); ok {
+		if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
+			os.Exit(status.ExitStatus())
+		}
+	}
+	return err
 }
