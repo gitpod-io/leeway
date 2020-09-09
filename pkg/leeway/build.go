@@ -1,6 +1,7 @@
 package leeway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"sync"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/xerrors"
 )
 
@@ -52,6 +54,7 @@ type buildContext struct {
 
 	pkgLockCond *sync.Cond
 	pkgLocks    map[string]struct{}
+	buildLimit  *semaphore.Weighted
 }
 
 const (
@@ -90,12 +93,18 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 		buildDir = filepath.Join(os.TempDir(), "build")
 	}
 
+	var buildLimit *semaphore.Weighted
+	if options.MaxConcurrentTasks > 0 {
+		buildLimit = semaphore.NewWeighted(options.MaxConcurrentTasks)
+	}
+
 	ctx = &buildContext{
 		buildOptions:       options,
 		buildDir:           buildDir,
 		newlyBuiltPackages: make(map[string]*Package),
 		pkgLockCond:        sync.NewCond(&sync.Mutex{}),
 		pkgLocks:           make(map[string]struct{}),
+		buildLimit:         buildLimit,
 	}
 
 	err = os.MkdirAll(buildDir, 0755)
@@ -143,6 +152,30 @@ func (c *buildContext) ReleaseBuildLock(p *Package) {
 	c.pkgLockCond.L.Unlock()
 }
 
+// LimitConcurrentBuilds blocks until there is a free slot to acutally build.
+// This function effectively limits the number of concurrent builds.
+// We do not do this limiting as part of the build lock, because that would block
+// dependencies from getting build. Hence, it's important to call this function
+// once all dependencies have been built.
+//
+// All callers must release the build limiter using ReleaseConcurrentBuild()
+func (c *buildContext) LimitConcurrentBuilds() {
+	if c.buildLimit == nil {
+		return
+	}
+
+	c.buildLimit.Acquire(context.Background(), 1)
+}
+
+// ReleaseConcurrentBuild releases a previously acquired concurrent build limiting token
+func (c *buildContext) ReleaseConcurrentBuild() {
+	if c.buildLimit == nil {
+		return
+	}
+
+	c.buildLimit.Release(1)
+}
+
 // RegisterNewlyBuilt adds a new package to the list of packages built in this context
 func (c *buildContext) RegisterNewlyBuilt(p *Package) error {
 	ver, err := p.Version()
@@ -177,6 +210,7 @@ type buildOptions struct {
 	DryRun                 bool
 	BuildPlan              io.Writer
 	DontTest               bool
+	MaxConcurrentTasks     int64
 
 	context *buildContext
 }
@@ -236,6 +270,18 @@ func WithBuildPlan(out io.Writer) BuildOption {
 func WithDontTest(dontTest bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.DontTest = dontTest
+		return nil
+	}
+}
+
+// WithMaxConcurrentTasks limits the number of concurrent tasks during the build
+func WithMaxConcurrentTasks(n int64) BuildOption {
+	return func(opts *buildOptions) error {
+		if n < 0 {
+			return xerrors.Errorf("maxConcurrentTasks must be >= 0")
+		}
+		opts.MaxConcurrentTasks = n
+
 		return nil
 	}
 }
@@ -575,6 +621,9 @@ rm -r yarn.lock _temp_yarn_cache
 // buildYarn implements the build process for Typescript packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
 func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err error) {
+	buildctx.LimitConcurrentBuilds()
+	defer buildctx.ReleaseConcurrentBuild()
+
 	cfg, ok := p.Config.(YarnPkgConfig)
 	if !ok {
 		return xerrors.Errorf("package should have yarn config")
@@ -804,6 +853,9 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 // buildGo implements the build process for Go packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
 func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error) {
+	buildctx.LimitConcurrentBuilds()
+	defer buildctx.ReleaseConcurrentBuild()
+
 	cfg, ok := p.Config.(GoPkgConfig)
 	if !ok {
 		return xerrors.Errorf("package should have Go config")
@@ -868,6 +920,9 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 // buildDocker implements the build process for Docker packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
 func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err error) {
+	buildctx.LimitConcurrentBuilds()
+	defer buildctx.ReleaseConcurrentBuild()
+
 	cfg, ok := p.Config.(DockerPkgConfig)
 	if !ok {
 		return xerrors.Errorf("package should have Docker config")
@@ -943,6 +998,9 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 // buildGeneric implements the build process for generic packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment BuildGenericProccessVersion.
 func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err error) {
+	buildctx.LimitConcurrentBuilds()
+	defer buildctx.ReleaseConcurrentBuild()
+
 	cfg, ok := p.Config.(GenericPkgConfig)
 	if !ok {
 		return xerrors.Errorf("package should have generic config")
@@ -979,6 +1037,9 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 // in the build cache. This function makes sure that if the build arguments changed the name of the
 // Docker image this build time, we just re-tag the image.
 func (p *Package) rebuildDocker(buildctx *buildContext, wd, prev string) (err error) {
+	buildctx.LimitConcurrentBuilds()
+	defer buildctx.ReleaseConcurrentBuild()
+
 	cfg, ok := p.Config.(DockerPkgConfig)
 	if !ok {
 		return xerrors.Errorf("package should have Docker config")
