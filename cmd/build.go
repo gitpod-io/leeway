@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
@@ -170,6 +171,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().String("dump-plan", "", "Writes the build plan as JSON to a file. Use \"-\" to write the build plan to stderr.")
 	cmd.Flags().Bool("werft", false, "Produce werft CI compatible output")
 	cmd.Flags().Bool("dont-test", false, "Disable all package-level tests (defaults to false)")
+	cmd.Flags().UintP("max-concurrent-tasks", "j", uint(runtime.NumCPU()), "Limit the number of max concurrent build tasks - set to 0 to disable the limit")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemCache) {
@@ -259,6 +261,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		log.Fatal(err)
 	}
 
+	maxConcurrentTasks, err := cmd.Flags().GetUint("max-concurrent-tasks")
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
@@ -267,6 +274,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		leeway.WithBuildPlan(planOutlet),
 		leeway.WithReporter(reporter),
 		leeway.WithDontTest(dontTest),
+		leeway.WithMaxConcurrentTasks(int64(maxConcurrentTasks)),
 	}, localCache
 }
 
