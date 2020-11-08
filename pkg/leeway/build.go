@@ -211,6 +211,7 @@ type buildOptions struct {
 	BuildPlan              io.Writer
 	DontTest               bool
 	MaxConcurrentTasks     int64
+	DontRebuildDocker      bool
 
 	context *buildContext
 }
@@ -282,6 +283,14 @@ func WithMaxConcurrentTasks(n int64) BuildOption {
 		}
 		opts.MaxConcurrentTasks = n
 
+		return nil
+	}
+}
+
+// WithDontRebuildDocker prevents the Docker image re-tagging
+func WithDontRebuildDocker(value bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DontRebuildDocker = value
 		return nil
 	}
 }
@@ -1037,6 +1046,10 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 // in the build cache. This function makes sure that if the build arguments changed the name of the
 // Docker image this build time, we just re-tag the image.
 func (p *Package) rebuildDocker(buildctx *buildContext, wd, prev string) (err error) {
+	if buildctx.buildOptions.DontRebuildDocker {
+		return nil
+	}
+
 	buildctx.LimitConcurrentBuilds()
 	defer buildctx.ReleaseConcurrentBuild()
 

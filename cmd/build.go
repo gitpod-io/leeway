@@ -172,6 +172,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("werft", false, "Produce werft CI compatible output")
 	cmd.Flags().Bool("dont-test", false, "Disable all package-level tests (defaults to false)")
 	cmd.Flags().UintP("max-concurrent-tasks", "j", uint(runtime.NumCPU()), "Limit the number of max concurrent build tasks - set to 0 to disable the limit")
+	cmd.Flags().Bool("dont-rebuild-docker", false, "Disables the Docker image retagging")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemCache) {
@@ -261,6 +262,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		log.Fatal(err)
 	}
 
+	dontRebuildDocker, err := cmd.Flags().GetBool("dont-rebuild-docker")
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	maxConcurrentTasks, err := cmd.Flags().GetUint("max-concurrent-tasks")
 	if err != nil {
 		log.Fatal(err)
@@ -275,6 +281,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		leeway.WithReporter(reporter),
 		leeway.WithDontTest(dontTest),
 		leeway.WithMaxConcurrentTasks(int64(maxConcurrentTasks)),
+		leeway.WithDontRebuildDocker(dontRebuildDocker),
 	}, localCache
 }
 
