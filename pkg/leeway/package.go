@@ -406,7 +406,9 @@ type GoPkgConfig struct {
 	Generate       bool        `yaml:"generate,omitempty"`
 	DontTest       bool        `yaml:"dontTest,omitempty"`
 	DontCheckGoFmt bool        `yaml:"dontCheckGoFmt,omitempty"`
+	DontLint       bool        `yaml:"dontLint,omitempty"`
 	BuildFlags     []string    `yaml:"buildFlags,omitempty"`
+	LintCommand    []string    `yaml:"lintCommand,omitempty"`
 }
 
 // Validate ensures this config can be acted upon/is valid
