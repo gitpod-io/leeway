@@ -29,7 +29,7 @@ var exportCmd = &cobra.Command{
 }
 
 func init() {
-	addExperimentalCommand(rootCmd, exportCmd)
+	rootCmd.AddCommand(exportCmd)
 
 	exportCmd.Flags().Bool("strict", false, "keep only package source files")
 }
