@@ -3,7 +3,7 @@ module github.com/typefox/leeway
 go 1.14
 
 require (
-	github.com/GeertJohan/go.rice v1.0.1
+	github.com/GeertJohan/go.rice v1.0.2
 	github.com/creack/pty v1.1.11
 	github.com/daaku/go.zipexe v1.0.1 // indirect
 	github.com/disiqueira/gotree v1.0.0

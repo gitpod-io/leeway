@@ -39,7 +39,7 @@ var linkCmd = &cobra.Command{
 }
 
 func init() {
-	addExperimentalCommand(rootCmd, linkCmd)
+	rootCmd.AddCommand(linkCmd)
 
 	linkCmd.Flags().Bool("yarn2-link", false, "link yarn packages using yarn2 resolutions")
 	linkCmd.Flags().Bool("go-link", true, "link Go modules")
