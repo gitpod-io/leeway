@@ -161,7 +161,10 @@ Example use:
 				}
 			}
 		}
-		executeCommandInLocations(args, locs, parallel)
+		err = executeCommandInLocations(args, locs, parallel)
+		if err != nil {
+			log.WithError(err).Fatal("cannot execut command")
+		}
 	},
 }
 
@@ -188,10 +191,12 @@ func executeCommandInLocations(execCmd []string, locs []commandExecLocation, par
 		if err != nil {
 			return fmt.Errorf("execution failed in %s (%s): %w", loc.Name, loc.Dir, err)
 		}
-		pty.InheritSize(ptmx, os.Stdin)
+		_ = pty.InheritSize(ptmx, os.Stdin)
 		defer ptmx.Close()
 
+		//nolint:errcheck
 		go io.Copy(textio.NewPrefixWriter(os.Stdout, prefix), ptmx)
+		//nolint:errcheck
 		go io.Copy(ptmx, os.Stdin)
 		if parallel {
 			wg.Add(1)
@@ -215,11 +220,6 @@ func executeCommandInLocations(execCmd []string, locs []commandExecLocation, par
 	}
 
 	return nil
-}
-
-type readWriter struct {
-	io.Reader
-	io.Writer
 }
 
 func init() {

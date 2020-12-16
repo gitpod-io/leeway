@@ -76,12 +76,18 @@ func linkGoModule(dst *leeway.Package, mods []goModule) error {
 			return err
 		}
 
-		addReplace(gomod, module.Version{Path: mod.Name}, module.Version{Path: relpath}, true, mod.OriginPackage)
+		err = addReplace(gomod, module.Version{Path: mod.Name}, module.Version{Path: relpath}, true, mod.OriginPackage)
+		if err != nil {
+			return err
+		}
 		log.WithField("dst", dst.FullName()).WithField("dep", mod.Name).Debug("linked Go modules")
 	}
 	for _, mod := range mods {
 		for _, r := range mod.Replacements {
-			addReplace(gomod, r.Old, r.New, false, mod.OriginPackage)
+			err = addReplace(gomod, r.Old, r.New, false, mod.OriginPackage)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

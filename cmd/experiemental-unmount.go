@@ -43,7 +43,7 @@ var unmountCmd = &cobra.Command{
 			return nil
 		}
 
-		filepath.Walk(upper, func(path string, info os.FileInfo, err error) error {
+		err = filepath.Walk(upper, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
@@ -102,6 +102,9 @@ var unmountCmd = &cobra.Command{
 
 			return nil
 		})
+		if err != nil {
+			return err
+		}
 
 		return nil
 	},

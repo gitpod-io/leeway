@@ -86,7 +86,10 @@ var initCmd = &cobra.Command{
 		}
 		cmp.Content[0].Content = cmps
 
-		f.Seek(0, 0)
+		_, err = f.Seek(0, 0)
+		if err != nil {
+			return err
+		}
 		err = yaml.NewEncoder(f).Encode(&cmp)
 		if err != nil {
 			return err

@@ -38,13 +38,6 @@ const (
 	PackageBuilt PackageBuildStatus = "built"
 )
 
-type packageDuringBuild struct {
-	P         *Package
-	Status    PackageBuildStatus
-	Locked    bool
-	FromCache bool
-}
-
 type buildContext struct {
 	buildOptions
 	buildDir string
@@ -164,7 +157,7 @@ func (c *buildContext) LimitConcurrentBuilds() {
 		return
 	}
 
-	c.buildLimit.Acquire(context.Background(), 1)
+	_ = c.buildLimit.Acquire(context.Background(), 1)
 }
 
 // ReleaseConcurrentBuild releases a previously acquired concurrent build limiting token

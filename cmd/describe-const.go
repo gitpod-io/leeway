@@ -33,6 +33,7 @@ var describeConstCmd = &cobra.Command{
 		for k, v := range comp.Constants {
 			desc = append(desc, constDesc{Name: k, Value: v})
 		}
+		//nolint:errcheck
 		w.Write(desc)
 	},
 }

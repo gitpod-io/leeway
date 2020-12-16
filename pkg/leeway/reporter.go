@@ -142,12 +142,13 @@ func (r *ConsoleReporter) PackageBuildStarted(pkg *Package) {
 	r.times[pkg.FullName()] = time.Now()
 	r.mu.Unlock()
 
-	io.WriteString(out, color.Sprintf("<fg=yellow>build started</> <gray>(version %s)</>\n", version))
+	_, _ = io.WriteString(out, color.Sprintf("<fg=yellow>build started</> <gray>(version %s)</>\n", version))
 }
 
 // PackageBuildLog is called during a package build whenever a build command produced some output.
 func (r *ConsoleReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {
 	out := r.getWriter(pkg)
+	//nolint:errcheck
 	out.Write(buf)
 }
 
@@ -166,6 +167,7 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, err error) {
 	if err != nil {
 		msg = color.Sprintf("<red>package build failed</>\n<white>Reason:</> %s\n", err)
 	}
+	//nolint:errcheck
 	io.WriteString(out, msg)
 }
 

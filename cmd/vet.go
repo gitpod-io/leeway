@@ -22,7 +22,10 @@ var vetCmd = &cobra.Command{
 {{ .Name }}{{"\t"}}{{ .Description }}
 {{ end }}`
 			}
-			w.Write(vet.Checks())
+			err := w.Write(vet.Checks())
+			if err != nil {
+				return err
+			}
 		}
 
 		ws, err := getWorkspace()

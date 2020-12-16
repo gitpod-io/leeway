@@ -11,8 +11,8 @@ var bashCompletionCmd = &cobra.Command{
 	Use:    "bash-completion",
 	Short:  "Provides bash completion for leeway. Use with `. <(leeway bash-completion)`",
 	Hidden: true,
-	Run: func(cmd *cobra.Command, args []string) {
-		rootCmd.GenBashCompletion(os.Stdout)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return rootCmd.GenBashCompletion(os.Stdout)
 	},
 }
 

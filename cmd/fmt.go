@@ -53,6 +53,7 @@ func formatBuildYaml(fn string, inPlace, fix bool) error {
 	if inPlace {
 		buf := bytes.NewBuffer(nil)
 		out = buf
+		//nolint:errcheck
 		defer func() {
 			f.Seek(0, 0)
 			f.Truncate(0)
