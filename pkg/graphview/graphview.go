@@ -51,6 +51,7 @@ func serveDepGraphJSON(pkgs []*leeway.Package) http.HandlerFunc {
 
 	js, _ := json.Marshal(graph{Nodes: nodes, Links: links})
 	return func(w http.ResponseWriter, r *http.Request) {
+		//nolint:errcheck
 		w.Write(js)
 	}
 }

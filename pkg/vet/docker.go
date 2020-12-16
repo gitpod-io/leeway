@@ -16,7 +16,7 @@ func init() {
 }
 
 var (
-	filesystemSafePathPattern = regexp.MustCompile("([a-zA-Z0-9\\.]+\\-)+\\-([a-zA-Z0-9\\.\\-]+)")
+	filesystemSafePathPattern = regexp.MustCompile(`([a-zA-Z0-9\.]+\-)+\-([a-zA-Z0-9\.\-]+)`)
 )
 
 func checkDockerCopyFromPackage(pkg *leeway.Package) ([]Finding, error) {

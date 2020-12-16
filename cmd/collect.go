@@ -170,7 +170,6 @@ var collectCmd = &cobra.Command{
 				log.Fatal(err)
 			}
 		}
-		return
 	},
 }
 

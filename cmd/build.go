@@ -35,14 +35,11 @@ var buildCmd = &cobra.Command{
 			serve, _ = cmd.Flags().GetString("serve")
 		)
 		if watch {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
 			err := leeway.Build(pkg, opts...)
 			if err != nil {
 				log.Fatal(err)
 			}
-			ctx, cancel = context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(context.Background())
 			if save != "" {
 				saveBuildResult(ctx, save, localCache, pkg)
 			}

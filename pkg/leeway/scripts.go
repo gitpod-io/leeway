@@ -89,6 +89,9 @@ func (p *Script) Run(opts ...BuildOption) error {
 		return err
 	}
 	buildCtx, err := newBuildContext(options)
+	if err != nil {
+		return err
+	}
 
 	unresolvedArgs, err := findUnresolvedArgumentsInScript(p)
 	if err != nil {
@@ -233,7 +236,7 @@ func executeBashScript(script string, wd string, env []string) error {
 	if err != nil {
 		return err
 	}
-	f.WriteString(script)
+	_, err = f.WriteString(script)
 	if err != nil {
 		return err
 	}

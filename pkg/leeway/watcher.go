@@ -36,6 +36,7 @@ func WatchSources(ctx context.Context, pkgs []*Package) (changed <-chan string, 
 	}
 	for f, pkg := range folders {
 		log.WithField("path", f).Debug("adding watcher")
+		//nolint:errcheck
 		watcher.Add(f)
 
 		matcher = append(matcher, &pathMatcher{
@@ -71,6 +72,7 @@ func WatchSources(ctx context.Context, pkgs []*Package) (changed <-chan string, 
 						Base:     dfn,
 						Patterns: patterns,
 					})
+					//nolint:errcheck
 					watcher.Add(dfn)
 					log.WithField("path", dfn).Debug("added new source folder")
 				}

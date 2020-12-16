@@ -134,6 +134,7 @@ func serveDepGraph(addr string, pkgs []*leeway.Package) {
 			taddr = fmt.Sprintf("localhost%s", addr)
 		}
 		taddr = fmt.Sprintf("http://%s", taddr)
+		//nolint:errcheck
 		exec.Command(browser, taddr).Start()
 	}()
 

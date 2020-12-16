@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/typefox/leeway/pkg/leeway"
 	"github.com/typefox/leeway/pkg/prettyprint"
-	"gopkg.in/yaml.v3"
 )
 
 // describeCmd represents the describe command
@@ -24,7 +23,7 @@ var describeCmd = &cobra.Command{
 			var subcmd *cobra.Command
 			for _, c := range cmd.Commands() {
 				if c.Name() == cmdname {
-					cmd = c
+					subcmd = c
 					break
 				}
 			}
@@ -323,29 +322,10 @@ Packages:
 	}
 }
 
-func describeConfig(cfg leeway.PackageConfig, indent string) string {
-	fc, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Sprintf("\t!! cannot present: %v !!", err)
-	}
-
-	cfgmap := make(map[string]interface{})
-	err = yaml.Unmarshal(fc, &cfgmap)
-	if err != nil {
-		return fmt.Sprintf("\t!! cannot present: %v !!", err)
-	}
-
-	var res string
-	for k, v := range cfgmap {
-		res += fmt.Sprintf("%s%s:\t%v\n", indent, k, v)
-	}
-	return res
-}
-
 type scriptDescription struct {
 	Name            string                       `json:"name" yaml:"name"`
 	FullName        string                       `json:"fullName" yaml:"fullName"`
-	Description     string                       `json:"description,omitempty" json:"description,omitempty"`
+	Description     string                       `json:"description,omitempty"`
 	FullDescription string                       `json:"fullDescription,omitempty" yaml:"fullDescription,omitempty"`
 	Env             []string                     `json:"env,omitempty" yaml:"env,omitempty"`
 	Dependencies    []packageMetadataDescription `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
