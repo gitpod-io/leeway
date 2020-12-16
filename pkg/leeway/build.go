@@ -78,7 +78,7 @@ const (
 // Increment this value if you change any of the build procedures.
 var buildProcessVersions = map[PackageType]int{
 	YarnPackage:    6,
-	GoPackage:      1,
+	GoPackage:      2,
 	DockerPackage:  1,
 	GenericPackage: 1,
 }
@@ -330,9 +330,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 
 	// respect per-package cache level when downloading from remote cache
 	remotelyCachedReq := make([]*Package, 0, len(requirements))
-	for _, req := range requirements {
-		remotelyCachedReq = append(remotelyCachedReq, req)
-	}
+	remotelyCachedReq = append(remotelyCachedReq, requirements...)
 
 	err = options.RemoteCache.Download(ctx.LocalCache, remotelyCachedReq)
 	if err != nil {
@@ -761,7 +759,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 	}
 	pkgname, ok := packageJSON["name"].(string)
 	if !ok {
-		return xerrors.Errorf("name is not a string, but :v", pkgname)
+		return xerrors.Errorf("name is not a string, but %v", pkgname)
 	}
 	pkgversion := packageJSON["version"]
 	if pkgname == "" || pkgversion == "" {
@@ -902,6 +900,13 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 	}
 	if !cfg.DontCheckGoFmt {
 		commands = append(commands, []string{"sh", "-c", `if [ ! $(go fmt ./... | wc -l) -eq 0 ]; then echo; echo; echo please gofmt your code; echo; echo; exit 1; fi`})
+	}
+	if !cfg.DontLint {
+		if len(cfg.LintCommand) == 0 {
+			commands = append(commands, []string{"golangci-lint", "run"})
+		} else {
+			commands = append(commands, cfg.LintCommand)
+		}
 	}
 	if cfg.Packaging == GoApp {
 		cmd := []string{"go", "build"}

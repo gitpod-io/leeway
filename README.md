@@ -132,8 +132,12 @@ config:
   dontTest: false
   # If true disables the enforcement of `go fmt`. By default, if the code is not gofmt'ed the build fails.
   dontCheckGoFmt: false
+  # If true disables the linting stage.
+  dontLint: false
   # A list of flags passed to `go build`. Useful for passing `ldflags`.
   buildFlags: []
+  # Command that's executed to lint the code
+  lintCommand: ["golangci-lint", "run]
 ```
 
 ### Yarn packages
