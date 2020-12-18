@@ -32,6 +32,7 @@ import (
 type Workspace struct {
 	DefaultTarget       string              `yaml:"defaultTarget,omitempty"`
 	ArgumentDefaults    map[string]string   `yaml:"defaultArgs,omitempty"`
+	DefaultVariant      *PackageVariant     `yaml:"defaultVariant,omitempty"`
 	Variants            []*PackageVariant   `yaml:"variants,omitempty"`
 	EnvironmentManifest EnvironmentManifest `yaml:"environmentManifest,omitempty"`
 
@@ -270,6 +271,9 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 				break
 			}
 		}
+	} else if workspace.DefaultVariant != nil {
+		workspace.SelectedVariant = workspace.DefaultVariant
+		log.WithField("defaults", *workspace.SelectedVariant).Debug("applying default variant")
 	}
 
 	var ignores []string
