@@ -884,13 +884,6 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 	if cfg.Generate {
 		commands = append(commands, []string{"go", "generate", "-v", "./..."})
 	}
-	if !cfg.DontTest && !buildctx.DontTest {
-		commands = append(commands, [][]string{
-			// we build the test binaries in addition to running the tests regularly, so that downstream packages can run the tests in different environments
-			{"sh", "-c", "mkdir _tests; for i in $(go list ./...); do go test -c $i; [ -e $(basename $i).test ] && mv $(basename $i).test _tests; true; done"},
-			{"go", "test", "-v", "./..."},
-		}...)
-	}
 	if !cfg.DontCheckGoFmt {
 		commands = append(commands, []string{"sh", "-c", `if [ ! $(go fmt ./... | wc -l) -eq 0 ]; then echo; echo; echo please gofmt your code; echo; echo; exit 1; fi`})
 	}
@@ -900,6 +893,13 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 		} else {
 			commands = append(commands, cfg.LintCommand)
 		}
+	}
+	if !cfg.DontTest && !buildctx.DontTest {
+		commands = append(commands, [][]string{
+			// we build the test binaries in addition to running the tests regularly, so that downstream packages can run the tests in different environments
+			{"sh", "-c", "mkdir _tests; for i in $(go list ./...); do go test -c $i; [ -e $(basename $i).test ] && mv $(basename $i).test _tests; true; done"},
+			{"go", "test", "-v", "./..."},
+		}...)
 	}
 	if cfg.Packaging == GoApp {
 		cmd := []string{"go", "build"}

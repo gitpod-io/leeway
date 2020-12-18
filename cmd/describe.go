@@ -218,8 +218,10 @@ func newConfigDescription(tpe leeway.PackageType, c leeway.PackageConfig) config
 		cfg["buildFlags"] = c.BuildFlags
 		cfg["dontCheckGoFmt"] = c.DontCheckGoFmt
 		cfg["dontTest"] = c.DontTest
+		cfg["dontLint"] = c.DontLint
 		cfg["generate"] = c.Generate
 		cfg["packaging"] = c.Packaging
+		cfg["lintCommand"] = c.LintCommand
 	case leeway.YarnPackage:
 		c := c.(leeway.YarnPkgConfig)
 		cfg["dontTest"] = c.DontTest

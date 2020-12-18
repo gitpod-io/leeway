@@ -534,6 +534,11 @@ func (v *PackageVariant) UnmarshalYAML(unmarshal func(interface{}) error) error 
 			return err
 		}
 		cfg, err := unmarshalTypeDependentConfig(k, func(dst interface{}) error {
+			lines := strings.Split(string(b), "\n")
+			for i, l := range lines {
+				lines[i] = "    " + l
+			}
+			b := []byte("config:\n" + strings.Join(lines, "\n"))
 			return yaml.Unmarshal(b, dst)
 		})
 		if err != nil {
