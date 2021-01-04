@@ -11,6 +11,9 @@ builds:
   - CGO_ENABLED=0
   ldflags:
   - -s -w -X github.com/typefox/leeway/cmd.version={{.Version}}-{{.ShortCommit}}
+  ignore:
+  - goos: darwin
+    goarch: 386
 archives:
 - replacements:
     darwin: Darwin
