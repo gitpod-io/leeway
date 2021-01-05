@@ -134,7 +134,9 @@ config:
   dontCheckGoFmt: false
   # If true disables the linting stage.
   dontLint: false
-  # A list of flags passed to `go build`. Useful for passing `ldflags`.
+  # Overrides the `go build .` command. Supersedes buildFlags.
+  buildCommand: []
+  # [DEPRECATED: use buildCommand instead] A list of flags passed to `go build`. Useful for passing `ldflags`.
   buildFlags: []
   # Command that's executed to lint the code
   lintCommand: ["golangci-lint", "run]

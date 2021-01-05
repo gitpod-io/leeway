@@ -901,11 +901,17 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 			{"go", "test", "-v", "./..."},
 		}...)
 	}
-	if cfg.Packaging == GoApp {
-		cmd := []string{"go", "build"}
-		cmd = append(cmd, cfg.BuildFlags...)
-		cmd = append(cmd, ".")
-		commands = append(commands, cmd)
+
+	var buildCmd []string
+	if len(cfg.BuildCommand) > 0 {
+		buildCmd = cfg.BuildCommand
+	} else if cfg.Packaging == GoApp {
+		buildCmd = []string{"go", "build"}
+		buildCmd = append(buildCmd, cfg.BuildFlags...)
+		buildCmd = append(buildCmd, ".")
+	}
+	if len(buildCmd) > 0 {
+		commands = append(commands, buildCmd)
 	}
 	commands = append(commands, [][]string{
 		{"rm", "-rf", "_deps"},
