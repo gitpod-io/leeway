@@ -410,6 +410,7 @@ type GoPkgConfig struct {
 	BuildFlags     []string    `yaml:"buildFlags,omitempty"`
 	BuildCommand   []string    `yaml:"buildCommand,omitempty"`
 	LintCommand    []string    `yaml:"lintCommand,omitempty"`
+	GoVersion      string      `yaml:"goVersion,omitempty"`
 }
 
 // Validate ensures this config can be acted upon/is valid
@@ -421,8 +422,13 @@ func (cfg GoPkgConfig) Validate() error {
 		return xerrors.Errorf("unknown packaging: %s", cfg.Packaging)
 	}
 
-	if len(cfg.BuildCommand) != 0 && len(cfg.BuildFlags) > 0 {
-		return xerrors.Errorf("buildCommand and buildFlags are exclusive - use one or the other")
+	if len(cfg.BuildCommand) != 0 {
+		if len(cfg.BuildFlags) > 0 {
+			return xerrors.Errorf("buildCommand and buildFlags are exclusive - use one or the other")
+		}
+		if cfg.GoVersion != "" {
+			return xerrors.Errorf("buildCommand and goVersion are exclusive - use one or the other")
+		}
 	}
 
 	return nil

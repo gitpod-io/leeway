@@ -856,7 +856,18 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 		return xerrors.Errorf("can only build Go modules (missing go.mod file)")
 	}
 
-	var commands [][]string
+	var (
+		commands  [][]string
+		goCommand = "go"
+	)
+	if cfg.GoVersion != "" {
+		goCommand = cfg.GoVersion
+		commands = append(commands, [][]string{
+			{"sh", "-c", "GO111MODULE=off go get golang.org/dl/" + cfg.GoVersion},
+			{goCommand, "download"},
+		}...)
+	}
+
 	if len(p.GetDependencies()) > 0 {
 		commands = append(commands, []string{"mkdir", "_deps"})
 
@@ -876,13 +887,13 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 				continue
 			}
 
-			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("go mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2)=./%s", tgt, tgt)})
+			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("%s mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2)=./%s", goCommand, tgt, tgt)})
 		}
 	}
 	commands = append(commands, p.PreparationCommands...)
-	commands = append(commands, []string{"go", "get", "-v", "./..."})
+	commands = append(commands, []string{goCommand, "get", "-v", "./..."})
 	if cfg.Generate {
-		commands = append(commands, []string{"go", "generate", "-v", "./..."})
+		commands = append(commands, []string{goCommand, "generate", "-v", "./..."})
 	}
 	if !cfg.DontCheckGoFmt {
 		commands = append(commands, []string{"sh", "-c", `if [ ! $(go fmt ./... | wc -l) -eq 0 ]; then echo; echo; echo please gofmt your code; echo; echo; exit 1; fi`})
@@ -897,8 +908,8 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands = append(commands, [][]string{
 			// we build the test binaries in addition to running the tests regularly, so that downstream packages can run the tests in different environments
-			{"sh", "-c", "mkdir _tests; for i in $(go list ./...); do go test -c $i; [ -e $(basename $i).test ] && mv $(basename $i).test _tests; true; done"},
-			{"go", "test", "-v", "./..."},
+			{"sh", "-c", "mkdir _tests; for i in $(" + goCommand + " list ./...); do " + goCommand + " test -c $i; [ -e $(basename $i).test ] && mv $(basename $i).test _tests; true; done"},
+			{goCommand, "test", "-v", "./..."},
 		}...)
 	}
 
@@ -906,7 +917,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 	if len(cfg.BuildCommand) > 0 {
 		buildCmd = cfg.BuildCommand
 	} else if cfg.Packaging == GoApp {
-		buildCmd = []string{"go", "build"}
+		buildCmd = []string{goCommand, "build"}
 		buildCmd = append(buildCmd, cfg.BuildFlags...)
 		buildCmd = append(buildCmd, ".")
 	}
