@@ -408,6 +408,7 @@ type GoPkgConfig struct {
 	DontCheckGoFmt bool        `yaml:"dontCheckGoFmt,omitempty"`
 	DontLint       bool        `yaml:"dontLint,omitempty"`
 	BuildFlags     []string    `yaml:"buildFlags,omitempty"`
+	BuildCommand   []string    `yaml:"buildCommand,omitempty"`
 	LintCommand    []string    `yaml:"lintCommand,omitempty"`
 }
 
@@ -418,6 +419,10 @@ func (cfg GoPkgConfig) Validate() error {
 	case GoApp:
 	default:
 		return xerrors.Errorf("unknown packaging: %s", cfg.Packaging)
+	}
+
+	if len(cfg.BuildCommand) != 0 && len(cfg.BuildFlags) > 0 {
+		return xerrors.Errorf("buildCommand and buildFlags are exclusive - use one or the other")
 	}
 
 	return nil
