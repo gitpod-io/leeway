@@ -50,7 +50,7 @@ func checkGolangHasGomod(pkg *leeway.Package) ([]Finding, error) {
 }
 
 func checkGolangHasBuildFlags(pkg *leeway.Package) ([]Finding, error) {
-	goCfg, ok := pkg.Config.(*leeway.GoPkgConfig)
+	goCfg, ok := pkg.Config.(leeway.GoPkgConfig)
 	if !ok {
 		return nil, fmt.Errorf("Go package does not have go package config")
 	}
