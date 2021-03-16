@@ -2,13 +2,13 @@ package vet
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
@@ -115,14 +115,13 @@ func (c *checkImplicitTransitiveDependencies) getPkgJSON(pkg *leeway.Package) (*
 	return &res, nil
 }
 
-func (c *checkImplicitTransitiveDependencies) grepInFile(fn string, pat string) (contains bool, err error) {
+func (c *checkImplicitTransitiveDependencies) grepInFile(fn string, pat *regexp.Regexp) (contains bool, err error) {
 	f, err := os.Open(fn)
 	if err != nil {
 		return
 	}
 	defer f.Close()
 
-	patb := []byte(pat)
 	r := bufio.NewReader(f)
 	for {
 		bt, err := r.ReadBytes('\n')
@@ -133,7 +132,7 @@ func (c *checkImplicitTransitiveDependencies) grepInFile(fn string, pat string) 
 			return false, err
 		}
 
-		if bytes.Contains(bt, patb) {
+		if pat.Match(bt) {
 			return true, nil
 		}
 	}
@@ -156,7 +155,8 @@ func (c *checkImplicitTransitiveDependencies) RunPkg(pkg *leeway.Package) ([]Fin
 		}
 
 		for yarnpkg := range c.pkgs {
-			ok, err := c.grepInFile(src, yarnpkg)
+			r, _ := regexp.Compile(fmt.Sprintf("['\"]%s['\"/]", yarnpkg))
+			ok, err := c.grepInFile(src, r)
 			if err != nil {
 				return nil, err
 			}
