@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	rice "github.com/GeertJohan/go.rice"
+
 	"github.com/typefox/leeway/pkg/leeway"
 )
 

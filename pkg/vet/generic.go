@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	log "github.com/sirupsen/logrus"
+
 	"github.com/typefox/leeway/pkg/leeway"
 )
 

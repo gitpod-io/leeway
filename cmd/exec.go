@@ -13,6 +13,7 @@ import (
 	"github.com/segmentio/textio"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+
 	"github.com/typefox/leeway/pkg/leeway"
 )
 
@@ -29,13 +30,13 @@ matching packages), use --components which selects the components isntead of the
 Example use:
   # list all component directories of all yarn packages:
   leeway exec --filter-type yarn -- pwd
-  
+
   # run go get in all Go packages
   leeway exec --filter-type go -- go get -v ./...
 
   # execute go build in all direct Go dependencies when any of the relevant source files changes:
   leeway exec --package some/other:package --dependencies --filter-type go --parallel --watch -- go build
-  
+
   # run tsc watch for all dependent yarn packages (once per component origin):
   leeway exec --package some/other:package --transitive-dependencies --filter-type yarn --parallel -- tsc -w --preserveWatchOutput
 `,

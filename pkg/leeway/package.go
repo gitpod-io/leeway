@@ -11,9 +11,10 @@ import (
 	"strings"
 
 	"github.com/minio/highwayhash"
-	"github.com/typefox/leeway/pkg/doublestar"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
+
+	"github.com/typefox/leeway/pkg/doublestar"
 )
 
 // Arguments can be passed to components/packages introducing variation points
