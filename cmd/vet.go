@@ -3,11 +3,11 @@ package cmd
 import (
 	"os"
 
-	"github.com/typefox/leeway/pkg/prettyprint"
-	"github.com/typefox/leeway/pkg/vet"
-
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+
+	"github.com/typefox/leeway/pkg/prettyprint"
+	"github.com/typefox/leeway/pkg/vet"
 )
 
 // versionCmd represents the version command

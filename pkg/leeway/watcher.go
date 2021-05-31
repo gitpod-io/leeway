@@ -7,6 +7,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	log "github.com/sirupsen/logrus"
+
 	"github.com/typefox/leeway/pkg/doublestar"
 )
 

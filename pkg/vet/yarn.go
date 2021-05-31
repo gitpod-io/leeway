@@ -12,9 +12,10 @@ import (
 	"strings"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/typefox/leeway/pkg/leeway"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
+
+	"github.com/typefox/leeway/pkg/leeway"
 )
 
 func init() {

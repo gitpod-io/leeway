@@ -9,8 +9,9 @@ import (
 	"strings"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/typefox/leeway/pkg/leeway"
 	"golang.org/x/xerrors"
+
+	"github.com/typefox/leeway/pkg/leeway"
 )
 
 // LinkYarnPackagesWithYarn2 uses `yarn link` to link all TS packages in-situ.

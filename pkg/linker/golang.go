@@ -8,10 +8,11 @@ import (
 	"strings"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/typefox/leeway/pkg/leeway"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 	"golang.org/x/xerrors"
+
+	"github.com/typefox/leeway/pkg/leeway"
 )
 
 // LinkGoModules produces the neccesary "replace"ments in all of the package's

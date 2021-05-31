@@ -21,10 +21,11 @@ import (
 	"github.com/imdario/mergo"
 	"github.com/minio/highwayhash"
 	log "github.com/sirupsen/logrus"
-	"github.com/typefox/leeway/pkg/doublestar"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
+
+	"github.com/typefox/leeway/pkg/doublestar"
 )
 
 // Workspace is the root container of all compoments. All components are named relative

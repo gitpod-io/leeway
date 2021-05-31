@@ -10,6 +10,7 @@ import (
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+
 	"github.com/typefox/leeway/pkg/graphview"
 	"github.com/typefox/leeway/pkg/leeway"
 )

@@ -6,8 +6,9 @@ import (
 	"sort"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/typefox/leeway/pkg/leeway"
 	"golang.org/x/xerrors"
+
+	"github.com/typefox/leeway/pkg/leeway"
 )
 
 type checkFunc struct {
