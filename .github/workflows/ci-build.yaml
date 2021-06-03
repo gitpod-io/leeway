@@ -68,6 +68,8 @@ jobs:
         run: mkdir -p ~/go/src/github.com/gitpod-io
       - name: Checkout code
         uses: actions/checkout@v2
+        with:
+          fetch-depth: 10
       - name: Create symlink in GOPATH
         run: ln -s $(pwd) ~/go/src/github.com/gitpod-io/leeway
       - name: Setup Golang
@@ -100,6 +102,8 @@ jobs:
         run: mkdir -p ~/go/src/github.com/gitpod-io
       - name: Checkout code
         uses: actions/checkout@v2
+        with:
+          fetch-depth: 10
       - name: Create symlink in GOPATH
         run: ln -s $(pwd) ~/go/src/github.com/gitpod-io/leeway
       - name: Setup Golang
@@ -126,7 +130,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
         with:
-          fetch-depth: 0
+          fetch-depth: 10
       - name: Create test-results directory
         run: |
           mkdir -p test-results
