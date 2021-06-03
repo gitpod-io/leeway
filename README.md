@@ -139,7 +139,7 @@ config:
   # [DEPRECATED: use buildCommand instead] A list of flags passed to `go build`. Useful for passing `ldflags`.
   buildFlags: []
   # Command that's executed to lint the code
-  lintCommand: ["golangci-lint", "run]
+  lintCommand: ["golangci-lint", "run"]
 ```
 
 ### Yarn packages
@@ -213,7 +213,7 @@ This however can lead to subtle failure modes where a package built in one envir
 
 To prevent such issues, leeway computes an _environment manifest_ which contains the versions of the tools used, as well as some platform information.
 The entries in that manifest depend on the package types used by that workspace, e.g. if only `Go` packages exist in the workspace, only `go version`, [GOOS and GOARCH](https://golang.org/pkg/runtime/#pkg-constants) will be part of the manifest.
-You can inspect a workspace's environment manifest using `leeway describe environment-manifest`. 
+You can inspect a workspace's environment manifest using `leeway describe environment-manifest`.
 
 You can add your own entries to a workspace's environment manifest in the `WORKSPACE.yaml` like so:
 ```YAML

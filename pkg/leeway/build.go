@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -204,6 +205,7 @@ type buildOptions struct {
 	BuildPlan              io.Writer
 	DontTest               bool
 	MaxConcurrentTasks     int64
+	CoverageOutputPath     string
 
 	context *buildContext
 }
@@ -275,6 +277,14 @@ func WithMaxConcurrentTasks(n int64) BuildOption {
 		}
 		opts.MaxConcurrentTasks = n
 
+		return nil
+	}
+}
+
+// WithCoverageOutputPath configures coverage output directory
+func WithCoverageOutputPath(output string) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.CoverageOutputPath = output
 		return nil
 	}
 }
@@ -894,7 +904,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 	if cfg.Generate {
 		commands = append(commands, []string{goCommand, "generate", "-v", "./..."})
 	}
-	commands = append(commands, []string{goCommand, "get", "-v", "./..."})
+
 	if !cfg.DontCheckGoFmt {
 		commands = append(commands, []string{"sh", "-c", `if [ ! $(go fmt ./... | wc -l) -eq 0 ]; then echo; echo; echo please gofmt your code; echo; echo; exit 1; fi`})
 	}
@@ -906,10 +916,17 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 		}
 	}
 	if !cfg.DontTest && !buildctx.DontTest {
+		testArgs := []string{goCommand, "test", "-v"}
+		if buildctx.buildOptions.CoverageOutputPath != "" {
+			testArgs = append(testArgs, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
+		}
+
+		testArgs = append(testArgs, "./...")
+
 		commands = append(commands, [][]string{
 			// we build the test binaries in addition to running the tests regularly, so that downstream packages can run the tests in different environments
 			{"sh", "-c", "mkdir _tests; for i in $(" + goCommand + " list ./...); do " + goCommand + " test -c $i; [ -e $(basename $i).test ] && mv $(basename $i).test _tests; true; done"},
-			{goCommand, "test", "-v", "./..."},
+			testArgs,
 		}...)
 	}
 
@@ -928,6 +945,12 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 		{"rm", "-rf", "_deps"},
 		{"tar", "cfz", result, "."},
 	}...)
+
+	if !cfg.DontTest && !buildctx.DontTest {
+		commands = append(commands, [][]string{
+			{"sh", "-c", fmt.Sprintf(`[ -f "%v" ] && cp -f %v %v`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.buildOptions.CoverageOutputPath)},
+		}...)
+	}
 
 	return executeCommandsForPackage(buildctx, p, wd, commands)
 }
@@ -1155,4 +1178,10 @@ type reporterStream struct {
 func (s *reporterStream) Write(buf []byte) (n int, err error) {
 	s.R.PackageBuildLog(s.P, s.IsErr, buf)
 	return len(buf), nil
+}
+
+func codecovComponentName(name string) string {
+	reg, _ := regexp.Compile("[^a-zA-Z0-9]+")
+	component := reg.ReplaceAllString(name, "-")
+	return strings.ToLower(component + "-coverage.out")
 }
