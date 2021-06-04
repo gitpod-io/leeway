@@ -948,7 +948,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands = append(commands, [][]string{
-			{"sh", "-c", fmt.Sprintf(`[ -f "%v" ] && cp -f %v %v`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.buildOptions.CoverageOutputPath)},
+			{"sh", "-c", fmt.Sprintf(`if [ -f "%v" ]; then cp -f %v %v; fi`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.buildOptions.CoverageOutputPath)},
 		}...)
 	}
 
