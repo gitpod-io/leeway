@@ -168,6 +168,9 @@ config:
 config:
   # Dockerfile is the name of the Dockerfile to build. Automatically added to the package sources.
   dockerfile: "Dockerfile"
+  # Metadata produces a metadata.yaml file in the resulting package tarball.
+  metadata:
+    foo: bar
   # build args are Docker build arguments. Often we just pass leeway build arguments along here.
   buildArgs:
   - arg=value
