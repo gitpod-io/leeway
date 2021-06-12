@@ -2,6 +2,7 @@ package leeway
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/xerrors"
+	"gopkg.in/yaml.v3"
 )
 
 // PkgNotBuiltErr is used when a package's dependency hasn't been built yet
@@ -66,6 +68,10 @@ const (
 	// dockerImageNamesFiles is the name of the file store in poushed Docker build artifacts
 	// which contains the names of the Docker images we just pushed
 	dockerImageNamesFiles = "imgnames.txt"
+
+	// dockerMetadataFile is the name of the file we YAML seralize the DockerPkgConfig.Metadata field to
+	// when building Docker images. We use this mechanism to produce the version manifest as part of the Gitpod build.
+	dockerMetadataFile = "metadata.yaml"
 )
 
 // buildProcessVersions contain the current version of the respective build processes.
@@ -73,7 +79,7 @@ const (
 var buildProcessVersions = map[PackageType]int{
 	YarnPackage:    6,
 	GoPackage:      2,
-	DockerPackage:  1,
+	DockerPackage:  2,
 	GenericPackage: 1,
 }
 
@@ -1028,7 +1034,15 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 		for _, img := range cfg.Image {
 			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("echo %s >> %s", img, dockerImageNamesFiles)})
 		}
-		commands = append(commands, []string{"tar", "cfz", result, dockerImageNamesFiles})
+		// In addition to the imgnames.txt we also produce a file that contains the configured metadata,
+		// which provides a sensible way to add metadata to the image names.
+		consts, err := yaml.Marshal(cfg.Metadata)
+		if err != nil {
+			return err
+		}
+		commands = append(commands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", base64.StdEncoding.EncodeToString(consts), dockerMetadataFile)})
+
+		commands = append(commands, []string{"tar", "cfz", result, dockerImageNamesFiles, dockerMetadataFile})
 	}
 
 	return executeCommandsForPackage(buildctx, p, wd, commands)

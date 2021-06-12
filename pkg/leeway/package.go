@@ -456,6 +456,7 @@ type DockerPkgConfig struct {
 	Image      []string          `yaml:"image,omitempty"`
 	BuildArgs  map[string]string `yaml:"buildArgs,omitempty"`
 	Squash     bool              `yaml:"squash,omitempty"`
+	Metadata   map[string]string `yaml:"metadata,omitempty"`
 }
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
