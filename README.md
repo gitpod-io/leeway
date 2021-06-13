@@ -16,7 +16,7 @@ Leeway structures a repository in three levels:
 
 # Installation
 Leeway assumes its running on Linux or macOS. It is very very unlikely that this runs on Windows out-of-the-box.
-To install, just download and unpack a [release](https://github.com/TypeFox/leeway/releases).
+To install, just download and unpack a [release](https://github.com/gitpod/leeway/releases).
 
 # Build setup
 
@@ -124,7 +124,7 @@ Leeway supports built-in build arguments:
 ### Go packages
 ```YAML
 config:
-  # Packaging method. See https://godoc.org/github.com/TypeFox/leeway/pkg/leeway#GoPackaging for details. Defaults to library.
+  # Packaging method. See https://godoc.org/github.com/gitpod/leeway/pkg/leeway#GoPackaging for details. Defaults to library.
   packaging: library
   # If true leeway runs `go generate -v ./...` prior to testing/building. Defaults to false.
   generate: false
@@ -151,7 +151,7 @@ config:
   # tsconfig is the path to the tsconfig.json used to build this package. Detauls to `tsconfig.json`
   # Automatically added to the package sources.
   tsconfig: "tsconfig.json"
-  # packaging method. See https://godoc.org/github.com/TypeFox/leeway/pkg/leeway#YarnPackaging for details.
+  # packaging method. See https://godoc.org/github.com/gitpod/leeway/pkg/leeway#YarnPackaging for details.
   # Defaults to library
   packaging: library
   # If true disables `yarn test`
@@ -164,6 +164,10 @@ config:
 ```
 
 ### Docker packages
+Docker packages have a default "retagging" behaviour: even when a Docker package is built already, i.e. it's leeway version didn't change,
+leeway will ensure that an image exists with the names specified in the package config. For example, if a Docker package has `leeway/some-package:${version}` specified,
+and `${version}` changes, but otherwise the package has been built before, leeway will "re-tag" the previously built image to be available under `leeway/some-package:${version}`.
+This behaviour can be disabled using `--dont-retag`.
 ```YAML
 config:
   # Dockerfile is the name of the Dockerfile to build. Automatically added to the package sources.
@@ -177,8 +181,8 @@ config:
   - other=${someBuildArg}
   # image lists the Docker tags leeway will use and push to
   image:
-  - typefox/leeway:latest
-  - typefox/leeway:${__pkg_version}
+  - gitpod/leeway:latest
+  - gitpod/leeway:${__pkg_version}
 ```
 
 ### Generic packages

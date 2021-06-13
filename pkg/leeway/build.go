@@ -212,6 +212,7 @@ type buildOptions struct {
 	DontTest               bool
 	MaxConcurrentTasks     int64
 	CoverageOutputPath     string
+	DontRetag              bool
 
 	context *buildContext
 }
@@ -291,6 +292,14 @@ func WithMaxConcurrentTasks(n int64) BuildOption {
 func WithCoverageOutputPath(output string) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.CoverageOutputPath = output
+		return nil
+	}
+}
+
+// WithDontRetag disables the Docker image retagging
+func WithDontRetag(dontRetag bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DontRetag = dontRetag
 		return nil
 	}
 }
@@ -509,14 +518,14 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		// ephemeral packages always require a rebuild
 	} else if alreadyBuilt {
 		// some package types still need to do work even if we find their prior build artifact in the cache.
-		if p.Type == DockerPackage {
+		if p.Type == DockerPackage && !buildctx.DontRetag {
 			doBuild := buildctx.ObtainBuildLock(p)
 			if !doBuild {
 				return nil
 			}
 			defer buildctx.ReleaseBuildLock(p)
 
-			err = p.rebuildDocker(buildctx, filepath.Dir(artifact), artifact)
+			err = p.retagDocker(buildctx, filepath.Dir(artifact), artifact)
 			if err != nil {
 				log.WithError(err).Warn("cannot re-use prior build artifact - building afresh.")
 			} else {
@@ -1086,10 +1095,10 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 	return executeCommandsForPackage(buildctx, p, wd, commands)
 }
 
-// rebuildDocker is called when we already have the build artifact for this package (and version)
+// retagDocker is called when we already have the build artifact for this package (and version)
 // in the build cache. This function makes sure that if the build arguments changed the name of the
 // Docker image this build time, we just re-tag the image.
-func (p *Package) rebuildDocker(buildctx *buildContext, wd, prev string) (err error) {
+func (p *Package) retagDocker(buildctx *buildContext, wd, prev string) (err error) {
 	buildctx.LimitConcurrentBuilds()
 	defer buildctx.ReleaseConcurrentBuild()
 
