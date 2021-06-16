@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -28,6 +30,10 @@ var (
 const (
 	// BuiltinArgPackageVersion is a builtin argument/variable which contains the version of the package currently building
 	BuiltinArgPackageVersion = "__pkg_version"
+
+	// BuildinArgGitCommit is a builtin argument/variable which contains the current Git commit if the build is executed from within a Git working copy.
+	// If this variable is used and the build is not executed from within a Git working copy the variable resolution will fail.
+	BuildinArgGitCommit = "__git_commit"
 
 	// contentHashKey is the key we use to hash source files. Change this key and you'll break all past versions of all leeway builds ever.
 	contentHashKey = "0340f3c8947cad7875140f4c4af7c62b43131dc2a8c7fc4628f0685e369a3b0b"
@@ -699,12 +705,18 @@ func (p *Package) resolveBuiltinVariables() error {
 	if err != nil {
 		return err
 	}
-	var found bool
+	var (
+		found       bool
+		foundGitVar bool
+	)
 	for _, n := range ur {
 		n = strings.TrimSuffix(strings.TrimPrefix(n, "${"), "}")
-		if n == BuiltinArgPackageVersion {
+		switch n {
+		case BuildinArgGitCommit:
+			foundGitVar = true
+			fallthrough
+		case BuiltinArgPackageVersion:
 			found = true
-			break
 		}
 	}
 	if !found {
@@ -718,6 +730,12 @@ func (p *Package) resolveBuiltinVariables() error {
 	}
 	builtinArgs := map[string]string{
 		BuiltinArgPackageVersion: version,
+	}
+	if foundGitVar {
+		err = resolveBuiltinGitVariables(p, builtinArgs)
+		if err != nil {
+			return err
+		}
 	}
 
 	type configOnlyHelper struct {
@@ -917,4 +935,32 @@ func TopologicalSort(pkgs []*Package) {
 		dj := idx[pkgs[j].FullName()]
 		return di > dj
 	})
+}
+
+func resolveBuiltinGitVariables(pkg *Package, vars map[string]string) error {
+	candidates := []string{
+		pkg.C.Origin,
+		pkg.C.W.Origin,
+	}
+	var repoLoc string
+	for _, c := range candidates {
+		if stat, err := os.Stat(filepath.Join(c, ".git")); err == nil && stat.IsDir() {
+			repoLoc = c
+			break
+		}
+	}
+	if repoLoc == "" {
+		return fmt.Errorf("package sources are not within a Git working copy")
+	}
+
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = repoLoc
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("cannot resolve builtin Git variables: %s: %w", string(out), err)
+	}
+
+	vars[BuildinArgGitCommit] = strings.TrimSpace(string(out))
+
+	return nil
 }

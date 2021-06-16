@@ -1041,7 +1041,10 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 		// The proper thing would be to export the image, but that's rather expensive. We'll place a tar file which
 		// contains the names of the image we just pushed instead.
 		for _, img := range cfg.Image {
-			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("echo %s >> %s", img, dockerImageNamesFiles)})
+			commands = append(commands,
+				[]string{"sh", "-c", fmt.Sprintf("echo %s >> %s", img, dockerImageNamesFiles)},
+				[]string{"sh", "-c", fmt.Sprintf("echo built image: %s", img)},
+			)
 		}
 		// In addition to the imgnames.txt we also produce a file that contains the configured metadata,
 		// which provides a sensible way to add metadata to the image names.
