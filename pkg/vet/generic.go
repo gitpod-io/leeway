@@ -19,9 +19,10 @@ func checkArgsReferingToPackage(pkg *leeway.Package) ([]Finding, error) {
 		return nil, fmt.Errorf("Generic package does not have generic package config")
 	}
 
-	checkForFindings := func(findings []Finding, segmentIndex int, seg string) {
+	checkForFindings := func(fs []Finding, segmentIndex int, seg string) (findings []Finding) {
+		findings = fs
 		if !filesystemSafePathPattern.MatchString(seg) {
-			return
+			return findings
 		}
 
 		pth := filesystemSafePathPattern.FindString(seg)
@@ -36,26 +37,27 @@ func checkArgsReferingToPackage(pkg *leeway.Package) ([]Finding, error) {
 			}
 		}
 		if satisfied {
-			return
+			return findings
 		}
 
 		findings = append(findings, Finding{
-			Description: fmt.Sprintf("Command %d refers to %s which looks like a package path, but no dependency satisfies it", segmentIndex, seg),
+			Description: fmt.Sprintf("Command/Test %d refers to %s which looks like a package path, but no dependency satisfies it", segmentIndex, seg),
 			Component:   pkg.C,
 			Package:     pkg,
 			Error:       false,
 		})
+		return findings
 	}
 
 	var findings []Finding
 	for i, cmd := range cfg.Commands {
 		for _, seg := range cmd {
-			checkForFindings(findings, i, seg)
+			findings = checkForFindings(findings, i, seg)
 		}
 	}
 	for i, cmd := range cfg.Test {
 		for _, seg := range cmd {
-			checkForFindings(findings, i, seg)
+			findings = checkForFindings(findings, i, seg)
 		}
 	}
 

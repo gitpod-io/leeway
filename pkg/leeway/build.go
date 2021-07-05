@@ -1043,7 +1043,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 
 	commands = append(commands, p.PreparationCommands...)
 	commands = append(commands, cfg.Commands...)
-	if !buildctx.DontTest {
+	if !cfg.DontTest && !buildctx.DontTest {
 		commands = append(commands, cfg.Test...)
 	}
 	commands = append(commands, []string{"tar", "cfz", result, "."})
