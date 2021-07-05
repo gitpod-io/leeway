@@ -20,34 +20,43 @@ func checkArgsReferingToPackage(pkg *leeway.Package) ([]Finding, error) {
 		return nil, fmt.Errorf("Generic package does not have generic package config")
 	}
 
+	checkForFindings := func(findings []Finding, segmentIndex int, seg string) {
+		if !filesystemSafePathPattern.MatchString(seg) {
+			return
+		}
+
+		pth := filesystemSafePathPattern.FindString(seg)
+		log.WithField("pth", pth).WithField("pkg", pkg.FullName()).Debug("found potential package use")
+
+		// we've found something that looks like a path - check if we have a dependency that could satisfy it
+		var satisfied bool
+		for _, dep := range pkg.GetDependencies() {
+			if pkg.BuildLayoutLocation(dep) == pth {
+				satisfied = true
+				break
+			}
+		}
+		if satisfied {
+			return
+		}
+
+		findings = append(findings, Finding{
+			Description: fmt.Sprintf("Command %d refers to %s which looks like a package path, but no dependency satisfies it", segmentIndex, seg),
+			Component:   pkg.C,
+			Package:     pkg,
+			Error:       false,
+		})
+	}
+
 	var findings []Finding
 	for i, cmd := range cfg.Commands {
 		for _, seg := range cmd {
-			if !filesystemSafePathPattern.MatchString(seg) {
-				continue
-			}
-
-			pth := filesystemSafePathPattern.FindString(seg)
-			log.WithField("pth", pth).WithField("pkg", pkg.FullName()).Debug("found potential package use")
-
-			// we've found something that looks like a path - check if we have a dependency that could satisfy it
-			var satisfied bool
-			for _, dep := range pkg.GetDependencies() {
-				if pkg.BuildLayoutLocation(dep) == pth {
-					satisfied = true
-					break
-				}
-			}
-			if satisfied {
-				continue
-			}
-
-			findings = append(findings, Finding{
-				Description: fmt.Sprintf("Command %d refers to %s which looks like a package path, but no dependency satisfies it", i, seg),
-				Component:   pkg.C,
-				Package:     pkg,
-				Error:       false,
-			})
+			checkForFindings(findings, i, seg)
+		}
+	}
+	for i, cmd := range cfg.Test {
+		for _, seg := range cmd {
+			checkForFindings(findings, i, seg)
 		}
 	}
 
