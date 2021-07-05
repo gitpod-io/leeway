@@ -6,3 +6,5 @@ packages:
     config:
       commands:
         - ["echo"]
+      test:
+        - ["echo", "testing"]
