@@ -215,6 +215,7 @@ func newConfigDescription(tpe leeway.PackageType, c leeway.PackageConfig) config
 		c := c.(leeway.GenericPkgConfig)
 		cfg["commands"] = c.Commands
 		cfg["test"] = c.Test
+		cfg["dontTest"] = c.DontTest
 	case leeway.GoPackage:
 		c := c.(leeway.GoPkgConfig)
 		cfg["buildFlags"] = c.BuildFlags
