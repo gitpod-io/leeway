@@ -25,7 +25,7 @@ import (
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
 
-	"github.com/typefox/leeway/pkg/doublestar"
+	"github.com/gitpod-io/leeway/pkg/doublestar"
 )
 
 // Workspace is the root container of all compoments. All components are named relative

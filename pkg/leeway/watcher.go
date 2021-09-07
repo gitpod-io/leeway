@@ -8,7 +8,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/typefox/leeway/pkg/doublestar"
+	"github.com/gitpod-io/leeway/pkg/doublestar"
 )
 
 // WatchSources watches the source files of the packages until the context is done

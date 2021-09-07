@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/typefox/leeway/pkg/doublestar"
+	"github.com/gitpod-io/leeway/pkg/doublestar"
 )
 
 func TestMatch(t *testing.T) {

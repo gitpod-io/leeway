@@ -3,7 +3,7 @@ package vet
 import (
 	"fmt"
 
-	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
 func init() {

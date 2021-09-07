@@ -11,8 +11,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/typefox/leeway/pkg/graphview"
-	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/graphview"
+	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
 // describeDependenciesCmd represents the describeDot command

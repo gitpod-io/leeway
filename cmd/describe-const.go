@@ -4,7 +4,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/typefox/leeway/pkg/prettyprint"
+	"github.com/gitpod-io/leeway/pkg/prettyprint"
 )
 
 // describeConstCmd represents the describeTree command

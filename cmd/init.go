@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
 var (

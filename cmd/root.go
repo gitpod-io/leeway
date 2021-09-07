@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/xerrors"
 
-	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
 const (

@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/gitpod-io/leeway/pkg/leeway"
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/typefox/leeway/pkg/leeway"
 )
 
 // buildCmd represents the build command

@@ -14,7 +14,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
 // execCmd represents the version command

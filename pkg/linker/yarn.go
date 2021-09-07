@@ -11,7 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 
-	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
 // LinkYarnPackagesWithYarn2 uses `yarn link` to link all TS packages in-situ.

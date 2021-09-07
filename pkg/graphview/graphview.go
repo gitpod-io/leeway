@@ -10,7 +10,7 @@ import (
 
 	rice "github.com/GeertJohan/go.rice"
 
-	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
 // Serve serves the dependency graph view for a package

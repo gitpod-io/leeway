@@ -12,7 +12,7 @@ import (
 	"golang.org/x/mod/module"
 	"golang.org/x/xerrors"
 
-	"github.com/typefox/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
 // LinkGoModules produces the neccesary "replace"ments in all of the package's

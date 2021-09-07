@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/typefox/leeway/cmd"
+	"github.com/gitpod-io/leeway/cmd"
 )
 
 var dut = flag.Bool("dut", false, "run command/device under test")

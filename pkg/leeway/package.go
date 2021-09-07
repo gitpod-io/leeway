@@ -16,7 +16,7 @@ import (
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
 
-	"github.com/typefox/leeway/pkg/doublestar"
+	"github.com/gitpod-io/leeway/pkg/doublestar"
 )
 
 // Arguments can be passed to components/packages introducing variation points

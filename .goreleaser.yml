@@ -10,7 +10,7 @@ builds:
 - env:
   - CGO_ENABLED=0
   ldflags:
-  - -s -w -X github.com/typefox/leeway/cmd.version={{.Version}}-{{.ShortCommit}}
+  - -s -w -X github.com/gitpod-io/leeway/cmd.version={{.Version}}-{{.ShortCommit}}
   ignore:
   - goos: darwin
     goarch: 386
