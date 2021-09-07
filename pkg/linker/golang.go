@@ -33,6 +33,7 @@ func LinkGoModules(workspace *leeway.Workspace) error {
 			mod, ok := mods[dep.FullName()]
 			if !ok {
 				log.WithField("dep", dep.FullName()).Warn("did not find go.mod for this package - linking will probably be broken")
+				continue
 			}
 
 			apmods = append(apmods, mod)
