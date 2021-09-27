@@ -213,9 +213,13 @@ type buildOptions struct {
 	MaxConcurrentTasks     int64
 	CoverageOutputPath     string
 	DontRetag              bool
+	DockerBuildOptions     *DockerBuildOptions
 
 	context *buildContext
 }
+
+// DockerBuildOptions are options passed to "docker build"
+type DockerBuildOptions map[string]string
 
 // BuildOption configures the build behaviour
 type BuildOption func(*buildOptions) error
@@ -300,6 +304,14 @@ func WithCoverageOutputPath(output string) BuildOption {
 func WithDontRetag(dontRetag bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.DontRetag = dontRetag
+		return nil
+	}
+}
+
+// WithDockerBuildOptions are passed to "docker build"
+func WithDockerBuildOptions(dockerBuildOpts *DockerBuildOptions) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DockerBuildOptions = dockerBuildOpts
 		return nil
 	}
 }
@@ -1018,6 +1030,11 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 	}
 	if cfg.Squash {
 		buildcmd = append(buildcmd, "--squash")
+	}
+	if buildctx.DockerBuildOptions != nil {
+		for opt, v := range *buildctx.DockerBuildOptions {
+			buildcmd = append(buildcmd, fmt.Sprintf("--%s=%s", opt, v))
+		}
 	}
 	buildcmd = append(buildcmd, ".")
 	commands = append(commands, buildcmd)
