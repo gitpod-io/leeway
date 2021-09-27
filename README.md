@@ -183,6 +183,9 @@ config:
   image:
   - gitpod/leeway:latest
   - gitpod/leeway:${__pkg_version}
+  # cliArgs adds arguments to the Docker CLI build call
+  cliArgs:
+  - "--network=host"
 ```
 
 ### Generic packages

@@ -462,6 +462,7 @@ type DockerPkgConfig struct {
 	Image      []string          `yaml:"image,omitempty"`
 	BuildArgs  map[string]string `yaml:"buildArgs,omitempty"`
 	Squash     bool              `yaml:"squash,omitempty"`
+	CLIArgs    []string          `yaml:"cliArgs,omitempty"`
 	Metadata   map[string]string `yaml:"metadata,omitempty"`
 }
 

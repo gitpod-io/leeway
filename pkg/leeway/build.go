@@ -1019,6 +1019,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 	if cfg.Squash {
 		buildcmd = append(buildcmd, "--squash")
 	}
+	buildcmd = append(buildcmd, cfg.CLIArgs...)
 	buildcmd = append(buildcmd, ".")
 	commands = append(commands, buildcmd)
 
