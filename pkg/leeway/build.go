@@ -932,7 +932,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 	if cfg.Generate {
 		commands = append(commands, []string{goCommand, "generate", "-v", "./..."})
 	}
-	commands = append(commands, []string{goCommand, "get", "-v", "./..."})
+	commands = append(commands, []string{goCommand, "mod", "download", "-v", "./..."})
 
 	if !cfg.DontCheckGoFmt {
 		commands = append(commands, []string{"sh", "-c", `if [ ! $(go fmt ./... | wc -l) -eq 0 ]; then echo; echo; echo please gofmt your code; echo; echo; exit 1; fi`})
