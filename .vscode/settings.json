@@ -1,4 +1,3 @@
 {
-    "go.lintTool": "golangci-lint",
-    "editor.fontFamily": "Courier New"
+    "go.lintTool": "golangci-lint"
 }

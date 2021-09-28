@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gitpod-io/leeway/pkg/gokart"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/xerrors"
@@ -942,6 +943,23 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 		} else {
 			commands = append(commands, cfg.LintCommand)
 		}
+	}
+	if cfg.GoKart.Enabled {
+		var apiDepPtn *regexp.Regexp
+		if cfg.GoKart.APIDepsPattern == "" {
+			apiDepPtn = regexp.MustCompile(`\/api`)
+		} else {
+			apiDepPtn, err = regexp.Compile(cfg.GoKart.APIDepsPattern)
+			if err != nil {
+				return err
+			}
+			log.WithField("exp", apiDepPtn).Debug("using custom api dependency pattern for GoKart")
+		}
+		err = gokart.BuildAnalyzerConfig(wd, apiDepPtn)
+		if err != nil {
+			return err
+		}
+		commands = append(commands, []string{"gokart", "scan", "-i", gokart.AnalyzerFilename, "-x"})
 	}
 	if !cfg.DontTest && !buildctx.DontTest {
 		testArgs := []string{goCommand, "test", "-v"}

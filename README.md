@@ -140,6 +140,11 @@ config:
   buildFlags: []
   # Command that's executed to lint the code
   lintCommand: ["golangci-lint", "run"]
+  # GoKart is a static security analysis tool for Go (https://github.com/praetorian-inc/gokart). leeway supports the construction
+  # of analayzer.yaml file for GoKart based on the package dependencies. This is useful for detecing unsanitised input from API surfaces.
+  gokart:
+    enabled: false
+    apiDepsPattern: 'reg-exp\/matching-go-package\/import-names'
 ```
 
 ### Yarn packages
