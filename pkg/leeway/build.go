@@ -925,7 +925,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 				continue
 			}
 
-			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("%s mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2)=./%s", goCommand, tgt, tgt)})
+			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("%s mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2 | head -n1)=./%s", goCommand, tgt, tgt)})
 		}
 	}
 	commands = append(commands, p.PreparationCommands...)
