@@ -19,8 +19,11 @@ const (
 	// EnvvarWorkspaceRoot names the environment variable we check for the workspace root path
 	EnvvarWorkspaceRoot = "LEEWAY_WORKSPACE_ROOT"
 
-	// EnvvarRemoteCacheBucket configures a GCP bucket name. This enables the use of GSUtilRemoteStorage
+	// EnvvarRemoteCacheBucket configures a bucket name. This enables the use of RemoteStorage
 	EnvvarRemoteCacheBucket = "LEEWAY_REMOTE_CACHE_BUCKET"
+
+	// EnvvarRemoteCacheStorage configures a Remote Storage Provider. Default is GCP
+	EnvvarRemoteCacheStorage = "LEEWAY_REMOTE_CACHE_STORAGE"
 )
 
 const (
@@ -171,10 +174,23 @@ func getBuildArgs() (leeway.Arguments, error) {
 
 func getRemoteCache() leeway.RemoteCache {
 	remoteCacheBucket := os.Getenv(EnvvarRemoteCacheBucket)
+	remoteStorage := os.Getenv(EnvvarRemoteCacheStorage)
 	if remoteCacheBucket != "" {
-		return leeway.GSUtilRemoteCache{
-			BucketName: remoteCacheBucket,
+		switch remoteStorage {
+		case "GCP":
+			return leeway.GSUtilRemoteCache{
+				BucketName: remoteCacheBucket,
+			}
+		case "MINIO":
+			return leeway.MinioRemoteCache{
+				BucketName: remoteCacheBucket,
+			}
+		default:
+			return leeway.GSUtilRemoteCache{
+				BucketName: remoteCacheBucket,
+			}
 		}
+
 	}
 
 	return leeway.NoRemoteCache{}
