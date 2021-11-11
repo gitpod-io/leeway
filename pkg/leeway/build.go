@@ -984,7 +984,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 		buildCmd = append(buildCmd, cfg.BuildFlags...)
 		buildCmd = append(buildCmd, ".")
 	}
-	if len(buildCmd) > 0 {
+	if len(buildCmd) > 0 && cfg.Packaging != GoLibrary {
 		commands = append(commands, buildCmd)
 	}
 	commands = append(commands, [][]string{
