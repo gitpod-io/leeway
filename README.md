@@ -16,7 +16,7 @@ Leeway structures a repository in three levels:
 
 # Installation
 Leeway assumes its running on Linux or macOS. It is very very unlikely that this runs on Windows out-of-the-box.
-To install, just download and unpack a [release](https://github.com/gitpod/leeway/releases).
+To install, just download and unpack a [release](https://github.com/gitpod-io/leeway/releases).
 
 # Build setup
 
