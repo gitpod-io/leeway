@@ -2,6 +2,7 @@ package leeway
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gitpod-io/leeway/pkg/gokart"
 	log "github.com/sirupsen/logrus"
@@ -45,6 +47,7 @@ const (
 type buildContext struct {
 	buildOptions
 	buildDir string
+	buildID  string
 
 	mu                 sync.Mutex
 	newlyBuiltPackages map[string]*Package
@@ -99,9 +102,17 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 		buildLimit = semaphore.NewWeighted(options.MaxConcurrentTasks)
 	}
 
+	b := make([]byte, 4)
+	_, err = rand.Read(b)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot produce random build ID: %w", err)
+	}
+	buildID := fmt.Sprintf("%d-%x", time.Now().UnixNano(), b)
+
 	ctx = &buildContext{
 		buildOptions:       options,
 		buildDir:           buildDir,
+		buildID:            buildID,
 		newlyBuiltPackages: make(map[string]*Package),
 		pkgLockCond:        sync.NewCond(&sync.Mutex{}),
 		pkgLocks:           make(map[string]struct{}),
@@ -808,7 +819,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		log.Debugf("%s is not set, defaulting to \"network\"", EnvvarYarnMutex)
 		yarnMutex = "network"
 	}
-	yarnCache := filepath.Join(buildctx.BuildDir(), "yarn-cache")
+	yarnCache := filepath.Join(buildctx.BuildDir(), fmt.Sprintf("yarn-cache-%s", buildctx.buildID))
 	if len(cfg.Commands.Install) == 0 {
 		commands = append(commands, []string{"yarn", "install", "--mutex", yarnMutex, "--cache-folder", yarnCache})
 	} else {
