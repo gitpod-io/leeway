@@ -154,15 +154,16 @@ func newMetadataDescription(pkg *leeway.Package) packageMetadataDescription {
 }
 
 type packageDescription struct {
-	Metadata     packageMetadataDescription   `json:"metadata" yaml:"metadata"`
-	Type         string                       `json:"type" yaml:"type"`
-	Manifest     map[string]string            `json:"manifest" yaml:"manifest"`
-	ArgDeps      []string                     `json:"argdeps,omitempty" yaml:"argdeps,omitempty"`
-	Dependencies []packageMetadataDescription `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
-	Layout       map[string]string            `json:"layout,omitempty" yaml:"layout,omitempty"`
-	Config       configDescription            `json:"config,omitempty" yaml:"config,omitempty"`
-	Env          []string                     `json:"env,omitempty" yaml:"env,omitempty"`
-	Definition   string                       `json:"definition,omitempty"`
+	Metadata           packageMetadataDescription   `json:"metadata" yaml:"metadata"`
+	Type               string                       `json:"type" yaml:"type"`
+	Manifest           map[string]string            `json:"manifest" yaml:"manifest"`
+	ArgDeps            []string                     `json:"argdeps,omitempty" yaml:"argdeps,omitempty"`
+	Dependencies       []packageMetadataDescription `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
+	Layout             map[string]string            `json:"layout,omitempty" yaml:"layout,omitempty"`
+	Config             configDescription            `json:"config,omitempty" yaml:"config,omitempty"`
+	Env                []string                     `json:"env,omitempty" yaml:"env,omitempty"`
+	Definition         string                       `json:"definition,omitempty"`
+	FilesystemSafeName string                       `json:"fsSafeName,omitempty"`
 }
 
 func newPackageDesription(pkg *leeway.Package) packageDescription {
@@ -188,15 +189,16 @@ func newPackageDesription(pkg *leeway.Package) packageDescription {
 	}
 
 	return packageDescription{
-		Metadata:     newMetadataDescription(pkg),
-		Type:         string(pkg.Type),
-		ArgDeps:      pkg.ArgumentDependencies,
-		Dependencies: deps,
-		Layout:       layout,
-		Env:          pkg.Environment,
-		Manifest:     manifest,
-		Config:       newConfigDescription(pkg.Type, pkg.Config),
-		Definition:   string(pkg.Definition),
+		Metadata:           newMetadataDescription(pkg),
+		Type:               string(pkg.Type),
+		ArgDeps:            pkg.ArgumentDependencies,
+		Dependencies:       deps,
+		Layout:             layout,
+		Env:                pkg.Environment,
+		Manifest:           manifest,
+		Config:             newConfigDescription(pkg.Type, pkg.Config),
+		Definition:         string(pkg.Definition),
+		FilesystemSafeName: pkg.FilesystemSafeName(),
 	}
 }
 
@@ -244,6 +246,7 @@ func describePackage(out *prettyprint.Writer, pkg *leeway.Package) {
 	if out.Format == prettyprint.TemplateFormat && out.FormatString == "" {
 		out.FormatString = `Name:	{{ .Metadata.FullName }}
 Version:	{{ .Metadata.Version }}
+FS safe name:	{{ .FilesystemSafeName }}
 {{ if .Config -}}
 Configuration:
 {{- range $k, $v := .Config }}
