@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -103,9 +101,24 @@ type Component struct {
 	// Name is the name of the Component as computed from its location in the workspace
 	Name string
 
+	// gitCommit is the head of the Git working copy if this component has a .git directory
+	// in its root. Otherwise this field is empty, in which case the workspace might still
+	// have a commit. This field is private to encourage the use of the GitCommit function.
+	gitCommit string
+
 	Constants Arguments  `yaml:"const"`
 	Packages  []*Package `yaml:"packages"`
 	Scripts   []*Script  `yaml:"scripts"`
+}
+
+// GitCommit returns the git commit of this component or the workspace. Returns an empty string if
+// neither the component, nor the workspace are part of a working copy.
+func (c *Component) GitCommit() string {
+	commit := c.gitCommit
+	if commit == "" {
+		commit = c.W.GitCommit
+	}
+	return commit
 }
 
 // PackageNotFoundErr is used when something references a package we don't know about
@@ -944,29 +957,15 @@ func TopologicalSort(pkgs []*Package) {
 }
 
 func resolveBuiltinGitVariables(pkg *Package, vars map[string]string) error {
-	candidates := []string{
-		pkg.C.Origin,
-		pkg.C.W.Origin,
+	commit := pkg.C.gitCommit
+	if commit == "" {
+		commit = pkg.C.W.GitCommit
 	}
-	var repoLoc string
-	for _, c := range candidates {
-		if stat, err := os.Stat(filepath.Join(c, ".git")); err == nil && stat.IsDir() {
-			repoLoc = c
-			break
-		}
-	}
-	if repoLoc == "" {
+	if commit == "" {
 		return fmt.Errorf("package sources are not within a Git working copy")
 	}
 
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = repoLoc
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("cannot resolve builtin Git variables: %s: %w", string(out), err)
-	}
-
-	vars[BuildinArgGitCommit] = strings.TrimSpace(string(out))
+	vars[BuildinArgGitCommit] = commit
 
 	return nil
 }

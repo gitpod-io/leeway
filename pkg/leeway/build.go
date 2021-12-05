@@ -1046,6 +1046,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
 	}
+	buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("__GIT_COMMIT=%s", p.C.GitCommit()))
 	if cfg.Squash {
 		buildcmd = append(buildcmd, "--squash")
 	}

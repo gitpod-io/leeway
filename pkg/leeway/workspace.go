@@ -42,6 +42,7 @@ type Workspace struct {
 	Packages        map[string]*Package   `yaml:"-"`
 	Scripts         map[string]*Script    `yaml:"-"`
 	SelectedVariant *PackageVariant       `yaml:"-"`
+	GitCommit       string                `yaml:"-"`
 
 	ignores []string
 }
@@ -352,6 +353,13 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		return Workspace{}, err
 	}
 
+	// if this workspace has a Git repo at its root, resolve its commit hash
+	workspace.GitCommit, err = getGitCommit(workspace.Origin)
+	if err != nil {
+		log.WithField("workspace", workspace.Origin).WithError(err).Warn("cannot get Git commit")
+		err = nil
+	}
+
 	// now that we have all components/packages, we can link things
 	if opts != nil && opts.PrelinkModifier != nil {
 		opts.PrelinkModifier(workspace.Packages)
@@ -385,13 +393,29 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 
 	// at this point all packages are fully loaded and we can compute the version, as well as resolve builtin variables
 	for _, pkg := range workspace.Packages {
-		err := pkg.resolveBuiltinVariables()
+		err = pkg.resolveBuiltinVariables()
 		if err != nil {
 			return workspace, xerrors.Errorf("cannot resolve builtin variables %s: %w", pkg.FullName(), err)
 		}
 	}
 
 	return workspace, nil
+}
+
+func getGitCommit(loc string) (string, error) {
+	gitfc := filepath.Join(loc, ".git")
+	stat, err := os.Stat(gitfc)
+	if err != nil || !stat.IsDir() {
+		return "", nil
+	}
+
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = gitfc
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // buildEnvironmentManifest executes the commands of an env manifest and updates the values
@@ -592,6 +616,14 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 	comp.W = workspace
 	comp.Name = name
 	comp.Origin = filepath.Dir(path)
+
+	// if this component has a Git repo at its root, resolve its commit hash
+	comp.gitCommit, err = getGitCommit(comp.Origin)
+	if err != nil {
+		log.WithField("comp", comp.Name).WithError(err).Warn("cannot get Git commit")
+		err = nil
+	}
+
 	for i, pkg := range comp.Packages {
 		pkg.C = &comp
 		if pkg.Type == "typescript" {
