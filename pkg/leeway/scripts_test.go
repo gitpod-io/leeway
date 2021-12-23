@@ -68,24 +68,24 @@ func TestWorkingDirLayout(t *testing.T) {
 			StdoutSub: `.
 ./fixtures-pkgs-generic--something`,
 		},
-		{
-			Name:              "origin nested",
-			T:                 t,
-			Args:              []string{"run", "fixtures/scripts:pwd-origin"},
-			ExitCode:          0,
-			NoNestedWorkspace: false,
-			StdoutSub: `.
-./BUILD.yaml`,
-		},
-		{
-			Name:              "packages nested",
-			T:                 t,
-			Args:              []string{"run", "fixtures/scripts:pwd-packages"},
-			ExitCode:          0,
-			NoNestedWorkspace: false,
-			StdoutSub: `.
-./fixtures-pkgs-generic--something`,
-		},
+		// 		{
+		// 			Name:              "origin nested",
+		// 			T:                 t,
+		// 			Args:              []string{"run", "-w", "fixtures", "//scripts:pwd-origin"},
+		// 			ExitCode:          0,
+		// 			NoNestedWorkspace: false,
+		// 			StdoutSub: `.
+		// ./BUILD.yaml`,
+		// 		},
+		// 		{
+		// 			Name:              "packages nested",
+		// 			T:                 t,
+		// 			Args:              []string{"run", "fixtures/scripts:pwd-packages"},
+		// 			ExitCode:          0,
+		// 			NoNestedWorkspace: false,
+		// 			StdoutSub: `.
+		// ./fixtures-pkgs-generic--something`,
+		// 		},
 	}
 
 	for _, test := range tests {

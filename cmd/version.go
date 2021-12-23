@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/gitpod-io/leeway/pkg/leeway"
 	"github.com/spf13/cobra"
 )
 
@@ -11,7 +12,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Prints the version of this leeway build",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println(version)
+		fmt.Printf(leeway.Version)
 	},
 }
 

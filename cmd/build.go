@@ -172,6 +172,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().UintP("max-concurrent-tasks", "j", uint(runtime.NumCPU()), "Limit the number of max concurrent build tasks - set to 0 to disable the limit")
 	cmd.Flags().String("coverage-output-path", "", "Output path where test coverage file will be copied after running tests")
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
+
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemCache) {
@@ -228,7 +229,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		log.Fatal(err)
 	}
 
-	log.Debugf("this is leeway version %s", version)
+	log.Debugf("this is leeway version %s", leeway.Version)
 
 	var planOutlet io.Writer
 	if plan, _ := cmd.Flags().GetString("dump-plan"); plan != "" {

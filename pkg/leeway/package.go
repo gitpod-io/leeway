@@ -104,7 +104,7 @@ type Component struct {
 	// gitCommit is the head of the Git working copy if this component has a .git directory
 	// in its root. Otherwise this field is empty, in which case the workspace might still
 	// have a commit. This field is private to encourage the use of the GitCommit function.
-	gitCommit string
+	git *GitInfo
 
 	Constants Arguments  `yaml:"const"`
 	Packages  []*Package `yaml:"packages"`
@@ -113,12 +113,12 @@ type Component struct {
 
 // GitCommit returns the git commit of this component or the workspace. Returns an empty string if
 // neither the component, nor the workspace are part of a working copy.
-func (c *Component) GitCommit() string {
-	commit := c.gitCommit
-	if commit == "" {
-		commit = c.W.GitCommit
+func (c *Component) Git() *GitInfo {
+	res := c.git
+	if res == nil {
+		res = &c.W.Git
 	}
-	return commit
+	return res
 }
 
 // PackageNotFoundErr is used when something references a package we don't know about
@@ -868,42 +868,40 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 		return err
 	}
 
-	_, err = fmt.Fprintf(out, "buildProcessVersion: %d\n", buildProcessVersions[p.Type])
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(out, "environment: %s\n", envhash)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(out, "definition: %s\n", defhash)
-	if err != nil {
-		return err
-	}
-	for _, argdep := range p.ArgumentDependencies {
-		_, err = fmt.Fprintf(out, "arg %s\n", argdep)
-		if err != nil {
-			return err
+	var bundle []string
+
+	bundle = append(bundle, fmt.Sprintf("buildProcessVersion: %d\n", buildProcessVersions[p.Type]))
+	if p.C.W.Provenance.Enabled {
+		bundle = append(bundle, "provenance")
+		if p.C.W.Provenance.SLSA {
+			bundle = append(bundle, " slsa")
 		}
+		if p.C.W.Provenance.key != nil {
+			bundle = append(bundle, fmt.Sprintf(" key:%s", p.C.W.Provenance.key.KeyID))
+		}
+		bundle = append(bundle, "\n")
+	}
+
+	bundle = append(bundle, fmt.Sprintf("environment: %s\n", envhash))
+	bundle = append(bundle, fmt.Sprintf("definition: %s\n", defhash))
+	for _, argdep := range p.ArgumentDependencies {
+		bundle = append(bundle, fmt.Sprintf("arg %s\n", argdep))
 	}
 	for _, dep := range p.dependencies {
 		ver, err := dep.Version()
 		if err != nil {
-			return xerrors.Errorf("%s: %w", dep.FullName(), err)
+			return err
 		}
-		_, err = fmt.Fprintf(out, "%s.%s\n", dep.FullName(), ver)
+		bundle = append(bundle, fmt.Sprintf("%s.%s\n", dep.FullName(), ver))
+	}
+	bundle = append(bundle, strings.Join(manifest, "\n"))
+	bundle = append(bundle, "\n")
+
+	for _, b := range bundle {
+		_, err = io.WriteString(out, b)
 		if err != nil {
 			return err
 		}
-	}
-
-	_, err = io.WriteString(out, strings.Join(manifest, "\n"))
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(out)
-	if err != nil {
-		return err
 	}
 
 	return nil
@@ -957,10 +955,7 @@ func TopologicalSort(pkgs []*Package) {
 }
 
 func resolveBuiltinGitVariables(pkg *Package, vars map[string]string) error {
-	commit := pkg.C.gitCommit
-	if commit == "" {
-		commit = pkg.C.W.GitCommit
-	}
+	commit := pkg.C.Git().Commit
 	if commit == "" {
 		return fmt.Errorf("package sources are not within a Git working copy")
 	}
