@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gitpod-io/leeway/pkg/gokart"
+	"github.com/in-toto/in-toto-golang/in_toto"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/xerrors"
@@ -81,7 +82,7 @@ const (
 // buildProcessVersions contain the current version of the respective build processes.
 // Increment this value if you change any of the build procedures.
 var buildProcessVersions = map[PackageType]int{
-	YarnPackage:    6,
+	YarnPackage:    7,
 	GoPackage:      2,
 	DockerPackage:  2,
 	GenericPackage: 1,
@@ -607,20 +608,81 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
-	result, _ := buildctx.LocalCache.Location(p)
+	var (
+		result, _ = buildctx.LocalCache.Location(p)
+		bld       *packageBuild
+		sources   fileset
+	)
+
+	buildctx.LimitConcurrentBuilds()
+	defer buildctx.ReleaseConcurrentBuild()
 
 	switch p.Type {
 	case YarnPackage:
-		err = p.buildYarn(buildctx, builddir, result)
+		bld, err = p.buildYarn(buildctx, builddir, result)
 	case GoPackage:
-		err = p.buildGo(buildctx, builddir, result)
+		bld, err = p.buildGo(buildctx, builddir, result)
 	case DockerPackage:
-		err = p.buildDocker(buildctx, builddir, result)
+		bld, err = p.buildDocker(buildctx, builddir, result)
 	case GenericPackage:
-		err = p.buildGeneric(buildctx, builddir, result)
+		bld, err = p.buildGeneric(buildctx, builddir, result)
 	default:
 		err = xerrors.Errorf("cannot build package type: %s", p.Type)
 	}
+	if err != nil {
+		return err
+	}
+
+	if p.C.W.Provenance.Enabled {
+		sources, err = computeFileset(builddir)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = executeCommandsForPackage(buildctx, p, builddir, bld.BuildCommands)
+	if err != nil {
+		return err
+	}
+
+	if p.C.W.Provenance.Enabled {
+		var (
+			subjects  []in_toto.Subject
+			resultDir = builddir
+		)
+		if bld.Subjects != nil {
+			subjects, err = bld.Subjects()
+			if err != nil {
+				return err
+			}
+		} else if bld.PostBuild != nil {
+			var postBuild fileset
+			postBuild, resultDir, err = bld.PostBuild()
+			if err != nil {
+				return err
+			}
+			subjects, err = postBuild.Sub(sources).Subjects(resultDir)
+			if err != nil {
+				return err
+			}
+		} else {
+			postBuild, err := computeFileset(builddir)
+			if err != nil {
+				return err
+			}
+			subjects, err = postBuild.Sub(sources).Subjects(builddir)
+			if err != nil {
+				return err
+			}
+		}
+
+		err = writeProvenance(p, buildctx, resultDir, subjects)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = executeCommandsForPackage(buildctx, p, builddir, bld.PackageCommands)
 	if err != nil {
 		return err
 	}
@@ -631,6 +693,18 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	}
 
 	return err
+}
+
+type packageBuild struct {
+	BuildCommands   [][]string
+	PackageCommands [][]string
+
+	// If PostBuild is not nil but Subjects is, PostBuild is used
+	// to compute the post build fileset for provenance subject computation.
+	PostBuild func() (fset fileset, absResultDir string, err error)
+	// If Subjects is not nil it's used to compute the provenance subjects of the
+	// package build. This field takes precedence over PostBuild
+	Subjects func() ([]in_toto.Subject, error)
 }
 
 const (
@@ -660,13 +734,10 @@ rm -r yarn.lock _temp_yarn_cache
 
 // buildYarn implements the build process for Typescript packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
-func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err error) {
-	buildctx.LimitConcurrentBuilds()
-	defer buildctx.ReleaseConcurrentBuild()
-
+func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *packageBuild, err error) {
 	cfg, ok := p.Config.(YarnPkgConfig)
 	if !ok {
-		return xerrors.Errorf("package should have yarn config")
+		return nil, xerrors.Errorf("package should have yarn config")
 	}
 
 	var (
@@ -680,12 +751,12 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		}
 	}
 	if !pkgjsonFound {
-		return xerrors.Errorf("%s: yarn packages must have a package.json", p.FullName())
+		return nil, xerrors.Errorf("%s: yarn packages must have a package.json", p.FullName())
 	}
 
 	version, err := p.Version()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var commands [][]string
@@ -699,7 +770,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 	if cfg.Packaging == YarnOfflineMirror {
 		err := os.Mkdir(filepath.Join(wd, "_mirror"), 0755)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		commands = append(commands, [][]string{
@@ -713,7 +784,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 	for _, deppkg := range p.GetDependencies() {
 		_, ok := buildctx.LocalCache.Location(deppkg)
 		if deppkg.Ephemeral && !ok {
-			return PkgNotBuiltErr{deppkg}
+			return nil, PkgNotBuiltErr{deppkg}
 		}
 	}
 
@@ -725,7 +796,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 
 		builtpkg, ok := buildctx.LocalCache.Location(deppkg)
 		if !ok {
-			return PkgNotBuiltErr{deppkg}
+			return nil, PkgNotBuiltErr{deppkg}
 		}
 
 		tgt := p.BuildLayoutLocation(deppkg)
@@ -757,11 +828,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 	var packageJSON map[string]interface{}
 	fc, err := ioutil.ReadFile(pkgJSONFilename)
 	if err != nil {
-		return xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
+		return nil, xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 	}
 	err = json.Unmarshal(fc, &packageJSON)
 	if err != nil {
-		return xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
+		return nil, xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 	}
 	var modifiedPackageJSON bool
 	if cfg.Packaging == YarnLibrary {
@@ -771,12 +842,14 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		if rfs, ok := packageJSON["files"]; ok {
 			fs, ok := rfs.([]interface{})
 			if !ok {
-				fmt.Println(rfs)
-				return xerrors.Errorf("invalid package.json: files section is not a list of strings")
+				return nil, xerrors.Errorf("invalid package.json: files section is not a list of strings")
 			}
 			packageJSONFiles = fs
 		}
 		packageJSONFiles = append(packageJSONFiles, pkgYarnLock)
+		if p.C.W.Provenance.Enabled {
+			packageJSONFiles = append(packageJSONFiles, provenanceBundleFilename)
+		}
 		packageJSON["files"] = packageJSONFiles
 
 		modifiedPackageJSON = true
@@ -792,20 +865,20 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 	if modifiedPackageJSON {
 		fc, err = json.Marshal(packageJSON)
 		if err != nil {
-			return xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
+			return nil, xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 		}
 		err = ioutil.WriteFile(pkgJSONFilename, fc, 0644)
 		if err != nil {
-			return xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
+			return nil, xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 		}
 	}
 	pkgname, ok := packageJSON["name"].(string)
 	if !ok {
-		return xerrors.Errorf("name is not a string, but %v", pkgname)
+		return nil, xerrors.Errorf("name is not a string, but %v", pkgname)
 	}
 	pkgversion := packageJSON["version"]
 	if pkgname == "" || pkgversion == "" {
-		return xerrors.Errorf("name or version in package.json must not be empty")
+		return nil, xerrors.Errorf("name or version in package.json must not be empty")
 	}
 
 	// At this point we have all dependencies in place, a the correct package.json,
@@ -838,6 +911,15 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		}
 	}
 
+	res := &packageBuild{
+		BuildCommands: commands,
+	}
+
+	// let's prepare for packaging
+	var (
+		pkgCommands [][]string
+		resultDir   string
+	)
 	if cfg.Packaging == YarnOfflineMirror {
 		builtinScripts := map[string]string{
 			"get_yarn_lock.sh":       getYarnLockScript,
@@ -847,62 +929,71 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (err erro
 		for fn, script := range builtinScripts {
 			err = ioutil.WriteFile(filepath.Join(wd, "_mirror", fn), []byte(script), 0755)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 
+		if p.C.W.Provenance.Enabled {
+			pkgCommands = append(pkgCommands, []string{"cp", provenanceBundleFilename, "_mirror"})
+		}
+
 		dst := filepath.Join("_mirror", fmt.Sprintf("%s.tar.gz", p.FilesystemSafeName()))
-		commands = append(commands, [][]string{
+		pkgCommands = append(pkgCommands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://./%s > _mirror/content_yarn.lock", dst)},
 			{"sh", "-c", "cat yarn.lock >> _mirror/content_yarn.lock"},
 			{"yarn", "pack", "--filename", dst},
 			{"tar", "cfz", result, "-C", "_mirror", "."},
 		}...)
+		resultDir = "_mirror"
 	} else if cfg.Packaging == YarnLibrary {
-		commands = append(commands, [][]string{
+		pkgCommands = append(pkgCommands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://%s > %s", result, pkgYarnLock)},
 			{"yarn", "pack", "--filename", result},
 		}...)
 	} else if cfg.Packaging == YarnApp {
 		err := os.Mkdir(filepath.Join(wd, "_pkg"), 0755)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		err = ioutil.WriteFile(filepath.Join(wd, "_pkg", "package.json"), []byte(fmt.Sprintf(installerPackageJSONTemplate, version, pkgname, pkgversion)), 0755)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		pkg := filepath.Join(wd, "package.tar.tz")
-		commands = append(commands, [][]string{
+		pkgCommands = append(pkgCommands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://%s > %s", pkg, pkgYarnLock)},
 			{"yarn", "pack", "--filename", pkg},
 			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
 			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
 			{"tar", "cfz", result, "-C", "_pkg", "."},
 		}...)
+		resultDir = "_pkg"
 	} else if cfg.Packaging == YarnArchive {
-		commands = append(commands, []string{"tar", "cfz", result, "."})
+		pkgCommands = append(pkgCommands, []string{"tar", "cfz", result, "."})
 	} else {
-		return xerrors.Errorf("unknown Typescript packaging: %s", cfg.Packaging)
+		return nil, xerrors.Errorf("unknown Typescript packaging: %s", cfg.Packaging)
+	}
+	res.PackageCommands = pkgCommands
+	res.PostBuild = func() (fileset, string, error) {
+		fn := filepath.Join(wd, resultDir)
+		fset, err := computeFileset(fn)
+		return fset, fn, err
 	}
 
-	return executeCommandsForPackage(buildctx, p, wd, commands)
+	return res, nil
 }
 
 // buildGo implements the build process for Go packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
-func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error) {
-	buildctx.LimitConcurrentBuilds()
-	defer buildctx.ReleaseConcurrentBuild()
-
+func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
 	cfg, ok := p.Config.(GoPkgConfig)
 	if !ok {
-		return xerrors.Errorf("package should have Go config")
+		return nil, xerrors.Errorf("package should have Go config")
 	}
 
 	if _, err := os.Stat(filepath.Join(p.C.Origin, "go.mod")); os.IsNotExist(err) {
-		return xerrors.Errorf("can only build Go modules (missing go.mod file)")
+		return nil, xerrors.Errorf("can only build Go modules (missing go.mod file)")
 	}
 
 	var (
@@ -923,7 +1014,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 		for _, dep := range p.dependencies {
 			builtpkg, ok := buildctx.LocalCache.Location(dep)
 			if !ok {
-				return PkgNotBuiltErr{dep}
+				return nil, PkgNotBuiltErr{dep}
 			}
 
 			tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
@@ -962,13 +1053,13 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 		} else {
 			apiDepPtn, err = regexp.Compile(cfg.GoKart.APIDepsPattern)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			log.WithField("exp", apiDepPtn).Debug("using custom api dependency pattern for GoKart")
 		}
 		err = gokart.BuildAnalyzerConfig(wd, apiDepPtn)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		commands = append(commands, []string{"gokart", "scan", "-i", gokart.AnalyzerFilename, "-x"})
 	}
@@ -998,66 +1089,66 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (err error)
 	if len(buildCmd) > 0 && cfg.Packaging != GoLibrary {
 		commands = append(commands, buildCmd)
 	}
-	commands = append(commands, [][]string{
-		{"rm", "-rf", "_deps"},
-		{"tar", "cfz", result, "."},
-	}...)
+	commands = append(commands, []string{"rm", "-rf", "_deps"})
 
+	pkgCommands := [][]string{
+		{"tar", "cfz", result, "."},
+	}
 	if !cfg.DontTest && !buildctx.DontTest {
-		commands = append(commands, [][]string{
+		pkgCommands = append(pkgCommands, [][]string{
 			{"sh", "-c", fmt.Sprintf(`if [ -f "%v" ]; then cp -f %v %v; fi`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.buildOptions.CoverageOutputPath)},
 		}...)
 	}
 
-	return executeCommandsForPackage(buildctx, p, wd, commands)
+	return &packageBuild{
+		BuildCommands:   commands,
+		PackageCommands: pkgCommands,
+	}, nil
 }
 
 // buildDocker implements the build process for Docker packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
-func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err error) {
-	buildctx.LimitConcurrentBuilds()
-	defer buildctx.ReleaseConcurrentBuild()
-
+func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
 	cfg, ok := p.Config.(DockerPkgConfig)
 	if !ok {
-		return xerrors.Errorf("package should have Docker config")
+		return nil, xerrors.Errorf("package should have Docker config")
 	}
 
 	if cfg.Dockerfile == "" {
-		return xerrors.Errorf("dockerfile is required")
+		return nil, xerrors.Errorf("dockerfile is required")
 	}
 	dockerfile := filepath.Join(p.C.Origin, cfg.Dockerfile)
 	if _, err := os.Stat(dockerfile); os.IsNotExist(err) {
-		return err
+		return nil, err
 	}
 
-	var commands [][]string
-	commands = append(commands, []string{"cp", dockerfile, "Dockerfile"})
+	var buildCommands [][]string
+	buildCommands = append(buildCommands, []string{"cp", dockerfile, "Dockerfile"})
 	for _, dep := range p.GetDependencies() {
 		fn, exists := buildctx.LocalCache.Location(dep)
 		if !exists {
-			return PkgNotBuiltErr{dep}
+			return nil, PkgNotBuiltErr{dep}
 		}
 
 		tgt := p.BuildLayoutLocation(dep)
-		commands = append(commands, [][]string{
+		buildCommands = append(buildCommands, [][]string{
 			{"mkdir", tgt},
 			{"tar", "xfz", fn, "-C", tgt},
 		}...)
 	}
 
-	commands = append(commands, p.PreparationCommands...)
+	buildCommands = append(buildCommands, p.PreparationCommands...)
 
 	version, err := p.Version()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	buildcmd := []string{"docker", "build", "--pull", "-t", version}
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
 	}
-	buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("__GIT_COMMIT=%s", p.C.GitCommit()))
+	buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("__GIT_COMMIT=%s", p.C.Git().Commit))
 	if cfg.Squash {
 		buildcmd = append(buildcmd, "--squash")
 	}
@@ -1067,18 +1158,25 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 		}
 	}
 	buildcmd = append(buildcmd, ".")
-	commands = append(commands, buildcmd)
+	buildCommands = append(buildCommands, buildcmd)
 
 	if len(cfg.Image) == 0 {
 		// we don't push the image, let's export it
 		ef := strings.TrimSuffix(result, ".gz")
-		commands = append(commands, [][]string{
+		buildCommands = append(buildCommands, [][]string{
 			{"docker", "save", "-o", ef, version},
 			{"gzip", ef},
 		}...)
-	} else {
+	}
+
+	res = &packageBuild{
+		BuildCommands: buildCommands,
+	}
+
+	var pkgCommands [][]string
+	if len(cfg.Image) > 0 {
 		for _, img := range cfg.Image {
-			commands = append(commands, [][]string{
+			pkgCommands = append(pkgCommands, [][]string{
 				{"docker", "tag", version, img},
 				{"docker", "push", img},
 			}...)
@@ -1088,7 +1186,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 		// The proper thing would be to export the image, but that's rather expensive. We'll place a tar file which
 		// contains the names of the image we just pushed instead.
 		for _, img := range cfg.Image {
-			commands = append(commands,
+			pkgCommands = append(pkgCommands,
 				[]string{"sh", "-c", fmt.Sprintf("echo %s >> %s", img, dockerImageNamesFiles)},
 				[]string{"sh", "-c", fmt.Sprintf("echo built image: %s", img)},
 			)
@@ -1097,38 +1195,89 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (err er
 		// which provides a sensible way to add metadata to the image names.
 		consts, err := yaml.Marshal(cfg.Metadata)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		commands = append(commands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", base64.StdEncoding.EncodeToString(consts), dockerMetadataFile)})
+		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", base64.StdEncoding.EncodeToString(consts), dockerMetadataFile)})
 
-		commands = append(commands, []string{"tar", "cfz", result, dockerImageNamesFiles, dockerMetadataFile})
+		archiveCmd := []string{"tar", "cfz", result, "./" + dockerImageNamesFiles, "./" + dockerMetadataFile}
+		if p.C.W.Provenance.Enabled {
+			archiveCmd = append(archiveCmd, "./"+provenanceBundleFilename)
+		}
+		pkgCommands = append(pkgCommands, archiveCmd)
+
+		res.PackageCommands = pkgCommands
+		res.Subjects = func() (res []in_toto.Subject, err error) {
+			defer func() {
+				if err != nil {
+					err = xerrors.Errorf("provenance get subjects: %w", err)
+				}
+			}()
+			out, err := exec.Command("docker", "inspect", version).CombinedOutput()
+			if err != nil {
+				return nil, xerrors.Errorf("cannot determine ID of the image we just built")
+			}
+			var inspectRes []struct {
+				ID string `json:"Id"`
+			}
+			err = json.Unmarshal(out, &inspectRes)
+			if err != nil {
+				return nil, xerrors.Errorf("cannot unmarshal Docker inspect response \"%s\": %w", string(out), err)
+			}
+			if len(inspectRes) == 0 {
+				return nil, xerrors.Errorf("did not receive a proper Docker inspect response")
+			}
+			segs := strings.Split(inspectRes[0].ID, ":")
+			if len(segs) != 2 {
+				return nil, xerrors.Errorf("docker inspect returned invalid digest: %s", inspectRes[0].ID)
+			}
+			digest := in_toto.DigestSet{
+				segs[0]: segs[1],
+			}
+
+			res = make([]in_toto.Subject, 0, len(cfg.Image))
+			for _, tag := range cfg.Image {
+				res = append(res, in_toto.Subject{
+					Name:   tag,
+					Digest: digest,
+				})
+			}
+
+			return res, nil
+		}
 	}
 
-	return executeCommandsForPackage(buildctx, p, wd, commands)
+	return res, nil
 }
 
 // buildGeneric implements the build process for generic packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment BuildGenericProccessVersion.
-func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err error) {
-	buildctx.LimitConcurrentBuilds()
-	defer buildctx.ReleaseConcurrentBuild()
-
+func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
 	cfg, ok := p.Config.(GenericPkgConfig)
 	if !ok {
-		return xerrors.Errorf("package should have generic config")
+		return nil, xerrors.Errorf("package should have generic config")
 	}
 
 	// shortcut: no command == empty package
 	if len(cfg.Commands) == 0 && len(cfg.Test) == 0 {
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
-		return run(buildctx.Reporter, p, nil, wd, "tar", "cfz", result, "--files-from", "/dev/null")
+
+		// if provenance is enabled, we have to make sure we capture the bundle
+		if p.C.W.Provenance.Enabled {
+			return &packageBuild{
+				PackageCommands: [][]string{{"tar", "cfz", result, provenanceBundleFilename}},
+			}, nil
+		}
+
+		return &packageBuild{
+			PackageCommands: [][]string{{"tar", "cfz", result, "--files-from", "/dev/null"}},
+		}, nil
 	}
 
 	var commands [][]string
 	for _, dep := range p.GetDependencies() {
 		fn, exists := buildctx.LocalCache.Location(dep)
 		if !exists {
-			return PkgNotBuiltErr{dep}
+			return nil, PkgNotBuiltErr{dep}
 		}
 
 		tgt := p.BuildLayoutLocation(dep)
@@ -1143,9 +1292,11 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (err e
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands = append(commands, cfg.Test...)
 	}
-	commands = append(commands, []string{"tar", "cfz", result, "."})
 
-	return executeCommandsForPackage(buildctx, p, wd, commands)
+	return &packageBuild{
+		BuildCommands:   commands,
+		PackageCommands: [][]string{{"tar", "cfz", result, "."}},
+	}, nil
 }
 
 // retagDocker is called when we already have the build artifact for this package (and version)

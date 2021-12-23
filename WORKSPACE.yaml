@@ -6,6 +6,9 @@ environmentManifest:
     command: ["node", "--version"]
   - name: "yarn"
     command: ["yarn", "--version"]
+provenance:
+  enabled: true
+  slsa: true
 variants:
 - name: nogit
   srcs:

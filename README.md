@@ -279,6 +279,41 @@ variables have an effect on leeway:
 - `LEEWAY_EXPERIMENTAL`: Enables exprimental features
 - `LEEWAY_NESTED_WORKSPACE`: Enables nested workspaces. By default leeway ignores everything below another `WORKSPACE.yaml`, but if this env var is set leeway will try and link packages from the other workspace as if they were part of the parent one. This does not work for scripts yet.
 
+# Provenance (SLSA) - EXPERIMENTAL
+leeway can produce provenance information as part of a build. At the moment only [SLSA](https://slsa.dev/spec/v0.1/) is supported. This supoprt is **experimental**.
+
+Provenance generation is enabled in the `WORKSPACE.YAML` file.
+```YAML
+provenance:
+  enabled: true
+  slsa: true
+```
+
+Once enabled, all packages carry an [attestation bundle](https://github.com/in-toto/attestation/blob/main/spec/bundle.md) which is compliant to the [SLSA v0.2 spec](https://slsa.dev/provenance/v0.2) in their cached archive. The bundle is complete, i.e. not only contains the attestation for the package build, but also those of its dependencies.
+
+## Dirty vs clean Git working copy
+When building from a clean Git working copy, leeway will use a reference to the Git remote origin as [material](https://github.com/in-toto/in-toto-golang/blob/26b6a96f8a7537f27b7483e19dd68e022b179ea6/in_toto/model.go#L360) (part of the SLSA [link](https://github.com/slsa-framework/slsa/blob/main/controls/attestations.md)).
+
+## Signing attestations
+To support SLSA level 2, leeway can sign the attestations it produces. To this end, you can provide the filepath to a key either as part of the `WORKSPACE.yaml` or through the `LEEWAY_PROVENANCE_KEYPATH` environment variable.
+
+## Inspecting provenance
+You can inspect the generated attestation bundle by extracting it from the built and cached archive. For example:
+```bash
+# run a build
+leeway build --save /tmp/build.tar.gz
+
+# extract bundle
+tar xf /tmp/build.tar.gz ./provenance-bundle.jsonl
+
+# inspect the bundle
+cat provenance-bundle.jsonl | jq -r .payload | base64 -d | jq
+```
+
+## Caveats
+- provenance is part of the leeway package version, i.e. when you enable provenance that will naturally invalidate previously built packages.
+- provenance is not supported for nested workspaces. The presence of `LEEWAY_NESTED_WORKSPACE` will make the build fail.
+
 # Debugging
 When a build fails, or to get an idea of how leeway assembles dependencies, run your build with `leeway build -c local` (local cache only) and inspect your `$LEEWAY_BUILD_DIR`.
 

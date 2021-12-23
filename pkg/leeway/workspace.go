@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/imdario/mergo"
+	"github.com/in-toto/in-toto-golang/in_toto"
 	"github.com/minio/highwayhash"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
@@ -36,15 +37,30 @@ type Workspace struct {
 	DefaultVariant      *PackageVariant     `yaml:"defaultVariant,omitempty"`
 	Variants            []*PackageVariant   `yaml:"variants,omitempty"`
 	EnvironmentManifest EnvironmentManifest `yaml:"environmentManifest,omitempty"`
+	Provenance          WorkspaceProvenance `yaml:"provenance,omitempty"`
 
 	Origin          string                `yaml:"-"`
 	Components      map[string]*Component `yaml:"-"`
 	Packages        map[string]*Package   `yaml:"-"`
 	Scripts         map[string]*Script    `yaml:"-"`
 	SelectedVariant *PackageVariant       `yaml:"-"`
-	GitCommit       string                `yaml:"-"`
+	Git             GitInfo               `yaml:"-"`
 
 	ignores []string
+}
+
+type GitInfo struct {
+	Commit string
+	Origin string
+	Dirty  bool
+}
+
+type WorkspaceProvenance struct {
+	Enabled bool `yaml:"enabled"`
+	SLSA    bool `yaml:"slsa"`
+
+	KeyPath string `yaml:"key"`
+	key     *in_toto.Key
 }
 
 // EnvironmentManifest is a collection of environment manifest entries
@@ -143,6 +159,10 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 		return Workspace{}, err
 	}
 
+	if rootWS.Provenance.Enabled {
+		return Workspace{}, fmt.Errorf("nested workspaces do not support provenance")
+	}
+
 	var ignore doublestar.IgnoreFunc
 	if fc, _ := ioutil.ReadFile(filepath.Join(path, ".leewayignore")); len(fc) > 0 {
 		ignore = doublestar.IgnoreStrings(strings.Split(string(fc), "\n"))
@@ -187,6 +207,9 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 		})
 		if err != nil {
 			return res, err
+		}
+		if sws.Provenance.Enabled {
+			return Workspace{}, fmt.Errorf("%s: nested workspaces do not support provenance", wspath)
 		}
 		loadedWorkspaces[wspath] = &sws
 		res = sws
@@ -253,8 +276,9 @@ func loadWorkspaceYAML(path string) (Workspace, error) {
 }
 
 type loadWorkspaceOpts struct {
-	PrelinkModifier  func(map[string]*Package)
-	ArgumentDefaults map[string]string
+	PrelinkModifier   func(map[string]*Package)
+	ArgumentDefaults  map[string]string
+	ProvenanceKeyPath string
 }
 
 func loadWorkspace(ctx context.Context, path string, args Arguments, variant string, opts *loadWorkspaceOpts) (Workspace, error) {
@@ -354,10 +378,13 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	}
 
 	// if this workspace has a Git repo at its root, resolve its commit hash
-	workspace.GitCommit, err = getGitCommit(workspace.Origin)
+	gitnfo, err := getGitInfo(workspace.Origin)
 	if err != nil {
-		log.WithField("workspace", workspace.Origin).WithError(err).Warn("cannot get Git commit")
-		err = nil
+		return workspace, xerrors.Errorf("cannot get Git info: %w", err)
+	}
+	if gitnfo != nil {
+		// if there's no Git repo at the root of the workspace, gitnfo will be nil
+		workspace.Git = *gitnfo
 	}
 
 	// now that we have all components/packages, we can link things
@@ -399,23 +426,63 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		}
 	}
 
+	// if the workspace has provenance enabled and a keypath specified (or the loadOpts specify one),
+	// try and load the key
+	if workspace.Provenance.Enabled {
+		fn := opts.ProvenanceKeyPath
+		if fn == "" {
+			fn = workspace.Provenance.KeyPath
+		}
+		if fn != "" {
+			var key in_toto.Key
+			err = key.LoadKeyDefaults(fn)
+			if err != nil {
+				return workspace, xerrors.Errorf("cannot load workspace provenance signature key %s: %w", fn, err)
+			}
+			workspace.Provenance.key = &key
+		}
+	}
+
 	return workspace, nil
 }
 
-func getGitCommit(loc string) (string, error) {
+func getGitInfo(loc string) (*GitInfo, error) {
+
 	gitfc := filepath.Join(loc, ".git")
 	stat, err := os.Stat(gitfc)
 	if err != nil || !stat.IsDir() {
-		return "", nil
+		return nil, nil
 	}
 
+	var res GitInfo
 	cmd := exec.Command("git", "rev-parse", "HEAD")
 	cmd.Dir = gitfc
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return strings.TrimSpace(string(out)), nil
+	res.Commit = strings.TrimSpace(string(out))
+
+	cmd = exec.Command("git", "config", "--get", "remote.origin.url")
+	cmd.Dir = gitfc
+	out, err = cmd.CombinedOutput()
+	if err != nil && len(out) > 0 {
+		return nil, err
+	}
+	res.Origin = strings.TrimSpace(string(out))
+
+	cmd = exec.Command("git", "status", "--short")
+	cmd.Dir = gitfc
+	_, err = cmd.CombinedOutput()
+	if serr, ok := err.(*exec.ExitError); ok && serr.ExitCode() != 0 {
+		res.Dirty = true
+	} else if err != nil {
+		return nil, err
+	} else {
+		res.Dirty = len(out) == 0
+	}
+
+	return &res, nil
 }
 
 // buildEnvironmentManifest executes the commands of an env manifest and updates the values
@@ -469,8 +536,8 @@ func buildEnvironmentManifest(entries EnvironmentManifest, pkgtpes map[PackageTy
 
 // FindWorkspace looks for a WORKSPACE.yaml file within the path. If multiple such files are found,
 // an error is returned.
-func FindWorkspace(path string, args Arguments, variant string) (Workspace, error) {
-	return loadWorkspace(context.Background(), path, args, variant, &loadWorkspaceOpts{})
+func FindWorkspace(path string, args Arguments, variant, provenanceKey string) (Workspace, error) {
+	return loadWorkspace(context.Background(), path, args, variant, &loadWorkspaceOpts{ProvenanceKeyPath: provenanceKey})
 }
 
 // discoverComponents discovers components in a workspace
@@ -618,7 +685,7 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 	comp.Origin = filepath.Dir(path)
 
 	// if this component has a Git repo at its root, resolve its commit hash
-	comp.gitCommit, err = getGitCommit(comp.Origin)
+	comp.git, err = getGitInfo(comp.Origin)
 	if err != nil {
 		log.WithField("comp", comp.Name).WithError(err).Warn("cannot get Git commit")
 		err = nil

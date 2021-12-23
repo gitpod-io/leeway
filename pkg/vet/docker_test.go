@@ -86,7 +86,7 @@ ADD from-some-pkg--build/hello.txt hello.txt`,
     dockerfile: Dockerfile%s
 `, pkgdeps)), 0644))
 
-			ws, err := leeway.FindWorkspace(tmpdir, leeway.Arguments{}, "")
+			ws, err := leeway.FindWorkspace(tmpdir, leeway.Arguments{}, "", "")
 			failOnErr(err)
 			pkg, ok := ws.Packages["test-pkg:docker"]
 			if !ok {

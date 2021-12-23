@@ -58,9 +58,6 @@ __leeway_custom_func() {
 )
 
 var (
-	// version is set during the build using ldflags
-	version string = "unknown"
-
 	workspace string
 	buildArgs []string
 	verbose   bool
@@ -153,7 +150,7 @@ func getWorkspace() (leeway.Workspace, error) {
 		return leeway.FindNestedWorkspaces(workspace, args, variant)
 	}
 
-	return leeway.FindWorkspace(workspace, args, variant)
+	return leeway.FindWorkspace(workspace, args, variant, os.Getenv("LEEWAY_PROVENANCE_KEYPATH"))
 }
 
 func getBuildArgs() (leeway.Arguments, error) {
