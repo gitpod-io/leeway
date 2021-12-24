@@ -22,7 +22,20 @@ import (
 )
 
 const (
+	// provenanceBundleFilename is the name of the attestation bundle file
+	// we store in the archived build artefacts.
+	//
+	// BEWARE: when you change this value this will break consumers. Existing
+	//		   cached artefacts will not have the new filename which will break
+	//         builds. If you change this value, make sure you introduce a cache-invalidating
+	//         change, e.g. a manifest change.
 	provenanceBundleFilename = "provenance-bundle.jsonl"
+
+	// maxBundleEntrySize is the maximum size in bytes an attestation bundle entry may have.
+	// If we encounter a bundle entry lager than this size, the build will fail.
+	// Note: we'll allocate multiple buffers if this size, i.e. this size directly impacts
+	//       the amount of memory required during a build (parralellBuildCount * maxBundleEntrySize).
+	maxBundleEntrySize = 1024 * 1024
 )
 
 // writeProvenance produces a provenanceWriter which ought to be used during package builds
@@ -124,6 +137,7 @@ func extractBundleFromCachedArchive(dep *Package, loc string, out map[string]str
 
 		// TOOD(cw): use something other than a scanner. We've seen "Token Too Long" in first trials already.
 		scan := bufio.NewScanner(io.LimitReader(a, hdr.Size))
+		scan.Buffer(make([]byte, maxBundleEntrySize), maxBundleEntrySize)
 		for scan.Scan() {
 			out[scan.Text()] = struct{}{}
 		}
