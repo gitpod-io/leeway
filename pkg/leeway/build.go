@@ -976,8 +976,9 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 	}
 	res.PackageCommands = pkgCommands
 	res.PostBuild = func() (fileset, string, error) {
+		ignoreNodeModules := func(fn string) bool { return strings.Contains(fn, "node_modules/") }
 		fn := filepath.Join(wd, resultDir)
-		fset, err := computeFileset(fn)
+		fset, err := computeFileset(fn, ignoreNodeModules)
 		return fset, fn, err
 	}
 
