@@ -933,10 +933,6 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			}
 		}
 
-		if p.C.W.Provenance.Enabled {
-			pkgCommands = append(pkgCommands, []string{"cp", provenanceBundleFilename, "_mirror"})
-		}
-
 		dst := filepath.Join("_mirror", fmt.Sprintf("%s.tar.gz", p.FilesystemSafeName()))
 		pkgCommands = append(pkgCommands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://./%s > _mirror/content_yarn.lock", dst)},
