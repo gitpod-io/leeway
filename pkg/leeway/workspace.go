@@ -388,7 +388,7 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	}
 
 	// if this workspace has a Git repo at its root, resolve its commit hash
-	gitnfo, err := getGitInfo(workspace.Origin)
+	gitnfo, err := GetGitInfo(workspace.Origin)
 	if err != nil {
 		return workspace, xerrors.Errorf("cannot get Git info: %w", err)
 	}
@@ -439,10 +439,10 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	// if the workspace has provenance enabled and a keypath specified (or the loadOpts specify one),
 	// try and load the key
 	if workspace.Provenance.Enabled {
-		fn := opts.ProvenanceKeyPath
-		if fn == "" {
-			fn = workspace.Provenance.KeyPath
+		if opts.ProvenanceKeyPath != "" {
+			workspace.Provenance.KeyPath = opts.ProvenanceKeyPath
 		}
+		fn := workspace.Provenance.KeyPath
 		if fn != "" {
 			var key in_toto.Key
 			err = key.LoadKeyDefaults(fn)
@@ -456,8 +456,8 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	return workspace, nil
 }
 
-func getGitInfo(loc string) (*GitInfo, error) {
-
+// GetGitInfo returns the git status required during a leeway build
+func GetGitInfo(loc string) (*GitInfo, error) {
 	gitfc := filepath.Join(loc, ".git")
 	stat, err := os.Stat(gitfc)
 	if err != nil || !stat.IsDir() {
@@ -466,7 +466,7 @@ func getGitInfo(loc string) (*GitInfo, error) {
 
 	var res GitInfo
 	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = gitfc
+	cmd.Dir = loc
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, err
@@ -474,7 +474,7 @@ func getGitInfo(loc string) (*GitInfo, error) {
 	res.Commit = strings.TrimSpace(string(out))
 
 	cmd = exec.Command("git", "config", "--get", "remote.origin.url")
-	cmd.Dir = gitfc
+	cmd.Dir = loc
 	out, err = cmd.CombinedOutput()
 	if err != nil && len(out) > 0 {
 		return nil, err
@@ -482,14 +482,17 @@ func getGitInfo(loc string) (*GitInfo, error) {
 	res.Origin = strings.TrimSpace(string(out))
 
 	cmd = exec.Command("git", "status", "--short")
-	cmd.Dir = gitfc
-	_, err = cmd.CombinedOutput()
-	if serr, ok := err.(*exec.ExitError); ok && serr.ExitCode() != 0 {
+	cmd.Dir = loc
+	out, err = cmd.CombinedOutput()
+	if serr, ok := err.(*exec.ExitError); ok && serr.ExitCode() != 128 {
+		// git status --short seems to exit with 128 all the time - that's ok, but we need to account for that.
+		log.WithField("exitCode", serr.ExitCode()).Debug("git status --short exited with failed exit code. Working copy is dirty.")
 		res.Dirty = true
-	} else if err != nil {
+	} else if _, ok := err.(*exec.ExitError); !ok && err != nil {
 		return nil, err
-	} else {
-		res.Dirty = len(out) == 0
+	} else if len(strings.TrimSpace(string(out))) != 0 {
+		res.Dirty = true
+		log.WithField("out", string(out)).Debug("`git status --short` produced output. Working copy is dirty.")
 	}
 
 	return &res, nil
@@ -695,7 +698,7 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 	comp.Origin = filepath.Dir(path)
 
 	// if this component has a Git repo at its root, resolve its commit hash
-	comp.git, err = getGitInfo(comp.Origin)
+	comp.git, err = GetGitInfo(comp.Origin)
 	if err != nil {
 		log.WithField("comp", comp.Name).WithError(err).Warn("cannot get Git commit")
 		err = nil

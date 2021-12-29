@@ -301,13 +301,19 @@ To support SLSA level 2, leeway can sign the attestations it produces. To this e
 You can inspect the generated attestation bundle by extracting it from the built and cached archive. For example:
 ```bash
 # run a build
-leeway build --save /tmp/build.tar.gz
+leeway build //:app
 
-# extract bundle
-tar xf /tmp/build.tar.gz ./provenance-bundle.jsonl
+# export the attestation bundle
+leeway provenance export //:app
 
-# inspect the bundle
-cat provenance-bundle.jsonl | jq -r .payload | base64 -d | jq
+# export the decoded attestation bundle
+leeway provenance export --decode //:app
+
+# verify that all material came from a Git repo
+leeway provenance assert --git-only //:app
+
+# verify that all subjects were built using leeway
+leeway provenance asert --built-with-leeway //:app
 ```
 
 ## Caveats
