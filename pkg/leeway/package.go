@@ -872,7 +872,7 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 
 	bundle = append(bundle, fmt.Sprintf("buildProcessVersion: %d\n", buildProcessVersions[p.Type]))
 	if p.C.W.Provenance.Enabled {
-		bundle = append(bundle, "provenance")
+		bundle = append(bundle, fmt.Sprintf("provenance: version=%d", provenanceProcessVersion))
 		if p.C.W.Provenance.SLSA {
 			bundle = append(bundle, " slsa")
 		}

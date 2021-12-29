@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -95,6 +96,15 @@ func (mf EnvironmentManifest) Hash() (string, error) {
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// MarshalJSON marshals a built-up environment manifest into JSON
+func (mf EnvironmentManifest) MarshalJSON() ([]byte, error) {
+	res := make(map[string]string, len(mf))
+	for _, e := range mf {
+		res[e.Name] = e.Value
+	}
+	return json.Marshal(res)
 }
 
 // EnvironmentManifestEntry represents an entry in the environment manifest
