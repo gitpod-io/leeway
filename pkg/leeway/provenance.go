@@ -30,8 +30,13 @@ const (
 	// BEWARE: when you change this value this will break consumers. Existing
 	//		   cached artefacts will not have the new filename which will break
 	//         builds. If you change this value, make sure you introduce a cache-invalidating
-	//         change, e.g. a manifest change.
+	//         change, e.g. update the provenanceProcessVersion.
 	provenanceBundleFilename = "provenance-bundle.jsonl"
+
+	// provenanceProcessVersion is the version of the provenance generating process.
+	// If provenance is enabled in a workspace, this version becomes part of the manifest,
+	// hence changing it will invalidate previously built packages.
+	provenanceProcessVersion = 1
 )
 
 var (
@@ -51,7 +56,7 @@ var (
 )
 
 // writeProvenance produces a provenanceWriter which ought to be used during package builds
-func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjects []in_toto.Subject) (err error) {
+func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjects []in_toto.Subject, buildStarted time.Time) (err error) {
 	if !p.C.W.Provenance.Enabled {
 		return nil
 	}
@@ -70,7 +75,7 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 	}
 
 	if p.C.W.Provenance.SLSA {
-		env, err := p.produceSLSAEnvelope(subjects)
+		env, err := p.produceSLSAEnvelope(buildctx, subjects, buildStarted)
 		if err != nil {
 			return err
 		}
@@ -162,7 +167,7 @@ func extractBundleFromCachedArchive(dep *Package, loc string, dst *attestationBu
 	return nil
 }
 
-func (p *Package) produceSLSAEnvelope(subjects []in_toto.Subject) (res *provenance.Envelope, err error) {
+func (p *Package) produceSLSAEnvelope(buildctx *buildContext, subjects []in_toto.Subject, buildStarted time.Time) (res *provenance.Envelope, err error) {
 	git := p.C.Git()
 	if git.Commit == "" || git.Origin == "" {
 		return nil, xerrors.Errorf("Git provenance is unclear - do not have any Git info")
@@ -230,7 +235,7 @@ func (p *Package) produceSLSAEnvelope(subjects []in_toto.Subject) (res *provenan
 	}
 
 	pred.Builder = in_toto.ProvenanceBuilder{
-		ID: "github.com/gitpod-io/leeway:" + Version,
+		ID: fmt.Sprintf("github.com/gitpod-io/leeway:%s@sha256:%s", Version, buildctx.leewayHash),
 	}
 	pred.Metadata = &in_toto.ProvenanceMetadata{
 		Completeness: in_toto.ProvenanceComplete{
@@ -238,14 +243,18 @@ func (p *Package) produceSLSAEnvelope(subjects []in_toto.Subject) (res *provenan
 			Environment: false,
 			Materials:   true,
 		},
-		Reproducible:   false,
-		BuildStartedOn: &now,
+		Reproducible:    false,
+		BuildStartedOn:  &buildStarted,
+		BuildFinishedOn: &now,
 	}
 	pred.Recipe = in_toto.ProvenanceRecipe{
 		Type:              fmt.Sprintf("https://github.com/gitpod-io/leeway/build@%s:%d", p.Type, buildProcessVersions[p.Type]),
 		Arguments:         os.Args,
 		EntryPoint:        p.FullName(),
 		DefinedInMaterial: recipeMaterial,
+		Environment: provenanceEnvironment{
+			Manifest: p.C.W.EnvironmentManifest,
+		},
 	}
 
 	stmt := provenance.NewSLSAStatement()
@@ -271,6 +280,10 @@ func (p *Package) produceSLSAEnvelope(subjects []in_toto.Subject) (res *provenan
 		Payload:     base64.StdEncoding.EncodeToString(payload),
 		Signatures:  sigs,
 	}, nil
+}
+
+type provenanceEnvironment struct {
+	Manifest EnvironmentManifest `json:"manifest"`
 }
 
 func (p *Package) inTotoMaterials() ([]in_toto.ProvenanceMaterial, error) {
@@ -396,7 +409,7 @@ func (a *attestationBundle) Add(env *provenance.Envelope) error {
 	if err != nil {
 		return err
 	}
-	key := hex.Dump(hash.Sum(nil))
+	key := hex.EncodeToString(hash.Sum(nil))
 	if _, exists := a.keys[key]; exists {
 		return nil
 	}
@@ -427,7 +440,7 @@ func (a *attestationBundle) AddFromBundle(other io.Reader) error {
 		if err != nil {
 			return err
 		}
-		key := hex.Dump(hash.Sum(nil))
+		key := hex.EncodeToString(hash.Sum(nil))
 
 		if _, exists := a.keys[key]; exists {
 			continue

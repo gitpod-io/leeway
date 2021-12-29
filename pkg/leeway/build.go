@@ -3,7 +3,9 @@ package leeway
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,8 +49,9 @@ const (
 
 type buildContext struct {
 	buildOptions
-	buildDir string
-	buildID  string
+	buildDir   string
+	buildID    string
+	leewayHash string
 
 	mu                 sync.Mutex
 	newlyBuiltPackages map[string]*Package
@@ -110,6 +113,21 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 	}
 	buildID := fmt.Sprintf("%d-%x", time.Now().UnixNano(), b)
 
+	selfFN, err := os.Executable()
+	if err != nil {
+		return nil, xerrors.Errorf("cannot compute hash of myself: %w", err)
+	}
+	self, err := os.Open(selfFN)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot compute hash of myself: %w", err)
+	}
+	defer self.Close()
+	leewayHash := sha256.New()
+	_, err = io.Copy(leewayHash, self)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot compute hash of myself: %w", err)
+	}
+
 	ctx = &buildContext{
 		buildOptions:       options,
 		buildDir:           buildDir,
@@ -118,6 +136,7 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 		pkgLockCond:        sync.NewCond(&sync.Mutex{}),
 		pkgLocks:           make(map[string]struct{}),
 		buildLimit:         buildLimit,
+		leewayHash:         hex.EncodeToString(leewayHash.Sum(nil)),
 	}
 
 	err = os.MkdirAll(buildDir, 0755)
@@ -633,6 +652,7 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		return err
 	}
 
+	now := time.Now()
 	if p.C.W.Provenance.Enabled {
 		sources, err = computeFileset(builddir)
 		if err != nil {
@@ -676,7 +696,7 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 			}
 		}
 
-		err = writeProvenance(p, buildctx, resultDir, subjects)
+		err = writeProvenance(p, buildctx, resultDir, subjects, now)
 		if err != nil {
 			return err
 		}
