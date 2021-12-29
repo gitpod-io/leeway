@@ -1,6 +1,7 @@
 package leeway
 
 import (
+	"archive/tar"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -87,7 +88,7 @@ const (
 var buildProcessVersions = map[PackageType]int{
 	YarnPackage:    7,
 	GoPackage:      2,
-	DockerPackage:  2,
+	DockerPackage:  3,
 	GenericPackage: 1,
 }
 
@@ -676,12 +677,7 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 				return err
 			}
 		} else if bld.PostBuild != nil {
-			var postBuild fileset
-			postBuild, resultDir, err = bld.PostBuild()
-			if err != nil {
-				return err
-			}
-			subjects, err = postBuild.Sub(sources).Subjects(resultDir)
+			subjects, resultDir, err = bld.PostBuild(sources)
 			if err != nil {
 				return err
 			}
@@ -721,7 +717,7 @@ type packageBuild struct {
 
 	// If PostBuild is not nil but Subjects is, PostBuild is used
 	// to compute the post build fileset for provenance subject computation.
-	PostBuild func() (fset fileset, absResultDir string, err error)
+	PostBuild func(sources fileset) (subj []in_toto.Subject, absResultDir string, err error)
 	// If Subjects is not nil it's used to compute the provenance subjects of the
 	// package build. This field takes precedence over PostBuild
 	Subjects func() ([]in_toto.Subject, error)
@@ -991,11 +987,15 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		return nil, xerrors.Errorf("unknown Typescript packaging: %s", cfg.Packaging)
 	}
 	res.PackageCommands = pkgCommands
-	res.PostBuild = func() (fileset, string, error) {
+	res.PostBuild = func(sources fileset) (subjects []in_toto.Subject, absResultDir string, err error) {
 		ignoreNodeModules := func(fn string) bool { return strings.Contains(fn, "node_modules/") }
 		fn := filepath.Join(wd, resultDir)
-		fset, err := computeFileset(fn, ignoreNodeModules)
-		return fset, fn, err
+		postBuild, err := computeFileset(fn, ignoreNodeModules)
+		if err != nil {
+			return nil, fn, err
+		}
+		subjects, err = postBuild.Sub(sources).Subjects(resultDir)
+		return
 	}
 
 	return res, nil
@@ -1182,7 +1182,6 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		ef := strings.TrimSuffix(result, ".gz")
 		buildCommands = append(buildCommands, [][]string{
 			{"docker", "save", "-o", ef, version},
-			{"gzip", ef},
 		}...)
 	}
 
@@ -1191,7 +1190,17 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	}
 
 	var pkgCommands [][]string
-	if len(cfg.Image) > 0 {
+	if len(cfg.Image) == 0 {
+		// We've already built the build artifact by exporting the archive using "docker save"
+		// At the very least we need to add the provenance bundle to that archive.
+		ef := strings.TrimSuffix(result, ".gz")
+		res.PostBuild = dockerExportPostBuild(wd, ef)
+
+		res.PackageCommands = [][]string{
+			{"tar", "fr", ef, "./" + provenanceBundleFilename},
+			{"gzip", ef},
+		}
+	} else if len(cfg.Image) > 0 {
 		for _, img := range cfg.Image {
 			pkgCommands = append(pkgCommands, [][]string{
 				{"docker", "tag", version, img},
@@ -1264,6 +1273,44 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	}
 
 	return res, nil
+}
+
+func dockerExportPostBuild(builddir, result string) func(sources fileset) (subj []in_toto.Subject, absResultDir string, err error) {
+	return func(sources fileset) (subj []in_toto.Subject, absResultDir string, err error) {
+		f, err := os.Open(result)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+
+		archive := tar.NewReader(f)
+		for {
+			var hdr *tar.Header
+			hdr, err = archive.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return
+			}
+			if hdr.Typeflag != tar.TypeReg {
+				continue
+			}
+
+			hash := sha256.New()
+			_, err = io.Copy(hash, io.LimitReader(archive, hdr.Size))
+			if err != nil {
+				return nil, builddir, err
+			}
+
+			subj = append(subj, in_toto.Subject{
+				Name:   hdr.Name,
+				Digest: in_toto.DigestSet{"sha256": hex.EncodeToString(hash.Sum(nil))},
+			})
+		}
+
+		return subj, builddir, nil
+	}
 }
 
 // buildGeneric implements the build process for generic packages.
