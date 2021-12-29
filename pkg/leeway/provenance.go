@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,12 +31,22 @@ const (
 	//         builds. If you change this value, make sure you introduce a cache-invalidating
 	//         change, e.g. a manifest change.
 	provenanceBundleFilename = "provenance-bundle.jsonl"
+)
 
+var (
 	// maxBundleEntrySize is the maximum size in bytes an attestation bundle entry may have.
 	// If we encounter a bundle entry lager than this size, the build will fail.
 	// Note: we'll allocate multiple buffers if this size, i.e. this size directly impacts
 	//       the amount of memory required during a build (parralellBuildCount * maxBundleEntrySize).
-	maxBundleEntrySize = 1024 * 1024
+	maxBundleEntrySize = func() int {
+		env := os.Getenv("LEEWAY_MAX_PROVENANCE_BUNDLE_SIZE")
+		res, err := strconv.ParseInt(env, 10, 64)
+		if err != nil {
+			return 2 * 1024 * 1024
+		}
+
+		return int(res)
+	}()
 )
 
 // writeProvenance produces a provenanceWriter which ought to be used during package builds
@@ -51,7 +62,7 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 	}
 
 	if p.C.W.Provenance.SLSA {
-		env, err := p.ProduceSLSAEnvelope(subjects)
+		env, err := p.produceSLSAEnvelope(subjects)
 		if err != nil {
 			return err
 		}
@@ -160,24 +171,71 @@ func extractBundleFromCachedArchive(dep *Package, loc string, out map[string]str
 	return nil
 }
 
-func (p *Package) ProduceSLSAEnvelope(subjects []in_toto.Subject) (res *provenance.Envelope, err error) {
+func (p *Package) produceSLSAEnvelope(subjects []in_toto.Subject) (res *provenance.Envelope, err error) {
 	git := p.C.Git()
 	if git.Commit == "" || git.Origin == "" {
 		return nil, xerrors.Errorf("Git provenance is unclear - do not have any Git info")
 	}
 
-	now := time.Now()
-	pred := provenance.NewSLSAPredicate()
+	var (
+		recipeMaterial *int
+		now            = time.Now()
+		pred           = provenance.NewSLSAPredicate()
+	)
 	if p.C.Git().Dirty {
 		files, err := p.inTotoMaterials()
 		if err != nil {
 			return nil, err
 		}
+
+		// It's unlikely that the BUILD.yaml is part of the material list - certainly the WORKSPACE.yaml
+		// isn't. If so, we need to add them to the materials to provide full provenance for the recipe.
+		var (
+			buildYamlFN        = filepath.Join(p.C.Origin, "BUILD.yaml")
+			buildYAML          = materialFileURI(buildYamlFN, p.C.W.Origin)
+			workspaceYamlFN    = filepath.Join(p.C.W.Origin, "WORKSPACE.yaml")
+			workspaceYAML      = materialFileURI(workspaceYamlFN, p.C.W.Origin)
+			foundBuildYAML     bool
+			foundWorkspaceYAML bool
+		)
+		for _, m := range files {
+			if m.URI == buildYAML {
+				foundBuildYAML = true
+			}
+			if m.URI == workspaceYAML {
+				foundBuildYAML = true
+			}
+		}
+		if !foundBuildYAML {
+			hash, err := sha256Hash(buildYamlFN)
+			if err != nil {
+				return nil, err
+			}
+			pos := len(files)
+			recipeMaterial = &pos
+			files = append(files, in_toto.ProvenanceMaterial{
+				URI:    buildYAML,
+				Digest: in_toto.DigestSet{"sha256": hash},
+			})
+		}
+		if !foundWorkspaceYAML {
+			hash, err := sha256Hash(workspaceYamlFN)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, in_toto.ProvenanceMaterial{
+				URI:    workspaceYAML,
+				Digest: in_toto.DigestSet{"sha256": hash},
+			})
+		}
+
 		pred.Materials = files
 	} else {
 		pred.Materials = []in_toto.ProvenanceMaterial{
 			{URI: "git+" + git.Origin, Digest: in_toto.DigestSet{"sha256": git.Commit}},
 		}
+		zero := 0
+		recipeMaterial = &zero
 	}
 
 	pred.Builder = in_toto.ProvenanceBuilder{
@@ -193,9 +251,10 @@ func (p *Package) ProduceSLSAEnvelope(subjects []in_toto.Subject) (res *provenan
 		BuildStartedOn: &now,
 	}
 	pred.Recipe = in_toto.ProvenanceRecipe{
-		Type:       fmt.Sprintf("https://github.com/gitpod-io/leeway/build@%s:%d", p.Type, buildProcessVersions[p.Type]),
-		Arguments:  os.Args,
-		EntryPoint: p.FullName(),
+		Type:              fmt.Sprintf("https://github.com/gitpod-io/leeway/build@%s:%d", p.Type, buildProcessVersions[p.Type]),
+		Arguments:         os.Args,
+		EntryPoint:        p.FullName(),
+		DefinedInMaterial: recipeMaterial,
 	}
 
 	stmt := provenance.NewSLSAStatement()
@@ -226,26 +285,39 @@ func (p *Package) ProduceSLSAEnvelope(subjects []in_toto.Subject) (res *provenan
 func (p *Package) inTotoMaterials() ([]in_toto.ProvenanceMaterial, error) {
 	res := make([]in_toto.ProvenanceMaterial, 0, len(p.Sources))
 	for _, src := range p.Sources {
-		f, err := os.Open(src)
+		hash, err := sha256Hash(src)
 		if err != nil {
-			return nil, xerrors.Errorf("cannot compute hash of %s: %w", src, err)
+			return nil, err
 		}
-
-		hash := sha256.New()
-		_, err = io.Copy(hash, f)
-		if err != nil {
-			return nil, xerrors.Errorf("cannot compute hash of %s: %w", src, err)
-		}
-		f.Close()
 
 		res = append(res, in_toto.ProvenanceMaterial{
-			URI: "file://" + strings.TrimPrefix(strings.TrimPrefix(src, p.C.W.Origin), "/"),
+			URI: materialFileURI(src, p.C.W.Origin),
 			Digest: in_toto.DigestSet{
-				"sha256": fmt.Sprintf("%x", hash.Sum(nil)),
+				"sha256": hash,
 			},
 		})
 	}
 	return res, nil
+}
+
+func materialFileURI(fn, workspaceOrigin string) string {
+	return "file://" + strings.TrimPrefix(strings.TrimPrefix(fn, workspaceOrigin), "/")
+}
+
+func sha256Hash(fn string) (res string, err error) {
+	f, err := os.Open(fn)
+	if err != nil {
+		return "", xerrors.Errorf("cannot compute hash of %s: %w", fn, err)
+	}
+
+	hash := sha256.New()
+	_, err = io.Copy(hash, f)
+	if err != nil {
+		return "", xerrors.Errorf("cannot compute hash of %s: %w", fn, err)
+	}
+	f.Close()
+
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
 type fileset map[string]struct{}
