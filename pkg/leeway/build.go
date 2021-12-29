@@ -994,7 +994,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		if err != nil {
 			return nil, fn, err
 		}
-		subjects, err = postBuild.Sub(sources).Subjects(resultDir)
+		subjects, err = postBuild.Sub(sources).Subjects(fn)
 		return
 	}
 
