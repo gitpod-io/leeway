@@ -4,27 +4,25 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/gitpod-io/leeway/pkg/leeway"
 	"sigs.k8s.io/bom/pkg/provenance"
 )
 
-// AccessPkgAttestationBundle provides access to the attestation bundle entries from a cached build artifact.
-// pkgFN is expected to point to a cached tar file.
-func AccessPkgAttestationBundle(pkgFN string, handler func(env *provenance.Envelope) error) error {
-	return leeway.AccessAttestationBundleInCachedArchive(pkgFN, func(bundle io.Reader) error {
-		var env provenance.Envelope
-		dec := json.NewDecoder(bundle)
-		for dec.More() {
-			err := dec.Decode(&env)
-			if err != nil {
-				return err
-			}
-
-			err = handler(&env)
-			if err != nil {
-				return err
-			}
+// DecodeBundle returns a function which attempts to decode an attestation bundle from the reader
+// and calls the handler for every envelope found in the bundle. If decoding fails, or the handler
+// returns an error, decoding stops and the error is returned.
+func DecodeBundle(bundle io.Reader, handler func(env *provenance.Envelope) error) error {
+	var env provenance.Envelope
+	dec := json.NewDecoder(bundle)
+	for dec.More() {
+		err := dec.Decode(&env)
+		if err != nil {
+			return err
 		}
-		return nil
-	})
+
+		err = handler(&env)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
