@@ -313,6 +313,7 @@ cat provenance-bundle.jsonl | jq -r .payload | base64 -d | jq
 ## Caveats
 - provenance is part of the leeway package version, i.e. when you enable provenance that will naturally invalidate previously built packages.
 - provenance is not supported for nested workspaces. The presence of `LEEWAY_NESTED_WORKSPACE` will make the build fail.
+- if attestation bundle entries grow too large this can break the build process. Use `LEEWAY_MAX_PROVENANCE_BUNDLE_SIZE` to set the buffer size in bytes. This defaults to 2MiB. The larger this buffer is, the larger bundle entries can be used, but the more memory the build process will consume. If you exceed the default, inspect the bundles first (especially the one that fails to load) and see if the produced `subjects` make sense.
 
 # Debugging
 When a build fails, or to get an idea of how leeway assembles dependencies, run your build with `leeway build -c local` (local cache only) and inspect your `$LEEWAY_BUILD_DIR`.
