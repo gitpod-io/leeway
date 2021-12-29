@@ -295,6 +295,12 @@ type provenanceEnvironment struct {
 func (p *Package) inTotoMaterials() ([]in_toto.ProvenanceMaterial, error) {
 	res := make([]in_toto.ProvenanceMaterial, 0, len(p.Sources))
 	for _, src := range p.Sources {
+		if stat, err := os.Lstat(src); err != nil {
+			return nil, err
+		} else if !stat.Mode().IsRegular() {
+			continue
+		}
+
 		hash, err := sha256Hash(src)
 		if err != nil {
 			return nil, err
