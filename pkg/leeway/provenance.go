@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,7 +56,14 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 		return nil
 	}
 
-	bundle := make(map[string]struct{})
+	fn := filepath.Join(builddir, provenanceBundleFilename)
+	f, err := os.OpenFile(fn, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("cannot write provenance for %s: %w", p.FullName(), err)
+	}
+	defer f.Close()
+
+	bundle := newAttestationBundle(f)
 	err = p.getDependenciesProvenanceBundles(buildctx, bundle)
 	if err != nil {
 		return err
@@ -67,33 +75,18 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 			return err
 		}
 
-		entry, err := json.Marshal(env)
+		err = bundle.Add(env)
 		if err != nil {
 			return err
 		}
-
-		bundle[string(entry)] = struct{}{}
 	}
 
-	fn := filepath.Join(builddir, provenanceBundleFilename)
-	f, err := os.OpenFile(fn, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("cannot write provenance for %s: %w", p.FullName(), err)
-	}
-	defer f.Close()
-
-	for entry := range bundle {
-		_, err = f.WriteString(entry + "\n")
-		if err != nil {
-			return fmt.Errorf("cannot write provenance for %s: %w", p.FullName(), err)
-		}
-	}
 	log.WithField("fn", fn).WithField("package", p.FullName()).Debug("wrote provenance bundle")
 
 	return nil
 }
 
-func (p *Package) getDependenciesProvenanceBundles(buildctx *buildContext, out map[string]struct{}) error {
+func (p *Package) getDependenciesProvenanceBundles(buildctx *buildContext, dst *attestationBundle) error {
 	deps := p.GetTransitiveDependencies()
 	for _, dep := range deps {
 		loc, exists := buildctx.LocalCache.Location(dep)
@@ -101,7 +94,7 @@ func (p *Package) getDependenciesProvenanceBundles(buildctx *buildContext, out m
 			return PkgNotBuiltErr{dep}
 		}
 
-		err := extractBundleFromCachedArchive(dep, loc, out)
+		err := extractBundleFromCachedArchive(dep, loc, dst)
 		if err != nil {
 			return err
 		}
@@ -109,7 +102,7 @@ func (p *Package) getDependenciesProvenanceBundles(buildctx *buildContext, out m
 	return nil
 }
 
-func extractBundleFromCachedArchive(dep *Package, loc string, out map[string]struct{}) (err error) {
+func extractBundleFromCachedArchive(dep *Package, loc string, dst *attestationBundle) (err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("error extracting provenance bundle from %s: %w", loc, err)
@@ -129,7 +122,7 @@ func extractBundleFromCachedArchive(dep *Package, loc string, out map[string]str
 	defer g.Close()
 
 	var (
-		prevBundleSize = len(out)
+		prevBundleSize = dst.Len()
 		bundleFound    bool
 	)
 
@@ -149,14 +142,9 @@ func extractBundleFromCachedArchive(dep *Package, loc string, out map[string]str
 			continue
 		}
 
-		// TOOD(cw): use something other than a scanner. We've seen "Token Too Long" in first trials already.
-		scan := bufio.NewScanner(io.LimitReader(a, hdr.Size))
-		scan.Buffer(make([]byte, maxBundleEntrySize), maxBundleEntrySize)
-		for scan.Scan() {
-			out[scan.Text()] = struct{}{}
-		}
-		if scan.Err() != nil {
-			return scan.Err()
+		err = dst.AddFromBundle(io.LimitReader(a, hdr.Size))
+		if err != nil {
+			return err
 		}
 		bundleFound = true
 		break
@@ -169,7 +157,7 @@ func extractBundleFromCachedArchive(dep *Package, loc string, out map[string]str
 		return fmt.Errorf("dependency %s has no provenance bundle", dep.FullName())
 	}
 
-	log.WithField("prevBundleSize", prevBundleSize).WithField("newBundleSize", len(out)).WithField("loc", loc).Debug("extracted bundle from cached archive")
+	log.WithField("prevBundleSize", prevBundleSize).WithField("newBundleSize", dst.Len()).WithField("loc", loc).Debug("extracted bundle from cached archive")
 
 	return nil
 }
@@ -384,3 +372,81 @@ func (fset fileset) Subjects(base string) ([]in_toto.Subject, error) {
 	}
 	return res, nil
 }
+
+// attestationBundle represents an in-toto attestation bundle. See https://github.com/in-toto/attestation/blob/main/spec/bundle.md
+// for more details.
+type attestationBundle struct {
+	out  io.Writer
+	keys map[string]struct{}
+}
+
+func newAttestationBundle(out io.Writer) *attestationBundle {
+	return &attestationBundle{
+		out:  out,
+		keys: make(map[string]struct{}),
+	}
+}
+
+// Add adds an entry to the bundle and writes it directly to the out writer.
+// This function ensures an envelope is added only once.
+// This function is not synchronised.
+func (a *attestationBundle) Add(env *provenance.Envelope) error {
+	hash := sha256.New()
+	err := json.NewEncoder(hash).Encode(env)
+	if err != nil {
+		return err
+	}
+	key := hex.Dump(hash.Sum(nil))
+	if _, exists := a.keys[key]; exists {
+		return nil
+	}
+
+	err = json.NewEncoder(a.out).Encode(env)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(a.out)
+	if err != nil {
+		return err
+	}
+	a.keys[key] = struct{}{}
+
+	return nil
+}
+
+// Adds the entries from another bundle to this one, writing them directly to the out writer.
+// This function ensures entries are unique.
+// This function is not synchronised.
+func (a *attestationBundle) AddFromBundle(other io.Reader) error {
+	// TOOD(cw): use something other than a scanner. We've seen "Token Too Long" in first trials already.
+	scan := bufio.NewScanner(other)
+	scan.Buffer(make([]byte, maxBundleEntrySize), maxBundleEntrySize)
+	for scan.Scan() {
+		hash := sha256.New()
+		_, err := hash.Write(scan.Bytes())
+		if err != nil {
+			return err
+		}
+		key := hex.Dump(hash.Sum(nil))
+
+		if _, exists := a.keys[key]; exists {
+			continue
+		}
+
+		_, err = a.out.Write(scan.Bytes())
+		if err != nil {
+			return err
+		}
+		_, err = a.out.Write([]byte{'\n'})
+		if err != nil {
+			return err
+		}
+		a.keys[key] = struct{}{}
+	}
+	if scan.Err() != nil {
+		return scan.Err()
+	}
+	return nil
+}
+
+func (a *attestationBundle) Len() int { return len(a.keys) }
