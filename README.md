@@ -314,6 +314,9 @@ leeway provenance assert --git-only //:app
 
 # verify that all subjects were built using leeway
 leeway provenance asert --built-with-leeway //:app
+
+# decode an attestation bundle from a file (also works for assertions)
+leeway provenance export --decode file://some-bundle.jsonl
 ```
 
 ## Caveats

@@ -3,8 +3,10 @@ package cmd
 import (
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"os"
 
+	"github.com/gitpod-io/leeway/pkg/leeway"
 	"github.com/gitpod-io/leeway/pkg/provutil"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -17,20 +19,15 @@ var provenanceExportCmd = &cobra.Command{
 	Short: "Exports the provenance bundle of a (previously built) package",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		_, pkg, _, _ := getTarget(args, false)
-		if pkg == nil {
-			log.Fatal("provenance export requires a package")
-		}
-
-		_, cache := getBuildOpts(cmd)
-		pkgFN, ok := cache.Location(pkg)
-		if !ok {
-			log.Fatalf("%s is not built", pkg.FullName())
+		bundleFN, pkgFN, pkg, err := getProvenanceTarget(cmd, args)
+		if err != nil {
+			log.WithError(err).Fatal("cannot locate bundle")
 		}
 
 		decode, _ := cmd.Flags().GetBool("decode")
 		out := json.NewEncoder(os.Stdout)
-		err := provutil.AccessPkgAttestationBundle(pkgFN, func(env *provenance.Envelope) error {
+
+		export := func(env *provenance.Envelope) error {
 			if !decode {
 				return out.Encode(env)
 			}
@@ -54,7 +51,20 @@ var provenanceExportCmd = &cobra.Command{
 			}
 
 			return nil
-		})
+		}
+
+		if pkg == nil {
+			f, err := os.Open(bundleFN)
+			if err != nil {
+				log.WithError(err).Fatal("cannot open attestation bundle")
+			}
+			defer f.Close()
+			err = provutil.DecodeBundle(f, export)
+		} else {
+			err = leeway.AccessAttestationBundleInCachedArchive(pkgFN, func(bundle io.Reader) error {
+				return provutil.DecodeBundle(bundle, export)
+			})
+		}
 		if err != nil {
 			log.WithError(err).Fatal("cannot extract attestation bundle")
 		}
