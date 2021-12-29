@@ -28,6 +28,8 @@ var provenanceAssertCmd = &cobra.Command{
 
 		var assertions provutil.Assertions
 		if signed, _ := cmd.Flags().GetBool("signed"); signed {
+			log.Warn("checking signatures is most likely broken and will probably return false results")
+
 			var keyPath string
 			if pkg == nil {
 				keyPath = os.Getenv("LEEWAY_PROVENANCE_KEYPATH")
