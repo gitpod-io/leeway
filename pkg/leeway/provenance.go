@@ -322,7 +322,7 @@ func sha256Hash(fn string) (res string, err error) {
 
 type fileset map[string]struct{}
 
-func computeFileset(dir string) (fileset, error) {
+func computeFileset(dir string, ignoreFN ...func(fn string) bool) (fileset, error) {
 	res := make(fileset)
 	err := filepath.WalkDir(dir, func(path string, info fs.DirEntry, err error) error {
 		if err != nil {
@@ -330,6 +330,11 @@ func computeFileset(dir string) (fileset, error) {
 		}
 		if info.IsDir() {
 			return nil
+		}
+		for _, ignore := range ignoreFN {
+			if ignore(path) {
+				return nil
+			}
 		}
 
 		fn := strings.TrimPrefix(path, dir)
@@ -340,7 +345,7 @@ func computeFileset(dir string) (fileset, error) {
 	return res, err
 }
 
-// Sub produces a new fileset with all entries from the other fileset subjectraced
+// Sub produces a new fileset with all entries from the other fileset
 func (fset fileset) Sub(other fileset) fileset {
 	res := make(fileset, len(fset))
 	for fn := range fset {
