@@ -995,6 +995,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			return nil, fn, err
 		}
 		subjects, err = postBuild.Sub(sources).Subjects(fn)
+		absResultDir = filepath.Join(wd, resultDir)
 		return
 	}
 
