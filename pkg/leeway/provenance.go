@@ -36,7 +36,7 @@ const (
 	// provenanceProcessVersion is the version of the provenance generating process.
 	// If provenance is enabled in a workspace, this version becomes part of the manifest,
 	// hence changing it will invalidate previously built packages.
-	provenanceProcessVersion = 1
+	provenanceProcessVersion = 2
 
 	// ProvenanceBuilderID is the prefix we use as Builder ID when issuing provenance
 	ProvenanceBuilderID = "github.com/gitpod-io/leeway"
@@ -95,7 +95,7 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 }
 
 func (p *Package) getDependenciesProvenanceBundles(buildctx *buildContext, dst *AttestationBundle) error {
-	deps := p.GetTransitiveDependencies()
+	deps := p.GetDependencies()
 	prevBundleSize := dst.Len()
 	for _, dep := range deps {
 		loc, exists := buildctx.LocalCache.Location(dep)
@@ -462,11 +462,11 @@ func (a *AttestationBundle) AddFromBundle(other io.Reader) error {
 		if err != nil {
 			return err
 		}
+		_, err = a.out.Write([]byte{'\n'})
+		if err != nil {
+			return err
+		}
 		a.keys[key] = struct{}{}
-	}
-	_, err := a.out.Write([]byte{'\n'})
-	if err != nil {
-		return err
 	}
 
 	if scan.Err() != nil {
