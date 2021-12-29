@@ -75,7 +75,8 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 		bundle[string(entry)] = struct{}{}
 	}
 
-	f, err := os.OpenFile(filepath.Join(builddir, provenanceBundleFilename), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	fn := filepath.Join(builddir, provenanceBundleFilename)
+	f, err := os.OpenFile(fn, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("cannot write provenance for %s: %w", p.FullName(), err)
 	}
@@ -87,6 +88,8 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 			return fmt.Errorf("cannot write provenance for %s: %w", p.FullName(), err)
 		}
 	}
+	log.WithField("fn", fn).WithField("package", p.FullName()).Debug("wrote provenance bundle")
+
 	return nil
 }
 
