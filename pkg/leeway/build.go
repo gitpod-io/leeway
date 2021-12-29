@@ -1329,7 +1329,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		// if provenance is enabled, we have to make sure we capture the bundle
 		if p.C.W.Provenance.Enabled {
 			return &packageBuild{
-				PackageCommands: [][]string{{"tar", "cfz", result, provenanceBundleFilename}},
+				PackageCommands: [][]string{{"tar", "cfz", result, "./" + provenanceBundleFilename}},
 			}, nil
 		}
 
