@@ -37,6 +37,9 @@ const (
 	// If provenance is enabled in a workspace, this version becomes part of the manifest,
 	// hence changing it will invalidate previously built packages.
 	provenanceProcessVersion = 1
+
+	// ProvenanceBuilderID is the prefix we use as Builder ID when issuing provenance
+	ProvenanceBuilderID = "github.com/gitpod-io/leeway"
 )
 
 var (
@@ -91,30 +94,39 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 	return nil
 }
 
-func (p *Package) getDependenciesProvenanceBundles(buildctx *buildContext, dst *attestationBundle) error {
+func (p *Package) getDependenciesProvenanceBundles(buildctx *buildContext, dst *AttestationBundle) error {
 	deps := p.GetTransitiveDependencies()
+	prevBundleSize := dst.Len()
 	for _, dep := range deps {
 		loc, exists := buildctx.LocalCache.Location(dep)
 		if !exists {
 			return PkgNotBuiltErr{dep}
 		}
 
-		err := extractBundleFromCachedArchive(dep, loc, dst)
+		err := AccessAttestationBundleInCachedArchive(loc, func(bundle io.Reader) error {
+			return dst.AddFromBundle(bundle)
+		})
 		if err != nil {
 			return err
 		}
+		log.WithField("prevBundleSize", prevBundleSize).WithField("newBundleSize", dst.Len()).WithField("loc", loc).Debug("extracted bundle from cached archive")
+		prevBundleSize = dst.Len()
 	}
 	return nil
 }
 
-func extractBundleFromCachedArchive(dep *Package, loc string, dst *attestationBundle) (err error) {
+var ErrNoAttestationBundle error = fmt.Errorf("no attestation bundle found")
+
+// AccessAttestationBundleInCachedArchive provides access to the attestation bundle in a cached build artifact.
+// If no such bundle exists, ErrNoAttestationBundle is returned.
+func AccessAttestationBundleInCachedArchive(fn string, handler func(bundle io.Reader) error) (err error) {
 	defer func() {
 		if err != nil {
-			err = fmt.Errorf("error extracting provenance bundle from %s: %w", loc, err)
+			err = fmt.Errorf("error extracting provenance bundle from %s: %w", fn, err)
 		}
 	}()
 
-	f, err := os.Open(loc)
+	f, err := os.Open(fn)
 	if err != nil {
 		return err
 	}
@@ -126,11 +138,7 @@ func extractBundleFromCachedArchive(dep *Package, loc string, dst *attestationBu
 	}
 	defer g.Close()
 
-	var (
-		prevBundleSize = dst.Len()
-		bundleFound    bool
-	)
-
+	var bundleFound bool
 	a := tar.NewReader(g)
 	var hdr *tar.Header
 	for {
@@ -147,7 +155,7 @@ func extractBundleFromCachedArchive(dep *Package, loc string, dst *attestationBu
 			continue
 		}
 
-		err = dst.AddFromBundle(io.LimitReader(a, hdr.Size))
+		err = handler(io.LimitReader(a, hdr.Size))
 		if err != nil {
 			return err
 		}
@@ -159,10 +167,8 @@ func extractBundleFromCachedArchive(dep *Package, loc string, dst *attestationBu
 	}
 
 	if !bundleFound {
-		return fmt.Errorf("dependency %s has no provenance bundle", dep.FullName())
+		return ErrNoAttestationBundle
 	}
-
-	log.WithField("prevBundleSize", prevBundleSize).WithField("newBundleSize", dst.Len()).WithField("loc", loc).Debug("extracted bundle from cached archive")
 
 	return nil
 }
@@ -235,7 +241,7 @@ func (p *Package) produceSLSAEnvelope(buildctx *buildContext, subjects []in_toto
 	}
 
 	pred.Builder = in_toto.ProvenanceBuilder{
-		ID: fmt.Sprintf("github.com/gitpod-io/leeway:%s@sha256:%s", Version, buildctx.leewayHash),
+		ID: fmt.Sprintf("%s:%s@sha256:%s", ProvenanceBuilderID, Version, buildctx.leewayHash),
 	}
 	pred.Metadata = &in_toto.ProvenanceMetadata{
 		Completeness: in_toto.ProvenanceComplete{
@@ -386,15 +392,15 @@ func (fset fileset) Subjects(base string) ([]in_toto.Subject, error) {
 	return res, nil
 }
 
-// attestationBundle represents an in-toto attestation bundle. See https://github.com/in-toto/attestation/blob/main/spec/bundle.md
+// AttestationBundle represents an in-toto attestation bundle. See https://github.com/in-toto/attestation/blob/main/spec/bundle.md
 // for more details.
-type attestationBundle struct {
+type AttestationBundle struct {
 	out  io.Writer
 	keys map[string]struct{}
 }
 
-func newAttestationBundle(out io.Writer) *attestationBundle {
-	return &attestationBundle{
+func newAttestationBundle(out io.Writer) *AttestationBundle {
+	return &AttestationBundle{
 		out:  out,
 		keys: make(map[string]struct{}),
 	}
@@ -403,7 +409,7 @@ func newAttestationBundle(out io.Writer) *attestationBundle {
 // Add adds an entry to the bundle and writes it directly to the out writer.
 // This function ensures an envelope is added only once.
 // This function is not synchronised.
-func (a *attestationBundle) Add(env *provenance.Envelope) error {
+func (a *AttestationBundle) Add(env *provenance.Envelope) error {
 	hash := sha256.New()
 	err := json.NewEncoder(hash).Encode(env)
 	if err != nil {
@@ -430,7 +436,7 @@ func (a *attestationBundle) Add(env *provenance.Envelope) error {
 // Adds the entries from another bundle to this one, writing them directly to the out writer.
 // This function ensures entries are unique.
 // This function is not synchronised.
-func (a *attestationBundle) AddFromBundle(other io.Reader) error {
+func (a *AttestationBundle) AddFromBundle(other io.Reader) error {
 	// TOOD(cw): use something other than a scanner. We've seen "Token Too Long" in first trials already.
 	scan := bufio.NewScanner(other)
 	scan.Buffer(make([]byte, maxBundleEntrySize), maxBundleEntrySize)
@@ -450,16 +456,17 @@ func (a *attestationBundle) AddFromBundle(other io.Reader) error {
 		if err != nil {
 			return err
 		}
-		_, err = a.out.Write([]byte{'\n'})
-		if err != nil {
-			return err
-		}
 		a.keys[key] = struct{}{}
 	}
+	_, err := a.out.Write([]byte{'\n'})
+	if err != nil {
+		return err
+	}
+
 	if scan.Err() != nil {
 		return scan.Err()
 	}
 	return nil
 }
 
-func (a *attestationBundle) Len() int { return len(a.keys) }
+func (a *AttestationBundle) Len() int { return len(a.keys) }
