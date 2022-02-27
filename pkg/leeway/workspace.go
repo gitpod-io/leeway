@@ -50,12 +50,6 @@ type Workspace struct {
 	ignores []string
 }
 
-type GitInfo struct {
-	Commit string
-	Origin string
-	Dirty  bool
-}
-
 type WorkspaceProvenance struct {
 	Enabled bool `yaml:"enabled"`
 	SLSA    bool `yaml:"slsa"`
@@ -454,48 +448,6 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	}
 
 	return workspace, nil
-}
-
-// GetGitInfo returns the git status required during a leeway build
-func GetGitInfo(loc string) (*GitInfo, error) {
-	gitfc := filepath.Join(loc, ".git")
-	stat, err := os.Stat(gitfc)
-	if err != nil || !stat.IsDir() {
-		return nil, nil
-	}
-
-	var res GitInfo
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = loc
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, err
-	}
-	res.Commit = strings.TrimSpace(string(out))
-
-	cmd = exec.Command("git", "config", "--get", "remote.origin.url")
-	cmd.Dir = loc
-	out, err = cmd.CombinedOutput()
-	if err != nil && len(out) > 0 {
-		return nil, err
-	}
-	res.Origin = strings.TrimSpace(string(out))
-
-	cmd = exec.Command("git", "status", "--short")
-	cmd.Dir = loc
-	out, err = cmd.CombinedOutput()
-	if serr, ok := err.(*exec.ExitError); ok && serr.ExitCode() != 128 {
-		// git status --short seems to exit with 128 all the time - that's ok, but we need to account for that.
-		log.WithField("exitCode", serr.ExitCode()).Debug("git status --short exited with failed exit code. Working copy is dirty.")
-		res.Dirty = true
-	} else if _, ok := err.(*exec.ExitError); !ok && err != nil {
-		return nil, err
-	} else if len(strings.TrimSpace(string(out))) != 0 {
-		res.Dirty = true
-		log.WithField("out", string(out)).Debug("`git status --short` produced output. Working copy is dirty.")
-	}
-
-	return &res, nil
 }
 
 // buildEnvironmentManifest executes the commands of an env manifest and updates the values

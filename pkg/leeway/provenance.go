@@ -36,7 +36,7 @@ const (
 	// provenanceProcessVersion is the version of the provenance generating process.
 	// If provenance is enabled in a workspace, this version becomes part of the manifest,
 	// hence changing it will invalidate previously built packages.
-	provenanceProcessVersion = 2
+	provenanceProcessVersion = 3
 
 	// ProvenanceBuilderID is the prefix we use as Builder ID when issuing provenance
 	ProvenanceBuilderID = "github.com/gitpod-io/leeway"
@@ -184,7 +184,7 @@ func (p *Package) produceSLSAEnvelope(buildctx *buildContext, subjects []in_toto
 		now            = time.Now()
 		pred           = provenance.NewSLSAPredicate()
 	)
-	if p.C.Git().Dirty {
+	if p.C.Git().DirtyFiles(p.Sources) {
 		files, err := p.inTotoMaterials()
 		if err != nil {
 			return nil, err

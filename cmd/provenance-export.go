@@ -60,14 +60,18 @@ var provenanceExportCmd = &cobra.Command{
 			}
 			defer f.Close()
 			err = provutil.DecodeBundle(f, export)
+			if err != nil {
+				log.WithError(err).Fatal("cannot extract attestation bundle")
+			}
 		} else {
 			err = leeway.AccessAttestationBundleInCachedArchive(pkgFN, func(bundle io.Reader) error {
 				return provutil.DecodeBundle(bundle, export)
 			})
+			if err != nil {
+				log.WithError(err).Fatal("cannot extract attestation bundle")
+			}
 		}
-		if err != nil {
-			log.WithError(err).Fatal("cannot extract attestation bundle")
-		}
+
 	},
 }
 
