@@ -680,10 +680,15 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 			completeSources[src] = struct{}{}
 		}
 		for _, src := range pkg.Config.AdditionalSources() {
-			fn, err := filepath.Abs(filepath.Join(comp.Origin, src))
-			if err != nil {
-				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+			fn := src
+			if !filepath.IsAbs(fn) {
+				var err error
+				fn, err = filepath.Abs(filepath.Join(comp.Origin, src))
+				if err != nil {
+					return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+				}
 			}
+
 			if _, err := os.Stat(fn); os.IsNotExist(err) {
 				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 			}
