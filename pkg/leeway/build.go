@@ -628,14 +628,32 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	}
 
 	if len(p.Sources) > 0 {
-		cpargs := []string{"--parents"}
+		var (
+			parentedFiles    []string
+			notParentedFiles []string
+		)
 		for _, src := range p.Sources {
-			cpargs = append(cpargs, strings.TrimPrefix(src, p.C.Origin+"/"))
+			prefix := p.C.Origin + "/"
+			if strings.HasPrefix(src, prefix) {
+				parentedFiles = append(parentedFiles, strings.TrimPrefix(src, prefix))
+			} else {
+				notParentedFiles = append(notParentedFiles, src)
+			}
 		}
-		cpargs = append(cpargs, builddir)
-		err = run(buildctx.Reporter, p, nil, p.C.Origin, "cp", cpargs...)
-		if err != nil {
-			return err
+
+		if len(parentedFiles) > 0 {
+			parentedFiles = append([]string{"--parents"}, parentedFiles...)
+			err = run(buildctx.Reporter, p, nil, p.C.Origin, "cp", append(parentedFiles, builddir)...)
+			if err != nil {
+				return err
+			}
+		}
+
+		if len(notParentedFiles) > 0 {
+			err = run(buildctx.Reporter, p, nil, p.C.Origin, "cp", append(notParentedFiles, builddir)...)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

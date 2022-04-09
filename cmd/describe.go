@@ -164,6 +164,7 @@ type packageDescription struct {
 	Env                []string                     `json:"env,omitempty" yaml:"env,omitempty"`
 	Definition         string                       `json:"definition,omitempty"`
 	FilesystemSafeName string                       `json:"fsSafeName,omitempty"`
+	Sources            []string                     `json:"sources,omitempty"`
 }
 
 func newPackageDesription(pkg *leeway.Package) packageDescription {
@@ -199,6 +200,7 @@ func newPackageDesription(pkg *leeway.Package) packageDescription {
 		Config:             newConfigDescription(pkg.Type, pkg.Config),
 		Definition:         string(pkg.Definition),
 		FilesystemSafeName: pkg.FilesystemSafeName(),
+		Sources:            pkg.Sources,
 	}
 }
 
