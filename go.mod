@@ -26,7 +26,7 @@ require (
 
 require (
 	github.com/in-toto/in-toto-golang v0.3.3
-	github.com/opencontainers/runc v1.1.1
+	github.com/opencontainers/runc v1.1.2
 	github.com/opencontainers/runtime-spec v1.0.3-0.20210326190908-1c3f411f0417
 	sigs.k8s.io/bom v0.1.0
 )
