@@ -13,7 +13,7 @@ builds:
   - -s -w -X github.com/gitpod-io/leeway/pkg/leeway.Version={{.Version}}-{{.ShortCommit}}
   ignore:
   - goos: darwin
-    goarch: 386
+    
 archives:
 - replacements:
     darwin: Darwin
