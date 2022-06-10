@@ -27,7 +27,9 @@ var provenanceAssertCmd = &cobra.Command{
 		}
 
 		var assertions provutil.Assertions
-		if signed, _ := cmd.Flags().GetBool("signed"); signed {
+		if signed, err := cmd.Flags().GetBool("signed"); err != nil {
+			log.Fatal(err)
+		} else if signed {
 			log.Warn("checking signatures is most likely broken and will probably return false results")
 
 			var keyPath string
@@ -47,13 +49,19 @@ var provenanceAssertCmd = &cobra.Command{
 			}
 			assertions = append(assertions, provutil.AssertSignedWith(key))
 		}
-		if do, _ := cmd.Flags().GetBool("leeway-built"); do {
+		if do, err := cmd.Flags().GetBool("built-with-leeway"); err != nil {
+			log.Fatal(err)
+		} else if do {
 			assertions = append(assertions, provutil.AssertBuiltWithLeeway)
 		}
-		if ver, _ := cmd.Flags().GetString("leeway-version"); ver != "" {
+		if ver, err := cmd.Flags().GetString("built-with-leeway-version"); err != nil {
+			log.Fatal(err)
+		} else if ver != "" {
 			assertions = append(assertions, provutil.AssertBuiltWithLeewayVersion(ver))
 		}
-		if do, _ := cmd.Flags().GetBool("git-only"); do {
+		if do, err := cmd.Flags().GetBool("git-only"); err != nil {
+			log.Fatal(err)
+		} else if do {
 			assertions = append(assertions, provutil.AssertGitMaterialOnly)
 		}
 
