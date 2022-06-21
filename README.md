@@ -124,7 +124,7 @@ Leeway supports built-in build arguments:
 ### Go packages
 ```YAML
 config:
-  # Packaging method. See https://godoc.org/github.com/gitpod/leeway/pkg/leeway#GoPackaging for details. Defaults to library.
+  # Packaging method. See https://godoc.org/github.com/gitpod-io/leeway/pkg/leeway#GoPackaging for details. Defaults to library.
   packaging: library
   # If true leeway runs `go generate -v ./...` prior to testing/building. Defaults to false.
   generate: false
