@@ -105,7 +105,7 @@ env:
 #                     workspace, while giving full access to the built dependencies.
 workdir: origin
 # The actual script. For now, only bash scripts are supported. The shebang is added automatically.
-scrip: |
+script: |
   echo $MESSAGE, this is where the script goes
   if [ "A$(ps -o comm= -p $$)" = "Abash" ]; then
     echo "it's the bash alright"
