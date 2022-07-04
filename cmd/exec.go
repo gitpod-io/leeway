@@ -43,13 +43,15 @@ Example use:
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		var (
-			packages, _         = cmd.Flags().GetStringArray("package")
-			includeDeps, _      = cmd.Flags().GetBool("dependencies")
-			includeTransDeps, _ = cmd.Flags().GetBool("transitive-dependencies")
-			components, _       = cmd.Flags().GetBool("components")
-			filterType, _       = cmd.Flags().GetStringArray("filter-type")
-			watch, _            = cmd.Flags().GetBool("watch")
-			parallel, _         = cmd.Flags().GetBool("parallel")
+			packages, _               = cmd.Flags().GetStringArray("package")
+			includeDeps, _            = cmd.Flags().GetBool("dependencies")
+			includeTransDeps, _       = cmd.Flags().GetBool("transitive-dependencies")
+			includeDependants, _      = cmd.Flags().GetBool("dependants")
+			includeTransDependants, _ = cmd.Flags().GetBool("transitive-dependants")
+			components, _             = cmd.Flags().GetBool("components")
+			filterType, _             = cmd.Flags().GetStringArray("filter-type")
+			watch, _                  = cmd.Flags().GetBool("watch")
+			parallel, _               = cmd.Flags().GetBool("parallel")
 		)
 
 		ws, err := getWorkspace()
@@ -84,6 +86,20 @@ Example use:
 		} else if includeDeps {
 			for p := range pkgs {
 				for _, dep := range p.GetDependencies() {
+					pkgs[dep] = struct{}{}
+				}
+			}
+		}
+
+		if includeTransDependants {
+			for p := range pkgs {
+				for _, dep := range p.TransitiveDependants() {
+					pkgs[dep] = struct{}{}
+				}
+			}
+		} else if includeDependants {
+			for p := range pkgs {
+				for _, dep := range p.Dependants() {
 					pkgs[dep] = struct{}{}
 				}
 			}
@@ -229,6 +245,8 @@ func init() {
 	execCmd.Flags().StringArray("package", nil, "select a package by name")
 	execCmd.Flags().Bool("dependencies", false, "select package dependencies")
 	execCmd.Flags().Bool("transitive-dependencies", false, "select transitive package dependencies")
+	execCmd.Flags().Bool("dependants", false, "select package dependants")
+	execCmd.Flags().Bool("transitive-dependants", false, "select transitive package dependants")
 	execCmd.Flags().Bool("components", false, "select the package's components (e.g. instead of selecting three packages from the same component, execute just once in the component origin)")
 	execCmd.Flags().StringArray("filter-type", nil, "only select packages of this type")
 	execCmd.Flags().Bool("watch", false, "Watch source files and re-execute on change")

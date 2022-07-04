@@ -268,6 +268,46 @@ func (p *Package) GetTransitiveDependencies() []*Package {
 	return res
 }
 
+// Dependants() returns a list of packages directly dependant on this package
+func (p *Package) Dependants() []*Package {
+	var res []*Package
+	for _, wp := range p.C.W.Packages {
+		var isdep bool
+		for _, dep := range wp.GetDependencies() {
+			if dep.FullName() == p.FullName() {
+				isdep = true
+				break
+			}
+		}
+		if !isdep {
+			continue
+		}
+
+		res = append(res, wp)
+	}
+	return res
+}
+
+// Dependants() returns a list of packages directly dependant on this package
+func (p *Package) TransitiveDependants() []*Package {
+	var res []*Package
+	for _, wp := range p.C.W.Packages {
+		var isdep bool
+		for _, dep := range wp.GetTransitiveDependencies() {
+			if dep.FullName() == p.FullName() {
+				isdep = true
+				break
+			}
+		}
+		if !isdep {
+			continue
+		}
+
+		res = append(res, wp)
+	}
+	return res
+}
+
 // BuildLayoutLocation returns the filesystem path a dependency is expected at during the build.
 // This path will always be relative. If the provided package is not a depedency of this package,
 // we'll still return a valid path.
