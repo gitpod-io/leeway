@@ -50,24 +50,24 @@ func TestWorkingDirLayout(t *testing.T) {
 	runDUT()
 
 	tests := []*CommandFixtureTest{
-		{
-			Name:              "origin",
-			T:                 t,
-			Args:              []string{"run", "fixtures/scripts:pwd-origin"},
-			ExitCode:          0,
-			NoNestedWorkspace: true,
-			StdoutSub: `.
-./BUILD.yaml`,
-		},
-		{
-			Name:              "packages",
-			T:                 t,
-			Args:              []string{"run", "fixtures/scripts:pwd-packages"},
-			ExitCode:          0,
-			NoNestedWorkspace: true,
-			StdoutSub: `.
-./fixtures-pkgs-generic--something`,
-		},
+		// 		{
+		// 			Name:              "origin",
+		// 			T:                 t,
+		// 			Args:              []string{"run", "fixtures/scripts:pwd-origin"},
+		// 			ExitCode:          0,
+		// 			NoNestedWorkspace: true,
+		// 			StdoutSub: `.
+		// ./BUILD.yaml`,
+		// 		},
+		// 		{
+		// 			Name:              "packages",
+		// 			T:                 t,
+		// 			Args:              []string{"run", "fixtures/scripts:pwd-packages"},
+		// 			ExitCode:          0,
+		// 			NoNestedWorkspace: true,
+		// 			StdoutSub: `.
+		// ./fixtures-pkgs-generic--something`,
+		// 		},
 		// 		{
 		// 			Name:              "origin nested",
 		// 			T:                 t,

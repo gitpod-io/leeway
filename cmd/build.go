@@ -169,7 +169,6 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("werft", false, "Produce werft CI compatible output")
 	cmd.Flags().Bool("dont-test", false, "Disable all package-level tests (defaults to false)")
 	cmd.Flags().Bool("dont-retag", false, "Disable Docker image re-tagging (defaults to false)")
-	cmd.Flags().Bool("jailed-execution", false, "Run all build commands using runc (defaults to false)")
 	cmd.Flags().UintP("max-concurrent-tasks", "j", uint(runtime.NumCPU()), "Limit the number of max concurrent build tasks - set to 0 to disable the limit")
 	cmd.Flags().String("coverage-output-path", "", "Output path where test coverage file will be copied after running tests")
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
@@ -284,11 +283,6 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		log.Fatal(err)
 	}
 
-	jailedExecution, err := cmd.Flags().GetBool("jailed-execution")
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
@@ -301,7 +295,6 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		leeway.WithCoverageOutputPath(coverageOutputPath),
 		leeway.WithDontRetag(dontRetag),
 		leeway.WithDockerBuildOptions(&dockerBuildOptions),
-		leeway.WithJailedExecution(jailedExecution),
 	}, localCache
 }
 

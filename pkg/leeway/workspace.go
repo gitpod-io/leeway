@@ -3,7 +3,6 @@ package leeway
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,9 +18,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/distribution/reference"
 	"github.com/imdario/mergo"
 	"github.com/in-toto/in-toto-golang/in_toto"
-	"github.com/minio/highwayhash"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
@@ -39,6 +38,7 @@ type Workspace struct {
 	Variants            []*PackageVariant   `yaml:"variants,omitempty"`
 	EnvironmentManifest EnvironmentManifest `yaml:"environmentManifest,omitempty"`
 	Provenance          WorkspaceProvenance `yaml:"provenance,omitempty"`
+	BuildEnv            *BuildEnv           `yaml:"buildEnv,omitempty"`
 
 	Origin          string                `yaml:"-"`
 	Components      map[string]*Component `yaml:"-"`
@@ -58,6 +58,60 @@ type WorkspaceProvenance struct {
 	key     *in_toto.Key
 }
 
+type BuildEnv struct {
+	Local  bool `yaml:"local,omitempty"`
+	Jailed bool `yaml:"jailed,omitempty"`
+	Docker struct {
+		Image string `yaml:"image"`
+	} `yaml:"docker"`
+
+	UserEnvironmentManifest EnvironmentManifest `yaml:"environmentManifest,omitempty"`
+}
+
+// EnvironmentManifest returns the environment manifest for this build environmwent
+func (be BuildEnv) EnvironmentManifest(packageTypesUsed map[PackageType]struct{}) (EnvironmentManifest, error) {
+	var envmf EnvironmentManifest
+	switch {
+	case be.Jailed:
+		envmf = append(envmf, EnvironmentManifestEntry{
+			Name:    "buildenv-jailed",
+			Builtin: true,
+			Value:   "true",
+		})
+		fallthrough
+	case be.Local:
+		mf, err := buildLocalEnvironmentManifest(be.UserEnvironmentManifest, packageTypesUsed)
+		if err != nil {
+			return nil, err
+		}
+		envmf = append(envmf, mf...)
+	case be.Docker.Image != "":
+		envmf = append(envmf, EnvironmentManifestEntry{
+			Name:    "buildenv-docker",
+			Builtin: true,
+			Value:   be.Docker.Image,
+		})
+	default:
+		return nil, xerrors.Errorf("invalid build environment - check the buildEnv entry in your WORKSPACE.yaml")
+	}
+	return envmf, nil
+}
+
+func (be *BuildEnv) Validate() (warnings, errors []string) {
+	if be == nil {
+		return
+	}
+	if be.Docker.Image != "" {
+		ref, err := reference.ParseNormalizedNamed(be.Docker.Image)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Invalid Docker image %s: %s", be.Docker.Image, err.Error()))
+		} else if _, ok := ref.(reference.Digested); !ok {
+			warnings = append(errors, fmt.Sprintf("Docker image %s does not refer to a digest (should end with @sha256...)", be.Docker.Image))
+		}
+	}
+	return
+}
+
 // EnvironmentManifest is a collection of environment manifest entries
 type EnvironmentManifest []EnvironmentManifestEntry
 
@@ -72,24 +126,16 @@ func (mf EnvironmentManifest) Write(out io.Writer) error {
 	return nil
 }
 
-// Hash produces the hash of this manifest
-func (mf EnvironmentManifest) Hash() (string, error) {
-	key, err := hex.DecodeString(contentHashKey)
-	if err != nil {
-		return "", err
+// String produces a string representation of the manifest
+func (mf EnvironmentManifest) String() string {
+	var res string
+	for _, m := range mf {
+		if len(res) > 0 {
+			res += " "
+		}
+		res += fmt.Sprintf("%s=\"%s\"", m.Name, m.Value)
 	}
-
-	hash, err := highwayhash.New(key)
-	if err != nil {
-		return "", err
-	}
-
-	err = mf.Write(hash)
-	if err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	return res
 }
 
 // MarshalJSON marshals a built-up environment manifest into JSON
@@ -276,6 +322,22 @@ func loadWorkspaceYAML(path string) (Workspace, error) {
 	if err != nil {
 		return Workspace{}, err
 	}
+	if workspace.BuildEnv == nil {
+		workspace.BuildEnv = &BuildEnv{Local: true}
+	}
+	warnings, errors := workspace.BuildEnv.Validate()
+	if len(errors) != 0 {
+		return workspace, fmt.Errorf("workspace has invalid build environment: %s", strings.Join(errors, "; "))
+	}
+	if len(warnings) != 0 {
+		for _, warning := range warnings {
+			log.Warnf("workspace build environment issue: %s", warning)
+		}
+	}
+	if len(workspace.EnvironmentManifest) > 0 {
+		log.Warn("environmentManifest entry in WORKSPACE.yaml is deprecated - please move under buildEnv.environmentManifest")
+		workspace.BuildEnv.UserEnvironmentManifest = append(workspace.BuildEnv.UserEnvironmentManifest, workspace.EnvironmentManifest...)
+	}
 	return workspace, nil
 }
 
@@ -376,7 +438,7 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 
 	// with all packages loaded we can compute the env manifest, becuase now we know which package types are actually
 	// used, hence know the default env manifest entries.
-	workspace.EnvironmentManifest, err = buildEnvironmentManifest(workspace.EnvironmentManifest, packageTypesUsed)
+	workspace.EnvironmentManifest, err = workspace.BuildEnv.EnvironmentManifest(packageTypesUsed)
 	if err != nil {
 		return Workspace{}, err
 	}
@@ -450,8 +512,8 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	return workspace, nil
 }
 
-// buildEnvironmentManifest executes the commands of an env manifest and updates the values
-func buildEnvironmentManifest(entries EnvironmentManifest, pkgtpes map[PackageType]struct{}) (res EnvironmentManifest, err error) {
+// buildLocalEnvironmentManifest executes the commands of an env manifest and updates the values
+func buildLocalEnvironmentManifest(entries EnvironmentManifest, pkgtpes map[PackageType]struct{}) (res EnvironmentManifest, err error) {
 	t0 := time.Now()
 
 	envmf := make(map[string]EnvironmentManifestEntry, len(entries))
@@ -477,6 +539,8 @@ func buildEnvironmentManifest(entries EnvironmentManifest, pkgtpes map[PackageTy
 				e.Value = runtime.GOOS
 			}
 			res = append(res, e)
+			continue
+		} else if len(e.Command) == 0 {
 			continue
 		}
 
@@ -761,6 +825,15 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 			if err != nil {
 				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
 			}
+		}
+
+		// validate build env
+		warnings, errors := pkg.BuildEnv.Validate()
+		if len(errors) != 0 {
+			return comp, fmt.Errorf("package %s has invalid build environment: %s", pkg.FullName(), strings.Join(errors, "; "))
+		}
+		for _, warning := range warnings {
+			log.WithField("package", pkg.FullName()).Warnf("build environment issue: %s", warning)
 		}
 	}
 

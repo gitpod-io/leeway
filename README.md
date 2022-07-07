@@ -219,8 +219,23 @@ This workspace has a (nonsensical) `nogo` variant that, when enabled, excludes a
 It also changes the config of all Go packages to include the `-tags foo` flag. You can explore the effects of a variant using `collect` and `describe`, e.g. `leeway --variant nogo collect files` vs `leeway collect files`.
 You can list all variants in a workspace using `leeway collect variants`.
 
-## Environment Manifest
-Leeway does not control the environment in which it builds the packages, but assumes that all required tools are available already (e.g. `go` or `yarn`).
+## Build Environments
+Leeway can execute builds in three different environments:
+- `local` which is the default. In this mode, leeway just executes commands using the binaries found in the path. This is akin to just running a shell script.
+- `jailed` is similar to the `local` mode, except that build commands are executed within a runc container. This container re-uses the local existing file system. Builds should behave much the same as in `local` mode, except that they have limited access to the local file system. This is intended as a means to protect somewhat against the arbitrary code execution of some build systems (e.g. Yarn).
+- `docker` runs the build commands within a Docker container. The image needs to be specified as part of the config. Ideally one refers to the image in digested form, i.e. `docker.io/library/golang:1.18@sha256:a452d6273ad03a47c2f29b898d6bb57630e77baf839651ef77d03e4e049c5bf3` instead of `golang:1.18`.
+
+Build environments can be specified for the workspace as a whole, and on individual packages like so:
+```YAML
+buildEnv:
+  local: true # default
+  jailed: false
+  docker:
+    image: docker.io/library/golang:1.18@sha256:a452d6273ad03a47c2f29b898d6bb57630e77baf839651ef77d03e4e049c5bf3
+```
+
+### Environment Manifest
+In `local` and `jailed` mode, leeway does not control the environment in which it builds the packages, but assumes that all required tools are available already (e.g. `go` or `yarn`).
 This however can lead to subtle failure modes where a package built in one enviroment ends up being used in another, because no matter of the environment they were built in, they get the same version.
 
 To prevent such issues, leeway computes an _environment manifest_ which contains the versions of the tools used, as well as some platform information.
@@ -229,12 +244,15 @@ You can inspect a workspace's environment manifest using `leeway describe enviro
 
 You can add your own entries to a workspace's environment manifest in the `WORKSPACE.yaml` like so:
 ```YAML
-environmentManifest:
+buildEnv:
+  environmentManifest:
   - name: gcc
     command: ["gcc", "--version"]
 ```
 
 Using this mechanism you can also overwrite the default manifest entries, e.g. "go" or "yarn".
+
+When using a `docker` build-env, only the image reference is used as environment manifest.
 
 ## Nested Workspaces
 Leeway has some experimental support for nested workspaces, e.g. a structure like this one:

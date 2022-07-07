@@ -1,7 +1,11 @@
 defaultTarget: "//:app"
 defaultArgs:
   version: dev
-environmentManifest:
+buildEnv:
+  jailed: true
+  # docker:
+  #   image: docker.io/library/golang:1.18@sha256:a452d6273ad03a47c2f29b898d6bb57630e77baf839651ef77d03e4e049c5bf3
+  environmentManifest:
   - name: "node"
     command: ["node", "--version"]
   - name: "yarn"

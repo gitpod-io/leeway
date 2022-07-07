@@ -3,6 +3,8 @@ packages:
     type: generic
     srcs:
       - "*.txt"
+    buildEnv:
+      local: true
     config:
       commands:
         - ["echo"]

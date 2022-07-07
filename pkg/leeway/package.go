@@ -140,6 +140,7 @@ type packageInternal struct {
 	Environment          []string          `yaml:"env"`
 	Ephemeral            bool              `yaml:"ephemeral"`
 	PreparationCommands  [][]string        `yaml:"prep"`
+	BuildEnv             *BuildEnv         `yaml:"buildEnv"`
 }
 
 // Package is a single buildable artifact within a component
@@ -892,13 +893,19 @@ func (p *Package) ContentManifest() ([]string, error) {
 // WriteVersionManifest writes the manifest whoose hash is the version of this package (see Version())
 func (p *Package) WriteVersionManifest(out io.Writer) error {
 	if p.dependencies == nil {
-		return xerrors.Errorf("package is not linked")
+		return xerrors.Errorf("package %s is not linked", p.FullName())
 	}
 
-	envhash, err := p.C.W.EnvironmentManifest.Hash()
-	if err != nil {
-		return err
+	envmf := p.C.W.EnvironmentManifest
+	if p.BuildEnv != nil {
+		var err error
+		envmf, err = p.BuildEnv.EnvironmentManifest(map[PackageType]struct{}{p.Type: {}})
+		if err != nil {
+			return xerrors.Errorf("package %s has an invalid build environment", p.FullName())
+		}
 	}
+	envhash := envmf.String()
+
 	defhash, err := p.DefinitionHash()
 	if err != nil {
 		return err

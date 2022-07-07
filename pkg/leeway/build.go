@@ -249,7 +249,6 @@ type buildOptions struct {
 	CoverageOutputPath     string
 	DontRetag              bool
 	DockerBuildOptions     *DockerBuildOptions
-	JailedExecution        bool
 
 	context *buildContext
 }
@@ -348,14 +347,6 @@ func WithDontRetag(dontRetag bool) BuildOption {
 func WithDockerBuildOptions(dockerBuildOpts *DockerBuildOptions) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.DockerBuildOptions = dockerBuildOpts
-		return nil
-	}
-}
-
-// WithJailedExecution runs all commands in a runc jail
-func WithJailedExecution(jailedExecution bool) BuildOption {
-	return func(opts *buildOptions) error {
-		opts.JailedExecution = jailedExecution
 		return nil
 	}
 }
@@ -1458,18 +1449,108 @@ func (p *Package) retagDocker(buildctx *buildContext, wd, prev string) (err erro
 }
 
 func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, commands [][]string) error {
-	if buildctx.JailedExecution {
+	buildEnv := p.C.W.BuildEnv
+	if p.BuildEnv != nil {
+		buildEnv = p.BuildEnv
+	}
+	switch {
+	case buildEnv.Local:
+		env := append(os.Environ(), p.Environment...)
+		for _, cmd := range commands {
+			err := run(buildctx.Reporter, p, env, wd, cmd[0], cmd[1:]...)
+			if err != nil {
+				return err
+			}
+		}
+	case buildEnv.Jailed:
 		return executeCommandsForPackageSafe(buildctx, p, wd, commands)
+	case buildEnv.Docker.Image != "":
+		return executeCommandsForPackageInDocker(buildctx, p, wd, buildEnv.Docker.Image, commands)
+	default:
+		return fmt.Errorf("build environment not supported")
 	}
 
-	env := append(os.Environ(), p.Environment...)
-	for _, cmd := range commands {
-		err := run(buildctx.Reporter, p, env, wd, cmd[0], cmd[1:]...)
-		if err != nil {
-			return err
-		}
-	}
 	return nil
+}
+
+func executeCommandsForPackageInDocker(buildctx *buildContext, p *Package, wd, dockerImage string, commands [][]string) error {
+	tmpdir, err := os.MkdirTemp("", "leeway-*")
+	if err != nil {
+		return err
+	}
+
+	jc, err := json.Marshal(commands)
+	if err != nil {
+		return err
+	}
+	commandsFN := filepath.Join(tmpdir, "commands")
+	err = ioutil.WriteFile(commandsFN, []byte(base64.StdEncoding.EncodeToString(jc)), 0644)
+	if err != nil {
+		return err
+	}
+	envFN := filepath.Join(tmpdir, "env")
+	err = ioutil.WriteFile(envFN, []byte(strings.Join(p.Environment, "\n")), 0644)
+	if err != nil {
+		return err
+	}
+
+	if !log.IsLevelEnabled(log.DebugLevel) {
+		defer os.RemoveAll(tmpdir)
+	}
+
+	log.WithField("tmpdir", tmpdir).WithField("package", p.FullName()).Debug("preparing build runc environment")
+	err = os.MkdirAll(filepath.Join(tmpdir, "rootfs"), 0755)
+	if err != nil {
+		return err
+	}
+
+	version, err := p.Version()
+	if err != nil {
+		return err
+	}
+	name := fmt.Sprintf("b%s", version)
+
+	buildCache, _ := buildctx.LocalCache.Location(p)
+	buildCache = filepath.Dir(buildCache)
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	dockerHost := os.Getenv("DOCKER_HOST")
+	if strings.HasPrefix(dockerHost, "file://") {
+		dockerHost = strings.TrimPrefix(dockerHost, "file://")
+	} else if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+		dockerHost = "/var/run/docker.sock"
+	}
+
+	var args []string
+	args = append(args, "run")
+	args = append(args, "--name", name)
+	args = append(args, "--rm")
+	args = append(args, "-i")
+	args = append(args, "--workdir", "/build")
+	args = append(args, "--env-file", envFN)
+	args = append(args, "-v", fmt.Sprintf("%s:/build", wd))
+	args = append(args, "-v", fmt.Sprintf("%s:/commands", commandsFN))
+	args = append(args, "-v", fmt.Sprintf("%s:%s", buildCache, buildCache))
+	args = append(args, "-v", fmt.Sprintf("%s:/leeway", self))
+	if dockerHost != "" {
+		args = append(args, "-v", fmt.Sprintf("%s:/var/run/docker.sock", dockerHost))
+	}
+	args = append(args, dockerImage)
+	args = append(args, "/leeway", "plumbing", "exec", "/commands")
+	if log.IsLevelEnabled(log.DebugLevel) {
+		args = append(args, "--verbose")
+	}
+
+	log.WithField("args", args).Debug("running commands using Docker")
+
+	cmd := exec.Command("docker", args...)
+	cmd.Dir = tmpdir
+	cmd.Stdout = &reporterStream{R: buildctx.Reporter, P: p, IsErr: false}
+	cmd.Stderr = &reporterStream{R: buildctx.Reporter, P: p, IsErr: true}
+	return cmd.Run()
 }
 
 func executeCommandsForPackageSafe(buildctx *buildContext, p *Package, wd string, commands [][]string) error {
@@ -1568,7 +1649,6 @@ func executeCommandsForPackageSafe(buildctx *buildContext, p *Package, wd string
 	spec.Process.Args = []string{"/leeway", "plumbing", "exec", "/commands"}
 	if log.IsLevelEnabled(log.DebugLevel) {
 		spec.Process.Args = append(spec.Process.Args, "--verbose")
-
 	}
 	spec.Process.Cwd = "/build"
 	spec.Process.Env = env
