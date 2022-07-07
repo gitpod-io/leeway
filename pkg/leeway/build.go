@@ -718,7 +718,7 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
-	err = executeCommandsForPackage(buildctx, p, builddir, bld.PackageCommands)
+	err = executeCommandsForPackageLocally(buildctx, p, builddir, bld.PackageCommands)
 	if err != nil {
 		return err
 	}
@@ -1464,13 +1464,7 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 	}
 	switch {
 	case buildEnv.Local:
-		env := append(os.Environ(), p.Environment...)
-		for _, cmd := range commands {
-			err := run(buildctx.Reporter, p, env, wd, cmd[0], cmd[1:]...)
-			if err != nil {
-				return err
-			}
-		}
+		return executeCommandsForPackageLocally(buildctx, p, wd, commands)
 	case buildEnv.Jailed:
 		return executeCommandsForPackageSafe(buildctx, p, wd, commands)
 	case buildEnv.Docker.Image != "":
@@ -1478,7 +1472,16 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 	default:
 		return fmt.Errorf("build environment not supported")
 	}
+}
 
+func executeCommandsForPackageLocally(buildctx *buildContext, p *Package, wd string, commands [][]string) error {
+	env := append(os.Environ(), p.Environment...)
+	for _, cmd := range commands {
+		err := run(buildctx.Reporter, p, env, wd, cmd[0], cmd[1:]...)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
