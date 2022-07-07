@@ -1,0 +1,26 @@
+packages:
+  - name: step-one
+    type: generic
+    ephemeral: true
+    buildEnv:
+      docker:
+        image: docker.io/library/alpine:latest@sha256:686d8c9dfa6f3ccfc8230bc3178d23f84eeaf7e457f36f271ab1acc53015037c
+    config:
+      script: |
+        #!/bin/bash
+        apk add --no-cache figlet
+
+        figlet Leeway Rocks
+  - name: step-two
+    type: generic
+    ephemeral: true
+    deps:
+      - :step-one
+    buildEnv:
+      docker:
+        image: docker.io/library/golang:1.18@sha256:a452d6273ad03a47c2f29b898d6bb57630e77baf839651ef77d03e4e049c5bf3
+    config:
+      script: |-
+        #!/bin/bash
+
+        env

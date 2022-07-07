@@ -1,0 +1,7 @@
+packages:
+  - name: run
+    type: generic
+    ephemeral: true
+    deps:
+      - fixtures/pkgs/pipeline/go-stuff:step-three
+      - fixtures/pkgs/pipeline/shell-stuff:step-two
