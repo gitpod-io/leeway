@@ -1,0 +1,44 @@
+steps:
+  - name: prepare-sources
+    type: generic
+    image: ${defaultPipelineImage}
+    script: |
+      #!/bin/bash
+
+      echo running step one
+      cat <<EOF > main.go
+      package main
+
+      import (
+        "fmt"
+        "os"
+        "strings"
+      )
+
+      func main() { fmt.Println(strings.Join(os.Environ(), "\n")) }
+      EOF
+  - name: build
+    deps:
+      - :prepare-sources
+    image: docker.io/library/golang:1.18@sha256:a452d6273ad03a47c2f29b898d6bb57630e77baf839651ef77d03e4e049c5bf3
+    script: |
+      #!/bin/bash
+
+      set -x
+
+      whoami
+
+      cp fixtures-pipelines-stuff-go--prepare-sources/main.go .
+      cat main.go
+      go mod init foobar
+      CGO_ENABLED=0 go build
+      ls
+
+  - name: execute
+    deps:
+      - :build
+    image: docker.io/library/golang:1.18@sha256:a452d6273ad03a47c2f29b898d6bb57630e77baf839651ef77d03e4e049c5bf3
+    script: |-
+      #!/bin/bash
+
+      ./fixtures-pipelines-stuff-go--build/foobar

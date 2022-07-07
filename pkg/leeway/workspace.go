@@ -59,13 +59,15 @@ type WorkspaceProvenance struct {
 }
 
 type BuildEnv struct {
-	Local  bool `yaml:"local,omitempty"`
-	Jailed bool `yaml:"jailed,omitempty"`
-	Docker struct {
-		Image string `yaml:"image"`
-	} `yaml:"docker"`
+	Local  bool           `yaml:"local,omitempty"`
+	Jailed bool           `yaml:"jailed,omitempty"`
+	Docker DockerBuildEnv `yaml:"docker"`
 
 	UserEnvironmentManifest EnvironmentManifest `yaml:"environmentManifest,omitempty"`
+}
+
+type DockerBuildEnv struct {
+	Image string `yaml:"image"`
 }
 
 // EnvironmentManifest returns the environment manifest for this build environmwent
@@ -720,6 +722,38 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 		err = nil
 	}
 
+	// transform build steps into packages
+	for _, step := range comp.BuildSteps {
+		def, err := yaml.Marshal(step)
+		if err != nil {
+			return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+		}
+
+		var buildEnv *BuildEnv
+		if len(step.Script) == 0 {
+			buildEnv = &BuildEnv{Local: true}
+		} else {
+			buildEnv = &BuildEnv{Docker: DockerBuildEnv{Image: step.Image}}
+		}
+
+		comp.Packages = append(comp.Packages, &Package{
+			C: &comp,
+			packageInternal: packageInternal{
+				Name:                 step.Name,
+				Type:                 GenericPackage,
+				Dependencies:         step.Dependencies,
+				ArgumentDependencies: step.ArgumentDependencies,
+				Environment:          step.Environment,
+				BuildEnv:             buildEnv,
+				Ephemeral:            true,
+			},
+			Config: GenericPkgConfig{
+				Script: step.Script,
+			},
+			Definition: def,
+		})
+	}
+
 	for i, pkg := range comp.Packages {
 		pkg.C = &comp
 		if pkg.Type == "typescript" {
@@ -727,9 +761,11 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 			pkg.Type = YarnPackage
 		}
 
-		pkg.Definition, err = yaml.Marshal(&rawcomp.Packages[i])
-		if err != nil {
-			return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+		if len(pkg.Definition) == 0 {
+			pkg.Definition, err = yaml.Marshal(&rawcomp.Packages[i])
+			if err != nil {
+				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+			}
 		}
 
 		pkg.originalSources = pkg.Sources

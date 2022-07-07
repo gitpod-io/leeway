@@ -106,9 +106,10 @@ type Component struct {
 	// have a commit. This field is private to encourage the use of the GitCommit function.
 	git *GitInfo
 
-	Constants Arguments  `yaml:"const"`
-	Packages  []*Package `yaml:"packages"`
-	Scripts   []*Script  `yaml:"scripts"`
+	Constants  Arguments    `yaml:"const"`
+	Packages   []*Package   `yaml:"packages"`
+	Scripts    []*Script    `yaml:"scripts"`
+	BuildSteps []*BuildStep `yaml:"steps"`
 }
 
 // GitCommit returns the git commit of this component or the workspace. Returns an empty string if
@@ -119,6 +120,15 @@ func (c *Component) Git() *GitInfo {
 		res = &c.W.Git
 	}
 	return res
+}
+
+type BuildStep struct {
+	Name                 string   `yaml:"name"`
+	Dependencies         []string `yaml:"deps"`
+	ArgumentDependencies []string `yaml:"argdeps"`
+	Environment          []string `yaml:"env"`
+	Image                string   `yaml:"image"`
+	Script               string   `yaml:"script"`
 }
 
 // PackageNotFoundErr is used when something references a package we don't know about

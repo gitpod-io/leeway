@@ -1,0 +1,5 @@
+steps:
+  - name: run
+    deps:
+      - fixtures/pipelines/stuff/go:execute
+      - fixtures/pipelines/stuff/shell:step-two

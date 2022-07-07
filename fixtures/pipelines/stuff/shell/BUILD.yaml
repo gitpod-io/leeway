@@ -1,0 +1,16 @@
+steps:
+  - name: step-one
+    image: docker.io/library/alpine:latest@sha256:686d8c9dfa6f3ccfc8230bc3178d23f84eeaf7e457f36f271ab1acc53015037c
+    script: |
+      #!/bin/bash
+      apk add --no-cache figlet
+
+      figlet Leeway Pipelines
+  - name: step-two
+    deps:
+      - :step-one
+    image: docker.io/library/alpine:latest@sha256:686d8c9dfa6f3ccfc8230bc3178d23f84eeaf7e457f36f271ab1acc53015037c
+    script: |-
+      #!/bin/bash
+
+      env

@@ -1,0 +1,16 @@
+steps:
+  - name: run
+    deps:
+      - :second
+
+  - name: first
+    image: ${defaultPipelineImage}
+    script:
+      echo first step
+
+  - name: second
+    deps:
+      - :first
+    image: ${defaultPipelineImage}
+    script:
+      echo Hello ${message}
