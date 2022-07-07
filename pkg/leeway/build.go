@@ -1337,7 +1337,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	}
 
 	// shortcut: no command == empty package
-	if len(cfg.Commands) == 0 && len(cfg.Test) == 0 {
+	if len(cfg.Commands) == 0 && len(cfg.Script) == 0 && len(cfg.Test) == 0 {
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
 
 		// if provenance is enabled, we have to make sure we capture the bundle
@@ -1368,6 +1368,15 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 
 	commands = append(commands, p.PreparationCommands...)
 	commands = append(commands, cfg.Commands...)
+	if len(cfg.Script) > 0 {
+		scriptFN := filepath.Join(wd, "script.sh")
+		err = ioutil.WriteFile(scriptFN, []byte(cfg.Script), 0755)
+		if err != nil {
+			return nil, xerrors.Errorf("cannot write script: %w", err)
+		}
+		commands = append(commands, []string{"/bin/sh", "script.sh"})
+	}
+
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands = append(commands, cfg.Test...)
 	}
