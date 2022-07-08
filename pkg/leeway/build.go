@@ -1048,10 +1048,11 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		}...)
 	}
 
-	if len(p.GetDependencies()) > 0 {
+	transdep := p.GetTransitiveDependencies()
+	if len(transdep) > 0 {
 		commands = append(commands, []string{"mkdir", "_deps"})
 
-		for _, dep := range p.dependencies {
+		for _, dep := range transdep {
 			builtpkg, ok := buildctx.LocalCache.Location(dep)
 			if !ok {
 				return nil, PkgNotBuiltErr{dep}
