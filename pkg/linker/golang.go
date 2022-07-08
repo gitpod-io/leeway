@@ -33,6 +33,10 @@ func LinkGoModules(workspace *leeway.Workspace, target *leeway.Package) error {
 
 		var apmods []goModule
 		for _, dep := range p.GetTransitiveDependencies() {
+			if dep.Type != leeway.GoPackage {
+				continue
+			}
+
 			mod, ok := mods[dep.FullName()]
 			if !ok {
 				log.WithField("dep", dep.FullName()).Warn("did not find go.mod for this package - linking will probably be broken")
