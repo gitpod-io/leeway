@@ -17,7 +17,7 @@ import (
 
 // LinkGoModules produces the neccesary "replace"ments in all of the package's
 // go.mod files, s.t. the packages link in the workspace/work with Go's tooling in-situ.
-func LinkGoModules(workspace *leeway.Workspace) error {
+func LinkGoModules(workspace *leeway.Workspace, target *leeway.Package) error {
 	mods, err := collectReplacements(workspace)
 	if err != nil {
 		return err
@@ -25,6 +25,9 @@ func LinkGoModules(workspace *leeway.Workspace) error {
 
 	for _, p := range workspace.Packages {
 		if p.Type != leeway.GoPackage {
+			continue
+		}
+		if target != nil && p.FullName() != target.FullName() {
 			continue
 		}
 

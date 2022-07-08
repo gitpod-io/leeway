@@ -16,9 +16,10 @@ var linkCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		_, pkg, _, _ := getTarget(args, false)
 
 		if ok, _ := cmd.Flags().GetBool("go-link"); ok {
-			err = linker.LinkGoModules(&ws)
+			err = linker.LinkGoModules(&ws, pkg)
 			if err != nil {
 				return err
 			}
