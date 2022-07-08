@@ -75,6 +75,19 @@ func linkGoModule(dst *leeway.Package, mods []goModule) error {
 		return err
 	}
 
+	for _, rep := range gomod.Replace {
+		if ok, tpe := isLeewayReplace(rep); !ok || tpe == leewayReplaceIgnore {
+			continue
+		}
+
+		log.WithField("replace", rep).Debug("dropping replace")
+		err = gomod.DropReplace(rep.Old.Path, rep.Old.Version)
+		if err != nil {
+			return err
+		}
+	}
+	gomod.Cleanup()
+
 	for _, mod := range mods {
 		relpath, err := filepath.Rel(filepath.Dir(goModFn), mod.OriginPath)
 		if err != nil {
