@@ -29,7 +29,7 @@ packages:
     type: generic
     config:
       commands:
-        - ["curl", "-OL", "https://github.com/goreleaser/goreleaser/releases/download/v0.166.2/goreleaser_Linux_x86_64.tar.gz"]
+        - ["curl", "-OL", "https://github.com/goreleaser/goreleaser/releases/download/v1.10.3/goreleaser_Linux_x86_64.tar.gz"]
         - ["tar", "xzf", "goreleaser_Linux_x86_64.tar.gz"]
         - ["rm", "goreleaser_Linux_x86_64.tar.gz"]
 scripts:
