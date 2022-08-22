@@ -18,7 +18,7 @@ jobs:
       - name: Setup Golang
         uses: actions/setup-go@v1
         with:
-          go-version: '1.17'
+          go-version: '1.19'
       - name: Download all Go modules
         run: |
           go mod download
@@ -36,7 +36,7 @@ jobs:
       - name: Setup Golang
         uses: actions/setup-go@v1
         with:
-          go-version: '1.17'
+          go-version: '1.19'
       - name: Restore go build cache
         uses: actions/cache@v1
         with:
@@ -53,9 +53,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v2
+        uses: golangci/golangci-lint-action
         with:
-          version: v1.39.0
           args: --timeout 5m
 
   test-go:
@@ -75,7 +74,7 @@ jobs:
       - name: Setup Golang
         uses: actions/setup-go@v1
         with:
-          go-version: '1.17'
+          go-version: '1.19'
       - name: Restore go build cache
         uses: actions/cache@v1
         with:
@@ -109,7 +108,7 @@ jobs:
       - name: Setup Golang
         uses: actions/setup-go@v1
         with:
-          go-version: '1.17'
+          go-version: '1.19'
       - name: Restore go build cache
         uses: actions/cache@v1
         with:
