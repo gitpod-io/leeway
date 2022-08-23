@@ -2,11 +2,11 @@ name: Unit tests
 on:
   push:
     branches:
-      - 'master'
+      - 'main'
       - 'v*'
   pull_request:
     branches:
-      - 'master'
+      - 'main'
 
 jobs:
   check-go:
@@ -53,7 +53,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action
+        uses: golangci/golangci-lint-action@v3
         with:
           args: --timeout 5m
 
