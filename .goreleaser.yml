@@ -1,7 +1,5 @@
 before:
   hooks:
-    - go install github.com/GeertJohan/go.rice/rice
-    - go mod download
     - go generate ./...
 builds:
 - env:
