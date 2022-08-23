@@ -1,5 +1,5 @@
 //go:generate bash -c "cd web && yarn install && yarn build"
-//go:generate bash -c "go install github.com/GeertJohan/go.rice/rice && rice embed-go"
+//go:generate bash -c "go install github.com/GeertJohan/go.rice/rice@v1.0.2 && rice embed-go"
 
 package graphview
 
