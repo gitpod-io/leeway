@@ -23,6 +23,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install rice
+        run: |
+          go install github.com/GeertJohan/go.rice/rice
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v3
         with:
