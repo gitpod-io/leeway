@@ -13,7 +13,8 @@ ports:
 tasks:
 - init: |
     git config core.hooksPath .githooks;
-    go get -v ./... && go generate -v ./...
+    go mod download
+    go generate -v ./...
 vscode:
   extensions:
     - golang.go
