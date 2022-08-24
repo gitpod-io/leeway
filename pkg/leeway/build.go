@@ -1158,13 +1158,14 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	if cfg.Dockerfile == "" {
 		return nil, xerrors.Errorf("dockerfile is required")
 	}
+
 	dockerfile := filepath.Join(p.C.Origin, cfg.Dockerfile)
 	if _, err := os.Stat(dockerfile); os.IsNotExist(err) {
 		return nil, err
 	}
 
 	var buildCommands [][]string
-	buildCommands = append(buildCommands, []string{"cp", cfg.Dockerfile, "Dockerfile"})
+	buildCommands = append(buildCommands, []string{"cp", dockerfile, "Dockerfile"})
 	for _, dep := range p.GetDependencies() {
 		fn, exists := buildctx.LocalCache.Location(dep)
 		if !exists {
