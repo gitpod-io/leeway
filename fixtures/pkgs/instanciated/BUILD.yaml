@@ -4,6 +4,12 @@ packages:
     config:
       commands:
         - ["echo", "${message}"]
+  - name: rabbit-hole
+    type: generic
+    deps:
+      - ref: :variant
+        args:
+          message: "${passingThrough}"
   - name: all
     type: generic
     deps:
@@ -15,3 +21,6 @@ packages:
         alias: world
         args:
           message: world
+      - ref: :rabbit-hole
+        args:
+          passingThrough: awesome

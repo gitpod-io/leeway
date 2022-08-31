@@ -94,18 +94,15 @@ func rawReplaceBuildArguments(fc []byte, args Arguments) []byte {
 
 // replateBuildArguments marshals the package config to YAML and replaces the given arguments with their corresponding
 // value. If the arg has no corresponding value, the argument is not changed.
-func replaceBuildArguments(pkg *Package, args Arguments) (fc []byte, err error) {
+func replaceBuildArguments(pkg *Package, args Arguments) (err error) {
 	type configOnlyHelper struct {
 		Config PackageConfig `yaml:"config"`
 	}
-	cfgonly := configOnlyHelper{Config: pkg.Config}
-	fc, err = yaml.Marshal(cfgonly)
+	fc, err := yaml.Marshal(configOnlyHelper{Config: pkg.Config})
 	if err != nil {
 		return
 	}
-
 	fc = rawReplaceBuildArguments(fc, args)
-
 	cfg, err := unmarshalTypeDependentConfig(pkg.Type, func(out interface{}) error {
 		return yaml.Unmarshal(fc, out)
 	})
@@ -113,6 +110,22 @@ func replaceBuildArguments(pkg *Package, args Arguments) (fc []byte, err error) 
 		return
 	}
 	pkg.Config = cfg
+
+	var deps struct {
+		Deps []packageDependencyOrString `yaml:"deps"`
+	}
+	deps.Deps = pkg.Dependencies
+	fc, err = yaml.Marshal(deps)
+	if err != nil {
+		return
+	}
+	fc = rawReplaceBuildArguments(fc, args)
+	err = yaml.Unmarshal(fc, &deps)
+	if err != nil {
+		return
+	}
+	pkg.Dependencies = deps.Deps
+
 	return
 }
 
@@ -194,7 +207,7 @@ type packageDependency struct {
 
 // Package is a single buildable artifact within a component
 type Package struct {
-	C *Component
+	C *Component `json:"-"`
 
 	// computing the version is expensive - let's cache that
 	versionCache string
@@ -207,7 +220,8 @@ type Package struct {
 	// Instanciated packages are packages which have some of their build args resolved during linking,
 	// i.e. have their values set through the dependant package. Variant packages are always copies
 	// of their original definitions. This field carries the full name of the original package.
-	InstanceOf string `yaml:"-"`
+	InstanceOf   string `yaml:"-"`
+	InstanceArgs map[string]string
 
 	dependencies     []*Package
 	layout           map[*Package]string
@@ -230,21 +244,26 @@ func (p *Package) link(idx map[string]*Package) error {
 			return PackageNotFoundErr{dep.Ref}
 		}
 
+		err := deppkg.link(idx)
+		if err != nil {
+			return err
+		}
+
 		// This dependency has arguments which we need to replace in the dependency package itself.
 		// To this end we copy the package, replace the build arg and make the new (virtual) package
 		// fit for purpose.
 		if len(dep.Args) > 0 {
 			cpy := *deppkg
-			fc, err := replaceBuildArguments(&cpy, dep.Args)
+			err := replaceBuildArguments(&cpy, dep.Args)
 			if err != nil {
 				return err
 			}
 			if dep.Alias != "" {
 				cpy.Name = dep.Alias
 			}
-			cpy.Definition = fc
 			cpy.versionCache = ""
 			cpy.InstanceOf = deppkg.FullName()
+			cpy.InstanceArgs = dep.Args
 
 			deppkg = &cpy
 			p.C.Packages = append(p.C.Packages, deppkg)
@@ -888,7 +907,7 @@ func (p *Package) resolveBuiltinVariables() error {
 		}
 	}
 
-	_, err = replaceBuildArguments(p, builtinArgs)
+	err = replaceBuildArguments(p, builtinArgs)
 	if err != nil {
 		return err
 	}
@@ -969,7 +988,7 @@ func (p *Package) ContentManifest() ([]string, error) {
 // WriteVersionManifest writes the manifest whoose hash is the version of this package (see Version())
 func (p *Package) WriteVersionManifest(out io.Writer) error {
 	if p.dependencies == nil {
-		return xerrors.Errorf("package is not linked")
+		return xerrors.Errorf("package %s is not linked", p.FullName())
 	}
 
 	envhash, err := p.C.W.EnvironmentManifest.Hash()
@@ -1001,6 +1020,9 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 
 	bundle = append(bundle, fmt.Sprintf("environment: %s\n", envhash))
 	bundle = append(bundle, fmt.Sprintf("definition: %s\n", defhash))
+	for k, v := range p.InstanceArgs {
+		bundle = append(bundle, fmt.Sprintf("instance-arg %s=%s\n", k, v))
+	}
 	for _, argdep := range p.ArgumentDependencies {
 		bundle = append(bundle, fmt.Sprintf("arg %s\n", argdep))
 	}
