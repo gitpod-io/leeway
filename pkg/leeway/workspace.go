@@ -659,7 +659,7 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 
 	builderFN := strings.TrimSuffix(path, ".yaml") + ".js"
 	if _, err := os.Stat(builderFN); err == nil {
-		addFC, err := runPackageBuilder(builderFN)
+		addFC, err := runPackageBuilder(builderFN, args)
 		if err != nil {
 			return Component{}, err
 		}
@@ -896,7 +896,7 @@ func mergeEnv(pkg *Package, src []string) error {
 	return nil
 }
 
-func runPackageBuilder(fn string) (fc []map[string]interface{}, err error) {
+func runPackageBuilder(fn string, args Arguments) (fc []map[string]interface{}, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("failed to run package builder script at %s: %w", fn, err)
@@ -909,6 +909,10 @@ func runPackageBuilder(fn string) (fc []map[string]interface{}, err error) {
 	}
 
 	vm := goja.New()
+	err = vm.Set("args", args)
+	if err != nil {
+		return nil, err
+	}
 	_, err = vm.RunString(string(prog))
 	if err != nil {
 		return nil, err

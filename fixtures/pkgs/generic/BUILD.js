@@ -9,7 +9,7 @@ for(let i = 0; i < 10; i++) {
     type: "generic",
     config: {
       commands: [
-        ["echo", "hello from "+i]
+        ["echo", args.msg + " hello from "+i]
       ]
     }
   });

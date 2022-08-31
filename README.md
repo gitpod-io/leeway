@@ -195,6 +195,9 @@ config:
 ## Dynaimc package scripts
 Packages can be dynamically produced within a component using a dynamic package script named `BUILD.js`. This ECMAScript 5.1 file is executed using [Goja](https://github.com/dop251/goja) and produces a `packages` array which contains the package struct much like they'd exist within the `BUILD.yaml`. For example:
 
+Leeway interacts with the script using global variables, specifically:
+- `args` [input] a JavaScript object containing the build arguments which have explicitely been passed to leeway.
+- `packages` [output] where the script produces an array of package structures akin to those found in a `BUILD.yaml` file.
 
 <table>
 <tr>
@@ -214,7 +217,7 @@ for(let i = 0; i < 5; i++) {
     type: "generic",
     config: {
       commands: [
-        ["echo", "hello from "+i]
+        ["echo", args.msg + ": hello from "+i]
       ]
     }
   });
@@ -244,17 +247,17 @@ pacakages:
   type: generic
   config:
     commands:
-      - ["echo", "hello from 1"]
+      - ["echo", "${msg}: hello from 1"]
 - name: hello-2
   type: generic
   config:
     commands:
-      - ["echo", "hello from 2"]
+      - ["echo", "${msg}: hello from 2"]
 - name: hello-3
   type: generic
   config:
     commands:
-      - ["echo", "hello from 3"]
+      - ["echo", "${msg}: hello from 3"]
 ...
 ```
 
