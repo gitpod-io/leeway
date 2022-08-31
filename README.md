@@ -50,33 +50,6 @@ scripts:
 - ...
 ```
 
-## Package
-A package is an entry in a `BUILD.yaml` in the `packages` section. All packages share the following fields:
-```YAML
-# name is the component-wide unique name of this package
-name: must-not-contain-spaces
-# Package type must be one of: go, yarn, docker, generic
-type: generic
-# Sources list all sources of this package. Entries can be double-star globs and are relative to the component root.
-# Avoid listing sources outside the component folder.
-srcs:
-- "**/*.yaml"
-- "glob/**/path"
-# Deps list dependencies to other packages which must be built prior to building this package. How these dependencies are made
-# available during build depends on the package type.
-deps:
-- some/other:package
-# Argdeps makes build arguments version relevant. I.e. if the value of a build arg listed here changes, so does the package version.
-argdeps:
-- someBuildArg
-# Env is a list of key=value pair environment variables available during package build
-env:
-- CGO_ENABLED=0
-# Config configures the package build depending on the package type. See below for details
-config:
-  ...
-```
-
 ## Script
 Scripts are a great way to automate tasks during development time (think [`yarn scripts`](https://classic.yarnpkg.com/en/docs/package-json#toc-scripts)).
 Unlike packages they do not run in isolation by default, but have access to the original workspace.
@@ -113,13 +86,32 @@ script: |
   echo "build args work to: ${myBuildArg}"
 ```
 
-### Build arguments
-
-In a package definition one can use _build arguments_. Build args have the form of `${argumentName}` and are string-replaced when the package is loaded.
-**It's advisable to use build args only within the `config` section of packages**. Constants and built-in build args do not even work outside of the config section.
-
-Leeway supports built-in build arguments:
-- `__pkg_version` resolves to the leeway version hash of a component.
+## Package
+A package is an entry in a `BUILD.yaml` in the `packages` section. All packages share the following fields:
+```YAML
+# name is the component-wide unique name of this package
+name: must-not-contain-spaces
+# Package type must be one of: go, yarn, docker, generic
+type: generic
+# Sources list all sources of this package. Entries can be double-star globs and are relative to the component root.
+# Avoid listing sources outside the component folder.
+srcs:
+- "**/*.yaml"
+- "glob/**/path"
+# Deps list dependencies to other packages which must be built prior to building this package. How these dependencies are made
+# available during build depends on the package type.
+deps:
+- some/other:package
+# Argdeps makes build arguments version relevant. I.e. if the value of a build arg listed here changes, so does the package version.
+argdeps:
+- someBuildArg
+# Env is a list of key=value pair environment variables available during package build
+env:
+- CGO_ENABLED=0
+# Config configures the package build depending on the package type. See below for details
+config:
+  ...
+```
 
 ### Go packages
 ```YAML
@@ -199,6 +191,90 @@ config:
   - ["echo", "hello world"]
   - ["sh", "-c", "ls *"]
 ```
+
+## Build arguments
+
+In a package definition one can use _build arguments_. Build args have the form of `${argumentName}` and are string-replaced when the package is loaded.
+**It's advisable to use build args only within the `config` section of packages**. Constants and built-in build args do not even work outside of the config section.
+
+Leeway supports built-in build arguments:
+- `__pkg_version` resolves to the leeway version hash of a component.
+- `__git_commit` contains the current Git commit if the build is executed from within a Git working copy. If this variable is used and the build is not executed from within a Git working copy the variable resolution will fail.
+
+### Package Instantiation
+Packages can pass build arguments to their dependencies - a process called **instantiation** because this process creates a virtual copy the dependency where the passed in arguments are reolved. This is useful to reduce the need to copy package defintions. 
+
+For example:
+
+<table>
+<tr>
+<td valign="top">
+
+**With Instantiation:**
+```YAML
+packages:
+- name: parent
+  type: generic
+  deps:
+    - ref: :oneChild
+      args:
+        customer: foobar
+    - ref: :otherChild
+      alias: helloWorld
+      args:
+        message: hello world
+    - ref: :otherChild
+      alias: layzFox
+      args:
+        message: lazy fox
+- name: oneChild
+  type: generic
+  config:
+    commands:
+      - ["echo", "working for ${customer}"]
+- name: otherChild
+  type: generic
+  config:
+    commands:
+      - ["echo", "message of the day ${message}"]
+```
+
+</td>
+<td valign="top">
+
+**Without Instantiation:**
+```YAML
+packages:
+- name: parent
+  type: generic
+  deps:
+    - :oneChildFoobar
+    - :helloWorld
+    - :layzFox
+- name: oneChildFoobar
+  type: generic
+  config:
+    commands:
+      - ["echo", "working for foobar"]
+- name: helloWorld
+  type: generic
+  config:
+    commands:
+      - ["echo", "message of the day hello world"]
+- name: layzFox
+  type: generic
+  config:
+    commands:
+      - ["echo", "message of the day lazy fox"]
+```
+
+</td>
+</tr>
+</table>
+
+**Notice**
+- the duplication of package definitions without instantiation. 
+- the use of the `alias` field when refering to the same dependency multiple times. Aliases only work with instantiated dependencies. Refering to the same dependency multiple times without an alias will cause an error.
 
 ## Package Variants
 Leeway supports build-time variance through "package variants". Those variants are defined on the workspace level and can modify the list of sources, environment variables and config of packages.

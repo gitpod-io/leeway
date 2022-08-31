@@ -133,10 +133,11 @@ func absPackageName(workspace leeway.Workspace, name string) string {
 }
 
 type packageMetadataDescription struct {
-	Name      string `json:"name" yaml:"name"`
-	FullName  string `json:"fullName" yaml:"fullName"`
-	Version   string `json:"version" yaml:"version"`
-	Emphemral bool   `json:"ephemeral" yaml:"ephemeral"`
+	Name       string `json:"name" yaml:"name"`
+	FullName   string `json:"fullName" yaml:"fullName"`
+	Version    string `json:"version" yaml:"version"`
+	Emphemral  bool   `json:"ephemeral" yaml:"ephemeral"`
+	InstanceOf string `json:"instanceOf" yaml:"instanceOf"`
 }
 
 func newMetadataDescription(pkg *leeway.Package) packageMetadataDescription {
@@ -146,10 +147,11 @@ func newMetadataDescription(pkg *leeway.Package) packageMetadataDescription {
 	}
 
 	return packageMetadataDescription{
-		Name:      pkg.Name,
-		FullName:  pkg.FullName(),
-		Version:   version,
-		Emphemral: pkg.Ephemeral,
+		Name:       pkg.Name,
+		FullName:   pkg.FullName(),
+		Version:    version,
+		Emphemral:  pkg.Ephemeral,
+		InstanceOf: pkg.InstanceOf,
 	}
 }
 
@@ -264,7 +266,7 @@ Version Relevant Arguments:
 {{ if .Dependencies -}}
 Dependencies:
 {{- range $k, $v := .Dependencies }}
-{{"\t"}}{{ $v.FullName -}}{{"\t"}}{{ $v.Version -}}
+{{"\t"}}{{ $v.FullName -}}{{"\t"}}{{ $v.Version -}}{{ if $v.InstanceOf }}{{"\t"}}(instanciated from {{$v.InstanceOf}}){{ end -}}
 {{ end }}
 Layout:
 {{- range $k, $v := .Layout }}

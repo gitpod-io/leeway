@@ -1,0 +1,17 @@
+packages:
+  - name: variant
+    type: generic
+    config:
+      commands:
+        - ["echo", "${message}"]
+  - name: all
+    type: generic
+    deps:
+      - ref: :variant
+        alias: hello
+        args:
+          message: hello
+      - ref: :variant
+        alias: world
+        args:
+          message: world

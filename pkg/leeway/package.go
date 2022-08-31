@@ -76,9 +76,9 @@ func FindUnresolvedArguments(pkg *Package) ([]string, error) {
 	return res, nil
 }
 
-// replaceBuildArguments replaces all build arguments in the byte stream (e.g. ${thisIsAnArg}) with its corresponding
+// rawReplaceBuildArguments replaces all build arguments in the byte stream (e.g. ${thisIsAnArg}) with its corresponding
 // value from args. If args has no corresponding value, the argument is not changed.
-func replaceBuildArguments(fc []byte, args Arguments) []byte {
+func rawReplaceBuildArguments(fc []byte, args Arguments) []byte {
 	return buildArgRegexp.ReplaceAllFunc(fc, func(match []byte) []byte {
 		arg := string(match)
 		arg = strings.TrimPrefix(arg, "${")
@@ -90,6 +90,30 @@ func replaceBuildArguments(fc []byte, args Arguments) []byte {
 		}
 		return []byte(val)
 	})
+}
+
+// replateBuildArguments marshals the package config to YAML and replaces the given arguments with their corresponding
+// value. If the arg has no corresponding value, the argument is not changed.
+func replaceBuildArguments(pkg *Package, args Arguments) (fc []byte, err error) {
+	type configOnlyHelper struct {
+		Config PackageConfig `yaml:"config"`
+	}
+	cfgonly := configOnlyHelper{Config: pkg.Config}
+	fc, err = yaml.Marshal(cfgonly)
+	if err != nil {
+		return
+	}
+
+	fc = rawReplaceBuildArguments(fc, args)
+
+	cfg, err := unmarshalTypeDependentConfig(pkg.Type, func(out interface{}) error {
+		return yaml.Unmarshal(fc, out)
+	})
+	if err != nil {
+		return
+	}
+	pkg.Config = cfg
+	return
 }
 
 // Component contains a single component that we wish to build
@@ -131,15 +155,41 @@ func (n PackageNotFoundErr) Error() string {
 }
 
 type packageInternal struct {
-	Name                 string            `yaml:"name"`
-	Type                 PackageType       `yaml:"type"`
-	Sources              []string          `yaml:"srcs"`
-	Dependencies         []string          `yaml:"deps"`
-	Layout               map[string]string `yaml:"layout"`
-	ArgumentDependencies []string          `yaml:"argdeps"`
-	Environment          []string          `yaml:"env"`
-	Ephemeral            bool              `yaml:"ephemeral"`
-	PreparationCommands  [][]string        `yaml:"prep"`
+	Name                 string                      `yaml:"name"`
+	Type                 PackageType                 `yaml:"type"`
+	Sources              []string                    `yaml:"srcs"`
+	Dependencies         []packageDependencyOrString `yaml:"deps"`
+	Layout               map[string]string           `yaml:"layout"`
+	ArgumentDependencies []string                    `yaml:"argdeps"`
+	Environment          []string                    `yaml:"env"`
+	Ephemeral            bool                        `yaml:"ephemeral"`
+	PreparationCommands  [][]string                  `yaml:"prep"`
+}
+
+type packageDependencyOrString packageDependency
+
+func (dep *packageDependencyOrString) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var ref string
+	if err := unmarshal(&ref); err == nil {
+		dep.Ref = ref
+		return nil
+	}
+
+	var res packageDependency
+	err := unmarshal(&res)
+	if err != nil {
+		return err
+	}
+	dep.Args = res.Args
+	dep.Ref = res.Ref
+	dep.Alias = res.Alias
+	return nil
+}
+
+type packageDependency struct {
+	Ref   string    `yaml:"ref"`
+	Args  Arguments `yaml:"args"`
+	Alias string    `yaml:"alias,omitempty"`
 }
 
 // Package is a single buildable artifact within a component
@@ -153,6 +203,11 @@ type Package struct {
 	Config PackageConfig `yaml:"config"`
 	// Definition is the raw package definition YAML
 	Definition []byte `yaml:"-"`
+
+	// Instanciated packages are packages which have some of their build args resolved during linking,
+	// i.e. have their values set through the dependant package. Variant packages are always copies
+	// of their original definitions. This field carries the full name of the original package.
+	InstanceOf string `yaml:"-"`
 
 	dependencies     []*Package
 	layout           map[*Package]string
@@ -170,18 +225,54 @@ func (p *Package) link(idx map[string]*Package) error {
 	p.dependencies = make([]*Package, len(p.Dependencies))
 	p.layout = make(map[*Package]string)
 	for i, dep := range p.Dependencies {
-		deppkg, ok := idx[dep]
+		deppkg, ok := idx[dep.Ref]
 		if !ok {
-			return PackageNotFoundErr{dep}
+			return PackageNotFoundErr{dep.Ref}
 		}
+
+		// This dependency has arguments which we need to replace in the dependency package itself.
+		// To this end we copy the package, replace the build arg and make the new (virtual) package
+		// fit for purpose.
+		if len(dep.Args) > 0 {
+			cpy := *deppkg
+			fc, err := replaceBuildArguments(&cpy, dep.Args)
+			if err != nil {
+				return err
+			}
+			if dep.Alias != "" {
+				cpy.Name = dep.Alias
+			}
+			cpy.Definition = fc
+			cpy.versionCache = ""
+			cpy.InstanceOf = deppkg.FullName()
+
+			deppkg = &cpy
+			p.C.Packages = append(p.C.Packages, deppkg)
+			p.C.W.Packages[deppkg.FullName()] = deppkg
+		}
+
 		p.dependencies[i] = deppkg
 
 		// if the user hasn't specified a layout, tie it down at this point
-		p.layout[deppkg], ok = p.Layout[dep]
+		p.layout[deppkg], ok = p.Layout[dep.Ref]
 		if !ok {
 			p.layout[deppkg] = deppkg.FilesystemSafeName()
 		}
 	}
+
+	deps := make(map[string]struct{}, len(p.dependencies))
+	for _, dep := range p.dependencies {
+		_, exists := deps[dep.FullName()]
+		if exists {
+			var help string
+			if dep.InstanceOf != "" {
+				help = fmt.Sprintf("This is an instantiated dependency - please add an alias in %s/BUILD.yaml, e.g.\n- name: %s\n  deps:\n  - ref: %s\n    alias: someName\n    args:\n      ...\n\n", p.C.Origin, p.Name, dep.FullName())
+			}
+			return fmt.Errorf("dependency \"%s\" exists more than once. %s", dep.FullName(), help)
+		}
+		deps[dep.FullName()] = struct{}{}
+	}
+
 	return nil
 }
 
@@ -797,24 +888,10 @@ func (p *Package) resolveBuiltinVariables() error {
 		}
 	}
 
-	type configOnlyHelper struct {
-		Config PackageConfig `yaml:"config"`
-	}
-	cfgonly := configOnlyHelper{Config: p.Config}
-	fc, err := yaml.Marshal(cfgonly)
+	_, err = replaceBuildArguments(p, builtinArgs)
 	if err != nil {
 		return err
 	}
-
-	fc = replaceBuildArguments(fc, builtinArgs)
-
-	cfg, err := unmarshalTypeDependentConfig(p.Type, func(out interface{}) error {
-		return yaml.Unmarshal(fc, out)
-	})
-	if err != nil {
-		return err
-	}
-	p.Config = cfg
 
 	return nil
 }
