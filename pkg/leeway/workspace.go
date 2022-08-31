@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dop251/goja"
 	"github.com/imdario/mergo"
 	"github.com/in-toto/in-toto-golang/in_toto"
 	"github.com/minio/highwayhash"
@@ -656,6 +657,36 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 		err = nil
 	}
 
+	builderFN := strings.TrimSuffix(path, ".yaml") + ".js"
+	if _, err := os.Stat(builderFN); err == nil {
+		addFC, err := runPackageBuilder(builderFN)
+		if err != nil {
+			return Component{}, err
+		}
+		for _, p := range addFC {
+			fc, err := yaml.Marshal(p)
+			if err != nil {
+				return Component{}, err
+			}
+			log.WithField("fc", string(fc)).WithField("component", comp.Name).Debug("adding dynamic package")
+
+			var nd yaml.Node
+			err = yaml.Unmarshal(fc, &nd)
+			if err != nil {
+				return Component{}, err
+			}
+
+			var pkg Package
+			err = yaml.Unmarshal(fc, &pkg)
+			if err != nil {
+				return Component{}, err
+			}
+
+			comp.Packages = append(comp.Packages, &pkg)
+			rawcomp.Packages = append(rawcomp.Packages, nd)
+		}
+	}
+
 	for i, pkg := range comp.Packages {
 		pkg.C = &comp
 		if pkg.Type == "typescript" {
@@ -863,4 +894,33 @@ func mergeEnv(pkg *Package, src []string) error {
 		pkg.Environment = append(pkg.Environment, fmt.Sprintf("%s=%s", k, v))
 	}
 	return nil
+}
+
+func runPackageBuilder(fn string) (fc []map[string]interface{}, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("failed to run package builder script at %s: %w", fn, err)
+		}
+	}()
+
+	prog, err := os.ReadFile(fn)
+	if err != nil {
+		return nil, err
+	}
+
+	vm := goja.New()
+	_, err = vm.RunString(string(prog))
+	if err != nil {
+		return nil, err
+	}
+
+	var res []map[string]interface{}
+	err = vm.ExportTo(vm.Get("packages"), &res)
+	if err != nil {
+		return nil, err
+	}
+
+	log.WithField("res", res).WithField("fn", fn).Debug("ran package builder script")
+
+	return res, nil
 }
