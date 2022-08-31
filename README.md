@@ -50,33 +50,6 @@ scripts:
 - ...
 ```
 
-## Package
-A package is an entry in a `BUILD.yaml` in the `packages` section. All packages share the following fields:
-```YAML
-# name is the component-wide unique name of this package
-name: must-not-contain-spaces
-# Package type must be one of: go, yarn, docker, generic
-type: generic
-# Sources list all sources of this package. Entries can be double-star globs and are relative to the component root.
-# Avoid listing sources outside the component folder.
-srcs:
-- "**/*.yaml"
-- "glob/**/path"
-# Deps list dependencies to other packages which must be built prior to building this package. How these dependencies are made
-# available during build depends on the package type.
-deps:
-- some/other:package
-# Argdeps makes build arguments version relevant. I.e. if the value of a build arg listed here changes, so does the package version.
-argdeps:
-- someBuildArg
-# Env is a list of key=value pair environment variables available during package build
-env:
-- CGO_ENABLED=0
-# Config configures the package build depending on the package type. See below for details
-config:
-  ...
-```
-
 ## Script
 Scripts are a great way to automate tasks during development time (think [`yarn scripts`](https://classic.yarnpkg.com/en/docs/package-json#toc-scripts)).
 Unlike packages they do not run in isolation by default, but have access to the original workspace.
@@ -113,13 +86,32 @@ script: |
   echo "build args work to: ${myBuildArg}"
 ```
 
-### Build arguments
-
-In a package definition one can use _build arguments_. Build args have the form of `${argumentName}` and are string-replaced when the package is loaded.
-**It's advisable to use build args only within the `config` section of packages**. Constants and built-in build args do not even work outside of the config section.
-
-Leeway supports built-in build arguments:
-- `__pkg_version` resolves to the leeway version hash of a component.
+## Package
+A package is an entry in a `BUILD.yaml` in the `packages` section. All packages share the following fields:
+```YAML
+# name is the component-wide unique name of this package
+name: must-not-contain-spaces
+# Package type must be one of: go, yarn, docker, generic
+type: generic
+# Sources list all sources of this package. Entries can be double-star globs and are relative to the component root.
+# Avoid listing sources outside the component folder.
+srcs:
+- "**/*.yaml"
+- "glob/**/path"
+# Deps list dependencies to other packages which must be built prior to building this package. How these dependencies are made
+# available during build depends on the package type.
+deps:
+- some/other:package
+# Argdeps makes build arguments version relevant. I.e. if the value of a build arg listed here changes, so does the package version.
+argdeps:
+- someBuildArg
+# Env is a list of key=value pair environment variables available during package build
+env:
+- CGO_ENABLED=0
+# Config configures the package build depending on the package type. See below for details
+config:
+  ...
+```
 
 ### Go packages
 ```YAML
@@ -199,6 +191,87 @@ config:
   - ["echo", "hello world"]
   - ["sh", "-c", "ls *"]
 ```
+
+## Dynaimc package scripts
+Packages can be dynamically produced within a component using a dynamic package script named `BUILD.js`. This ECMAScript 5.1 file is executed using [Goja](https://github.com/dop251/goja) and produces a `packages` array which contains the package struct much like they'd exist within the `BUILD.yaml`. For example:
+
+
+<table>
+<tr>
+<td valign="top">
+
+`BUILD.js` file
+
+```JavaScript
+let packages = [];
+
+let deps = [];
+for(let i = 0; i < 5; i++) {
+  const name = "hello-"+i;
+  deps.push(name);
+  packages.push({
+    name: name,
+    type: "generic",
+    config: {
+      commands: [
+        ["echo", "hello from "+i]
+      ]
+    }
+  });
+}
+
+packages.push({
+  name: "all",
+  type: "generic",
+  deps: deps.map(d => ":" + d),
+})
+```
+</td>
+<td>
+
+Equivalent `BUILD.yaml`
+```YAML
+pacakages:
+- name: all
+  type: generic
+  deps:
+    - hello-1
+    - hello-2
+    - hello-3
+    - hello-4
+    - hello-5
+- name: hello-1
+  type: generic
+  config:
+    commands:
+      - ["echo", "hello from 1"]
+- name: hello-2
+  type: generic
+  config:
+    commands:
+      - ["echo", "hello from 2"]
+- name: hello-3
+  type: generic
+  config:
+    commands:
+      - ["echo", "hello from 3"]
+...
+```
+
+</td>
+</tr>
+</table>
+
+> **Note** that for a `BUILD.js` to become effective/be recodnized there needs to a (possibly empty) `BUILD.yaml` in the same directory.
+
+## Build arguments
+
+In a package definition one can use _build arguments_. Build args have the form of `${argumentName}` and are string-replaced when the package is loaded.
+**It's advisable to use build args only within the `config` section of packages**. Constants and built-in build args do not even work outside of the config section.
+
+Leeway supports built-in build arguments:
+- `__pkg_version` resolves to the leeway version hash of a component.
+- `__git_commit` contains the current Git commit if the build is executed from within a Git working copy. If this variable is used and the build is not executed from within a Git working copy the variable resolution will fail.
 
 ## Package Variants
 Leeway supports build-time variance through "package variants". Those variants are defined on the workspace level and can modify the list of sources, environment variables and config of packages.
