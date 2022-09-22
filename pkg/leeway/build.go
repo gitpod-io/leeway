@@ -1105,18 +1105,13 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		commands = append(commands, []string{"gokart", "scan", "-i", gokart.AnalyzerFilename, "-x"})
 	}
 	if !cfg.DontTest && !buildctx.DontTest {
-		testArgs := []string{goCommand, "test", "-v"}
+		testCommand := []string{goCommand, "test", "-v"}
 		if buildctx.buildOptions.CoverageOutputPath != "" {
-			testArgs = append(testArgs, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
+			testCommand = append(testCommand, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
 		}
+		testCommand = append(testCommand, "./...")
 
-		testArgs = append(testArgs, "./...")
-
-		commands = append(commands, [][]string{
-			// we build the test binaries in addition to running the tests regularly, so that downstream packages can run the tests in different environments
-			{"sh", "-c", "mkdir _tests; for i in $(" + goCommand + " list ./...); do " + goCommand + " test -c $i; [ -e $(basename $i).test ] && mv $(basename $i).test _tests; true; done"},
-			testArgs,
-		}...)
+		commands = append(commands, testCommand)
 	}
 
 	var buildCmd []string
