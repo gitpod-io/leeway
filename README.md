@@ -161,10 +161,6 @@ config:
 ```
 
 ### Docker packages
-Docker packages have a default "retagging" behaviour: even when a Docker package is built already, i.e. it's leeway version didn't change,
-leeway will ensure that an image exists with the names specified in the package config. For example, if a Docker package has `leeway/some-package:${version}` specified,
-and `${version}` changes, but otherwise the package has been built before, leeway will "re-tag" the previously built image to be available under `leeway/some-package:${version}`.
-This behaviour can be disabled using `--dont-retag`.
 ```YAML
 config:
   # Dockerfile is the name of the Dockerfile to build. Automatically added to the package sources.
