@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
@@ -18,13 +21,20 @@ var linkCmd = &cobra.Command{
 		}
 		_, pkg, _, _ := getTarget(args, false)
 
-		if ok, _ := cmd.Flags().GetBool("go-link"); ok {
-			err = linker.LinkGoModules(&ws, pkg)
-			if err != nil {
-				return err
+		switch val, _ := cmd.Flags().GetString("go-link"); val {
+		case "auto":
+			if _, ferr := os.Stat(filepath.Join(ws.Origin, "go.work")); ferr == nil {
+				err = linker.LinkGoWorkspace(&ws)
+			} else {
+				err = linker.LinkGoModules(&ws, pkg)
 			}
-		} else {
-			log.Info("go module linking disabled")
+		case "module":
+			err = linker.LinkGoModules(&ws, pkg)
+		case "workspace":
+			err = linker.LinkGoWorkspace(&ws)
+		}
+		if err != nil {
+			return err
 		}
 
 		if ok, _ := cmd.Flags().GetBool("yarn2-link"); ok {
@@ -44,5 +54,5 @@ func init() {
 	rootCmd.AddCommand(linkCmd)
 
 	linkCmd.Flags().Bool("yarn2-link", false, "link yarn packages using yarn2 resolutions")
-	linkCmd.Flags().Bool("go-link", true, "link Go modules")
+	linkCmd.Flags().String("go-link", "auto", "link Go modules or workspace. Valid values are auto, module or workspace")
 }

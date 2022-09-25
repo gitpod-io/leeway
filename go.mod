@@ -18,9 +18,9 @@ require (
 	github.com/segmentio/textio v1.2.0
 	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/cobra v1.2.1
-	golang.org/x/mod v0.5.1
+	golang.org/x/mod v0.6.0-dev.0.20220106191415-9b9b3d81d5e3
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1
+	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
 	sigs.k8s.io/bom v0.1.0
 )
@@ -58,7 +58,7 @@ require (
 	github.com/xanzy/ssh-agent v0.3.0 // indirect
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
 	github.com/zclconf/go-cty v1.8.4 // indirect
-	golang.org/x/crypto v0.0.0-20210421170649-83a5a9bb288b // indirect
+	golang.org/x/crypto v0.0.0-20210921155107-089bfa567519 // indirect
 	golang.org/x/net v0.0.0-20211111160137-58aab5ef257a // indirect
 	golang.org/x/sys v0.0.0-20211116061358-0a5406a5449c // indirect
 	golang.org/x/text v0.3.7 // indirect

@@ -1,6 +1,7 @@
 package linker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,82 @@ import (
 
 	"github.com/gitpod-io/leeway/pkg/leeway"
 )
+
+// LinkGoWorkspace updates a go.work file to include all Go components.
+// Returns an error if `go.work` does not exist yet.
+func LinkGoWorkspace(workspace *leeway.Workspace) error {
+	workFN := filepath.Join(workspace.Origin, "go.work")
+	if _, err := os.Stat(workFN); err != nil {
+		return fmt.Errorf("not a Go workspace: %v", err)
+	}
+
+	// update workspace file
+	fc, err := os.ReadFile(workFN)
+	if err != nil {
+		return err
+	}
+	workFile, err := modfile.ParseWork(workFN, fc, nil)
+	if err != nil {
+		return err
+	}
+
+	for _, use := range workFile.Use {
+		if ok, _ := isLeewayReplace(use.Syntax); ok {
+			err = workFile.DropUse(use.Path)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	goModules := make(map[string]struct{}, len(workspace.Components))
+	for _, pkg := range workspace.Packages {
+		if pkg.Type != leeway.GoPackage {
+			continue
+		}
+		fn := strings.TrimPrefix(strings.TrimPrefix(pkg.C.Origin, workspace.Origin), "/")
+		goModules[fn] = struct{}{}
+	}
+	sortedPaths := make([]string, 0, len(workspace.Components))
+	for p := range goModules {
+		sortedPaths = append(sortedPaths, p)
+	}
+	sort.Strings(sortedPaths)
+	for _, pth := range sortedPaths {
+		workFile.AddNewUse(pth, "")
+	}
+	for _, use := range workFile.Use {
+		if _, ok := goModules[use.Path]; !ok {
+			continue
+		}
+		if use.Syntax == nil {
+			continue
+		}
+		use.Syntax.InBlock = true
+		use.Syntax.Comments.Suffix = []modfile.Comment{{Token: "// leeway", Suffix: true}}
+	}
+	workFile.SortBlocks()
+	workFile.Cleanup()
+
+	fc = modfile.Format(workFile.Syntax)
+	err = os.WriteFile(workFN, fc, 0644)
+	if err != nil {
+		return err
+	}
+
+	// drop leeway replace from all go.mod files
+	for _, p := range workspace.Packages {
+		if p.Type != leeway.GoPackage {
+			continue
+		}
+
+		err := removeLeewayReplaceRules(p)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
 
 // LinkGoModules produces the neccesary "replace"ments in all of the package's
 // go.mod files, s.t. the packages link in the workspace/work with Go's tooling in-situ.
@@ -58,7 +135,7 @@ func LinkGoModules(workspace *leeway.Workspace, target *leeway.Package) error {
 	return nil
 }
 
-func linkGoModule(dst *leeway.Package, mods []goModule) error {
+func modifyGoMod(dst *leeway.Package, mod func(goModFN string, gomod *modfile.File) error) error {
 	var goModFn string
 	for _, f := range dst.Sources {
 		if strings.HasSuffix(f, "go.mod") {
@@ -78,41 +155,12 @@ func linkGoModule(dst *leeway.Package, mods []goModule) error {
 		return err
 	}
 
-	for _, rep := range gomod.Replace {
-		if ok, tpe := isLeewayReplace(rep); !ok || tpe == leewayReplaceIgnore {
-			continue
-		}
-
-		log.WithField("replace", rep).Debug("dropping replace")
-		err = gomod.DropReplace(rep.Old.Path, rep.Old.Version)
-		if err != nil {
-			return err
-		}
+	err = mod(goModFn, gomod)
+	if err != nil {
+		return err
 	}
 	gomod.Cleanup()
 
-	for _, mod := range mods {
-		relpath, err := filepath.Rel(filepath.Dir(goModFn), mod.OriginPath)
-		if err != nil {
-			return err
-		}
-
-		err = addReplace(gomod, module.Version{Path: mod.Name}, module.Version{Path: relpath}, true, mod.OriginPackage)
-		if err != nil {
-			return err
-		}
-		log.WithField("dst", dst.FullName()).WithField("dep", mod.Name).Debug("linked Go modules")
-	}
-	for _, mod := range mods {
-		for _, r := range mod.Replacements {
-			err = addReplace(gomod, r.Old, r.New, false, mod.OriginPackage)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	gomod.Cleanup()
 	fc, err = gomod.Format()
 	if err != nil {
 		return err
@@ -126,12 +174,61 @@ func linkGoModule(dst *leeway.Package, mods []goModule) error {
 	return nil
 }
 
+func linkGoModule(dst *leeway.Package, mods []goModule) error {
+	err := removeLeewayReplaceRules(dst)
+	if err != nil {
+		return err
+	}
+
+	return modifyGoMod(dst, func(goModFN string, gomod *modfile.File) error {
+		for _, mod := range mods {
+			relpath, err := filepath.Rel(filepath.Dir(goModFN), mod.OriginPath)
+			if err != nil {
+				return err
+			}
+
+			err = addReplace(gomod, module.Version{Path: mod.Name}, module.Version{Path: relpath}, true, mod.OriginPackage)
+			if err != nil {
+				return err
+			}
+			log.WithField("dst", dst.FullName()).WithField("dep", mod.Name).Debug("linked Go modules")
+		}
+		for _, mod := range mods {
+			for _, r := range mod.Replacements {
+				err = addReplace(gomod, r.Old, r.New, false, mod.OriginPackage)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
+func removeLeewayReplaceRules(dst *leeway.Package) error {
+	return modifyGoMod(dst, func(_ string, gomod *modfile.File) error {
+		for _, rep := range gomod.Replace {
+			if ok, tpe := isLeewayReplace(rep.Syntax); !ok || tpe == leewayReplaceIgnore {
+				continue
+			}
+
+			log.WithField("replace", rep).Debug("dropping replace")
+			err := gomod.DropReplace(rep.Old.Path, rep.Old.Version)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func addReplace(gomod *modfile.File, old, new module.Version, direct bool, source string) error {
 	for _, rep := range gomod.Replace {
 		if rep.Old.Path != old.Path || rep.Old.Version != old.Version {
 			continue
 		}
-		if ok, tpe := isLeewayReplace(rep); ok && tpe != leewayReplaceIgnore {
+		if ok, tpe := isLeewayReplace(rep.Syntax); ok && tpe != leewayReplaceIgnore {
 			err := gomod.DropReplace(old.Path, old.Version)
 			if err != nil {
 				return err
@@ -199,7 +296,7 @@ func collectReplacements(workspace *leeway.Workspace) (mods map[string]goModule,
 
 		var replace []*modfile.Replace
 		for _, rep := range gomod.Replace {
-			skip, _ := isLeewayReplace(rep)
+			skip, _ := isLeewayReplace(rep.Syntax)
 			if !skip {
 				replace = append(replace, rep)
 				log.WithField("rep", rep.Old.String()).WithField("pkg", n).Debug("collecting replace")
@@ -226,8 +323,11 @@ const (
 	leewayReplaceIgnore
 )
 
-func isLeewayReplace(rep *modfile.Replace) (ok bool, tpe leewayReplaceType) {
-	for _, c := range rep.Syntax.Suffix {
+func isLeewayReplace(rep *modfile.Line) (ok bool, tpe leewayReplaceType) {
+	if rep == nil {
+		return false, leewayReplaceIgnore
+	}
+	for _, c := range rep.Suffix {
 		if strings.Contains(c.Token, "leeway") {
 			ok = true
 
