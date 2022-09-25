@@ -3,7 +3,6 @@ module github.com/gitpod-io/leeway
 go 1.19
 
 require (
-	github.com/GeertJohan/go.rice v1.0.2
 	github.com/creack/pty v1.1.17
 	github.com/disiqueira/gotree v1.0.0
 	github.com/fsnotify/fsnotify v1.5.1
