@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/gookit/color"
@@ -165,7 +166,7 @@ Example use:
 				log.Error(err)
 			}
 
-			evt, errs := leeway.WatchSources(context.Background(), spkgs)
+			evt, errs := leeway.WatchSources(context.Background(), spkgs, 2*time.Second)
 			for {
 				select {
 				case <-evt:

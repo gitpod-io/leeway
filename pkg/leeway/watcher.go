@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	log "github.com/sirupsen/logrus"
@@ -12,9 +14,10 @@ import (
 )
 
 // WatchSources watches the source files of the packages until the context is done
-func WatchSources(ctx context.Context, pkgs []*Package) (changed <-chan string, errs <-chan error) {
+func WatchSources(ctx context.Context, pkgs []*Package, debounceDuration time.Duration) (changed <-chan struct{}, errs <-chan error) {
 	var (
-		chng    = make(chan string)
+		rawChng = make(chan struct{})
+		chng    = make(chan struct{})
 		errchan = make(chan error, 1)
 	)
 	changed = chng
@@ -44,6 +47,49 @@ func WatchSources(ctx context.Context, pkgs []*Package) (changed <-chan string, 
 			Base:     f,
 			Patterns: pkg.originalSources,
 		})
+	}
+
+	if debounceDuration == 0 {
+		go func() {
+			for {
+				select {
+				case <-rawChng:
+					chng <- struct{}{}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	} else {
+		var (
+			c  int64
+			mu sync.RWMutex
+		)
+
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-rawChng:
+					mu.Lock()
+					c++
+					key := c
+					mu.Unlock()
+
+					go func() {
+						<-time.After(debounceDuration)
+						mu.RLock()
+						defer mu.RUnlock()
+
+						if c != key {
+							return
+						}
+						chng <- struct{}{}
+					}()
+				}
+			}
+		}()
 	}
 
 	go func() {
@@ -79,7 +125,7 @@ func WatchSources(ctx context.Context, pkgs []*Package) (changed <-chan string, 
 				}
 
 				log.WithField("path", evt.Name).Debug("source file changed")
-				chng <- evt.Name
+				rawChng <- struct{}{}
 			case err := <-watcher.Errors:
 				errchan <- err
 			case <-ctx.Done():
