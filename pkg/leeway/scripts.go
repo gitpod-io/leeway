@@ -2,7 +2,6 @@ package leeway
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -191,7 +190,7 @@ func findUnresolvedArgumentsInScript(script *Script) ([]string, error) {
 }
 
 func (p *Script) synthesizePackagesWorkdir(buildCtx *buildContext) (path string, bins map[string]string, err error) {
-	path, err = ioutil.TempDir(buildCtx.buildDir, fmt.Sprintf("script-%s-*", p.FilesystemSafeName()))
+	path, err = os.MkdirTemp(buildCtx.buildDir, fmt.Sprintf("script-%s-*", p.FilesystemSafeName()))
 	if err != nil {
 		return
 	}
@@ -226,7 +225,7 @@ func (p *Script) synthesizePackagesWorkdir(buildCtx *buildContext) (path string,
 }
 
 func executeBashScript(script string, wd string, env []string) error {
-	f, err := ioutil.TempFile("", "*.sh")
+	f, err := os.CreateTemp("", "*.sh")
 	if err != nil {
 		return err
 	}

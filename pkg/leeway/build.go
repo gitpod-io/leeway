@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -864,7 +863,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 
 	pkgJSONFilename := filepath.Join(wd, "package.json")
 	var packageJSON map[string]interface{}
-	fc, err := ioutil.ReadFile(pkgJSONFilename)
+	fc, err := os.ReadFile(pkgJSONFilename)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 	}
@@ -905,7 +904,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		if err != nil {
 			return nil, xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 		}
-		err = ioutil.WriteFile(pkgJSONFilename, fc, 0644)
+		err = os.WriteFile(pkgJSONFilename, fc, 0644)
 		if err != nil {
 			return nil, xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 		}
@@ -965,7 +964,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			"installer-package.json": fmt.Sprintf(installerPackageJSONTemplate, version, pkgname, pkgversion),
 		}
 		for fn, script := range builtinScripts {
-			err = ioutil.WriteFile(filepath.Join(wd, "_mirror", fn), []byte(script), 0755)
+			err = os.WriteFile(filepath.Join(wd, "_mirror", fn), []byte(script), 0755)
 			if err != nil {
 				return nil, err
 			}
@@ -989,7 +988,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		if err != nil {
 			return nil, err
 		}
-		err = ioutil.WriteFile(filepath.Join(wd, "_pkg", "package.json"), []byte(fmt.Sprintf(installerPackageJSONTemplate, version, pkgname, pkgversion)), 0755)
+		err = os.WriteFile(filepath.Join(wd, "_pkg", "package.json"), []byte(fmt.Sprintf(installerPackageJSONTemplate, version, pkgname, pkgversion)), 0755)
 		if err != nil {
 			return nil, err
 		}
@@ -1479,7 +1478,7 @@ func executeCommandsForPackageSafe(buildctx *buildContext, p *Package, wd string
 		return err
 	}
 	commandsFN := filepath.Join(tmpdir, "commands")
-	err = ioutil.WriteFile(commandsFN, []byte(base64.StdEncoding.EncodeToString(jc)), 0644)
+	err = os.WriteFile(commandsFN, []byte(base64.StdEncoding.EncodeToString(jc)), 0644)
 	if err != nil {
 		return err
 	}

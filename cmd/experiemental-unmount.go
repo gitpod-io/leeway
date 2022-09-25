@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,7 +111,7 @@ var unmountCmd = &cobra.Command{
 }
 
 func findOverlayMount(mountpoint string) (origin, upper, delmp string, err error) {
-	mnts, err := ioutil.ReadFile("/proc/mounts")
+	mnts, err := os.ReadFile("/proc/mounts")
 	if err != nil {
 		return
 	}

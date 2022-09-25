@@ -3,7 +3,6 @@ package leeway_test
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -286,7 +285,7 @@ func TestPackageDefinition(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
-			loc, err := ioutil.TempDir("", "pkgdeftest-*")
+			loc, err := os.MkdirTemp("", "pkgdeftest-*")
 			if err != nil {
 				t.Fatalf("cannot create temporary dir: %q", err)
 			}
@@ -298,7 +297,7 @@ func TestPackageDefinition(t *testing.T) {
 					if err != nil && !os.IsExist(err) {
 						t.Fatalf("cannot create filesystem layout: %q", err)
 					}
-					err = ioutil.WriteFile(filepath.Join(loc, k), []byte(v), 0644)
+					err = os.WriteFile(filepath.Join(loc, k), []byte(v), 0644)
 					if err != nil && !os.IsExist(err) {
 						t.Fatalf("cannot create filesystem layout: %q", err)
 					}

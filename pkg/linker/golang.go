@@ -1,7 +1,6 @@
 package linker
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -70,7 +69,7 @@ func linkGoModule(dst *leeway.Package, mods []goModule) error {
 	if goModFn == "" {
 		return xerrors.Errorf("%w: go.mod not found", os.ErrNotExist)
 	}
-	fc, err := ioutil.ReadFile(goModFn)
+	fc, err := os.ReadFile(goModFn)
 	if err != nil {
 		return err
 	}
@@ -119,7 +118,7 @@ func linkGoModule(dst *leeway.Package, mods []goModule) error {
 		return err
 	}
 
-	err = ioutil.WriteFile(goModFn, fc, 0644)
+	err = os.WriteFile(goModFn, fc, 0644)
 	if err != nil {
 		return err
 	}
@@ -188,7 +187,7 @@ func collectReplacements(workspace *leeway.Workspace) (mods map[string]goModule,
 			continue
 		}
 
-		fc, err := ioutil.ReadFile(goModFn)
+		fc, err := os.ReadFile(goModFn)
 		if err != nil {
 			return nil, err
 		}

@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -36,7 +35,7 @@ var mountCmd = &cobra.Command{
 		if wdbase != "" {
 			err = os.MkdirAll(wdbase, 0777)
 		} else {
-			wdbase, err = ioutil.TempDir(filepath.Dir(dest), "leeway-workdir-*")
+			wdbase, err = os.MkdirTemp(filepath.Dir(dest), "leeway-workdir-*")
 		}
 		if err != nil && !os.IsExist(err) {
 			return err

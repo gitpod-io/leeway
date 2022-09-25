@@ -2,7 +2,7 @@ package vet
 
 import (
 	"bytes"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 
 	"github.com/gitpod-io/leeway/pkg/leeway"
@@ -13,7 +13,7 @@ func init() {
 }
 
 func checkComponentsFmt(comp *leeway.Component) ([]Finding, error) {
-	fc, err := ioutil.ReadFile(filepath.Join(comp.Origin, "BUILD.yaml"))
+	fc, err := os.ReadFile(filepath.Join(comp.Origin, "BUILD.yaml"))
 	if err != nil {
 		return nil, err
 	}
