@@ -709,7 +709,7 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 		for _, src := range pkg.Sources {
 			completeSources[src] = struct{}{}
 		}
-		for _, src := range pkg.Config.AdditionalSources() {
+		for _, src := range pkg.Config.AdditionalSources(workspace.Origin) {
 			fn := src
 			if !filepath.IsAbs(fn) {
 				var err error

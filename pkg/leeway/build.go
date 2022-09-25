@@ -23,6 +23,7 @@ import (
 	"github.com/opencontainers/runc/libcontainer/specconv"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/mod/modfile"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
@@ -1036,9 +1037,38 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	}
 
 	var (
-		commands  [][]string
-		goCommand = "go"
+		commands      [][]string
+		isGoWorkspace bool
+		workFile      *modfile.WorkFile
 	)
+	if fc, err := os.ReadFile(filepath.Join(p.C.W.Origin, "go.work")); err == nil {
+		isGoWorkspace = true
+
+		workFile, err = modfile.ParseWork("go.work", fc, nil)
+		if err != nil {
+			return nil, xerrors.Errorf("cannot read go.work file: %w", err)
+		}
+		// we drop all use statements and later add the correct ones back in, starting with the src itself
+		for _, use := range workFile.Use {
+			err = workFile.DropUse(use.Path)
+			if err != nil {
+				return nil, err
+			}
+		}
+		workFile.AddNewUse("./", "")
+		workFile.SortBlocks()
+		workFile.Cleanup()
+		fc = modfile.Format(workFile.Syntax)
+		err = os.WriteFile(filepath.Join(wd, "go.work"), fc, 0644)
+		if err != nil {
+			return nil, err
+		}
+
+	} else if !os.IsNotExist(err) {
+		return nil, xerrors.Errorf("cannot read go.work file: %w", err)
+	}
+
+	var goCommand = "go"
 	if cfg.GoVersion != "" {
 		goCommand = cfg.GoVersion
 		commands = append(commands, [][]string{
@@ -1067,9 +1097,14 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 				continue
 			}
 
-			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("%s mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2 | head -n1)=./%s", goCommand, tgt, tgt)})
+			if isGoWorkspace {
+				commands = append(commands, []string{"go", "work", "use", tgt})
+			} else {
+				commands = append(commands, []string{"sh", "-c", fmt.Sprintf("%s mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2 | head -n1)=./%s", goCommand, tgt, tgt)})
+			}
 		}
 	}
+
 	commands = append(commands, p.PreparationCommands...)
 	if cfg.Generate {
 		commands = append(commands, []string{goCommand, "generate", "-v", "./..."})
