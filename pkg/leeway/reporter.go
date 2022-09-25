@@ -16,8 +16,7 @@ import (
 
 // Reporter provides feedback about the build progress to the user.
 //
-// Implementers beware: all these functions will be called in the hotpath of the build system.
-//                      That means that blocking in those functions will block the actual build.
+// Implementers beware: all these functions will be called in the hotpath of the build system. That means that blocking in those functions will block the actual build.
 type Reporter interface {
 	// BuildStarted is called when the build of a package is started by the user.
 	// This is not the same as a dependency beeing built (see PackageBuildStarted for that).
