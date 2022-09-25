@@ -5,7 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/ioutil"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -69,7 +69,7 @@ func BuildAnalyzerConfig(wd string, apiDepPattern *regexp.Regexp) error {
 		fset := token.NewFileSet()
 		for _, fn := range nfo.GoFiles {
 			fn := filepath.Join(nfo.Dir, fn)
-			fc, err := ioutil.ReadFile(fn)
+			fc, err := os.ReadFile(fn)
 			if err != nil {
 				logrus.WithError(err).Warnf("cannot read %s", fn)
 				continue
@@ -101,5 +101,5 @@ func BuildAnalyzerConfig(wd string, apiDepPattern *regexp.Regexp) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(filepath.Join(wd, AnalyzerFilename), cfgFC, 0644)
+	return os.WriteFile(filepath.Join(wd, AnalyzerFilename), cfgFC, 0644)
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -99,7 +98,7 @@ func (c *checkImplicitTransitiveDependencies) getPkgJSON(pkg *leeway.Package) (*
 		return nil, xerrors.Errorf("package %s has no package.json", pkg.FullName())
 	}
 
-	fc, err := ioutil.ReadFile(pkgFN)
+	fc, err := os.ReadFile(pkgFN)
 	if err != nil {
 		return nil, err
 	}

@@ -3,7 +3,6 @@ package linker
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -38,7 +37,7 @@ func LinkYarnPackagesWithYarn2(workspace *leeway.Workspace) error {
 		}
 		pkgJSONIdx[n] = pkgjsonFn
 
-		fc, err := ioutil.ReadFile(pkgjsonFn)
+		fc, err := os.ReadFile(pkgjsonFn)
 		if err != nil {
 			return err
 		}
@@ -58,7 +57,7 @@ func LinkYarnPackagesWithYarn2(workspace *leeway.Workspace) error {
 		}
 		pkgjsonFn := pkgJSONIdx[n]
 
-		fc, err := ioutil.ReadFile(pkgjsonFn)
+		fc, err := os.ReadFile(pkgjsonFn)
 		if err != nil {
 			return err
 		}

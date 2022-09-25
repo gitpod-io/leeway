@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/base64"
 	"encoding/json"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -18,7 +17,7 @@ var plumbingExecCmd = &cobra.Command{
 	Short: "Executes commands",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		input, err := ioutil.ReadFile(args[0])
+		input, err := os.ReadFile(args[0])
 		if err != nil {
 			log.WithError(err).Fatal("cannot read input file")
 		}

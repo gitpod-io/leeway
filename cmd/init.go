@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"strings"
 
@@ -162,7 +161,7 @@ config:
 }
 
 func initGenericPackage(name string) ([]byte, error) {
-	fs, err := ioutil.ReadDir(".")
+	fs, err := os.ReadDir(".")
 	if err != nil {
 		return nil, err
 	}

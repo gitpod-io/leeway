@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,7 +168,7 @@ func FindNestedWorkspaces(path string, args Arguments, variant string) (res Work
 	}
 
 	var ignore doublestar.IgnoreFunc
-	if fc, _ := ioutil.ReadFile(filepath.Join(path, ".leewayignore")); len(fc) > 0 {
+	if fc, _ := os.ReadFile(filepath.Join(path, ".leewayignore")); len(fc) > 0 {
 		ignore = doublestar.IgnoreStrings(strings.Split(string(fc), "\n"))
 	}
 
@@ -264,7 +263,7 @@ func filepathTrimPrefix(path, prefix string) string {
 // Probably you want to use loadWorkspace instead.
 func loadWorkspaceYAML(path string) (Workspace, error) {
 	root := filepath.Join(path, "WORKSPACE.yaml")
-	fc, err := ioutil.ReadFile(root)
+	fc, err := os.ReadFile(root)
 	if err != nil {
 		return Workspace{}, err
 	}
@@ -310,7 +309,7 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	var ignores []string
 	ignoresFile := filepath.Join(workspace.Origin, ".leewayignore")
 	if _, err := os.Stat(ignoresFile); !os.IsNotExist(err) {
-		fc, err := ioutil.ReadFile(ignoresFile)
+		fc, err := os.ReadFile(ignoresFile)
 		if err != nil {
 			return Workspace{}, err
 		}
@@ -598,7 +597,7 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 		}
 	}()
 
-	fc, err := ioutil.ReadFile(path)
+	fc, err := os.ReadFile(path)
 	if err != nil {
 		return Component{}, err
 	}

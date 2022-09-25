@@ -2,7 +2,6 @@ package vet
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,17 +57,17 @@ ADD from-some-pkg--build/hello.txt hello.txt`,
 				}
 			}
 
-			tmpdir, err := ioutil.TempDir("", "leeway-test-*")
+			tmpdir, err := os.MkdirTemp("", "leeway-test-*")
 			failOnErr(err)
 			// defer os.RemoveAll(tmpdir)
 
 			var pkgdeps string
-			failOnErr(ioutil.WriteFile(filepath.Join(tmpdir, "WORKSPACE.yaml"), []byte("environmentManifest:\n  - name: \"docker\"\n    command: [\"echo\"]"), 0644))
+			failOnErr(os.WriteFile(filepath.Join(tmpdir, "WORKSPACE.yaml"), []byte("environmentManifest:\n  - name: \"docker\"\n    command: [\"echo\"]"), 0644))
 			for _, dep := range test.Deps {
 				segs := strings.Split(dep, ":")
 				loc := filepath.Join(tmpdir, segs[0])
 				failOnErr(os.MkdirAll(loc, 0755))
-				failOnErr(ioutil.WriteFile(filepath.Join(loc, "BUILD.yaml"), []byte(fmt.Sprintf(`packages:
+				failOnErr(os.WriteFile(filepath.Join(loc, "BUILD.yaml"), []byte(fmt.Sprintf(`packages:
 - name: %s
   type: generic`, segs[1])), 0755))
 
@@ -78,8 +77,8 @@ ADD from-some-pkg--build/hello.txt hello.txt`,
 				pkgdeps += fmt.Sprintf("  - %s\n", dep)
 			}
 			failOnErr(os.MkdirAll(filepath.Join(tmpdir, "test-pkg"), 0755))
-			failOnErr(ioutil.WriteFile(filepath.Join(tmpdir, "test-pkg", "Dockerfile"), []byte(test.Dockerfile), 0644))
-			failOnErr(ioutil.WriteFile(filepath.Join(tmpdir, "test-pkg", "BUILD.yaml"), []byte(fmt.Sprintf(`packages:
+			failOnErr(os.WriteFile(filepath.Join(tmpdir, "test-pkg", "Dockerfile"), []byte(test.Dockerfile), 0644))
+			failOnErr(os.WriteFile(filepath.Join(tmpdir, "test-pkg", "BUILD.yaml"), []byte(fmt.Sprintf(`packages:
 - name: docker
   type: docker
   config:
