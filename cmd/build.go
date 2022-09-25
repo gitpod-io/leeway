@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/gitpod-io/leeway/pkg/leeway"
 	"github.com/gookit/color"
@@ -47,7 +47,7 @@ var buildCmd = &cobra.Command{
 				go serveBuildResult(ctx, serve, localCache, pkg)
 			}
 
-			evt, errs := leeway.WatchSources(context.Background(), append(pkg.GetTransitiveDependencies(), pkg))
+			evt, errs := leeway.WatchSources(context.Background(), append(pkg.GetTransitiveDependencies(), pkg), 2*time.Second)
 			for {
 				select {
 				case <-evt:
@@ -90,7 +90,7 @@ func serveBuildResult(ctx context.Context, addr string, localCache *leeway.Files
 		log.Fatal("build result is not in local cache despite just being built. Something's wrong with the cache.")
 	}
 
-	tmp, err := ioutil.TempDir("", "leeway_serve")
+	tmp, err := os.MkdirTemp("", "leeway_serve")
 	if err != nil {
 		log.WithError(err).Fatal("cannot serve build result")
 	}
@@ -199,7 +199,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		err           error
 	)
 	if cacheLevel == leeway.CacheNone {
-		localCacheLoc, err = ioutil.TempDir("", "leeway")
+		localCacheLoc, err = os.MkdirTemp("", "leeway")
 		if err != nil {
 			log.Fatal(err)
 		}
