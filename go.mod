@@ -5,7 +5,6 @@ go 1.19
 require (
 	github.com/GeertJohan/go.rice v1.0.2
 	github.com/creack/pty v1.1.17
-	github.com/daaku/go.zipexe v1.0.1 // indirect
 	github.com/disiqueira/gotree v1.0.0
 	github.com/fsnotify/fsnotify v1.5.1
 	github.com/google/go-cmp v0.5.6

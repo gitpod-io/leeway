@@ -11,6 +11,8 @@ packages:
     type: go
     srcs:
       - "**/*.go"
+      - "**/*.html"
+      - "**/*.js"
       - go.mod
       - go.sum
     deps:

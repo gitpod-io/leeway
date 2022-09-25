@@ -4,19 +4,21 @@
 package graphview
 
 import (
+	"embed"
 	"encoding/json"
 	"net/http"
 	"sort"
 
-	rice "github.com/GeertJohan/go.rice"
-
 	"github.com/gitpod-io/leeway/pkg/leeway"
 )
+
+//go:embed web/dist/*
+var dist embed.FS
 
 // Serve serves the dependency graph view for a package
 func Serve(addr string, pkgs ...*leeway.Package) error {
 	http.HandleFunc("/graph.json", serveDepGraphJSON(pkgs))
-	http.Handle("/", http.FileServer(rice.MustFindBox("web/dist").HTTPBox()))
+	http.Handle("/", http.FileServer(http.FS(dist)))
 	return http.ListenAndServe(addr, nil)
 }
 
