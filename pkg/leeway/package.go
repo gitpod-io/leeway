@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -404,7 +405,7 @@ func unmarshalTypeDependentConfig(tpe PackageType, unmarshal func(interface{}) e
 // PackageConfig is the YAML unmarshalling config type of packages.
 // This is one of YarnPkgConfig, GoPkgConfig, DockerPkgConfig or GenericPkgConfig.
 type PackageConfig interface {
-	AdditionalSources() []string
+	AdditionalSources(workspaceOrigin string) []string
 }
 
 // YarnPkgConfig configures a yarn package
@@ -449,7 +450,7 @@ const (
 )
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
-func (cfg YarnPkgConfig) AdditionalSources() []string {
+func (cfg YarnPkgConfig) AdditionalSources(workspaceOrigin string) []string {
 	var res []string
 	if cfg.YarnLock != "" {
 		res = append(res, cfg.YarnLock)
@@ -509,7 +510,12 @@ const (
 )
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
-func (cfg GoPkgConfig) AdditionalSources() []string {
+func (cfg GoPkgConfig) AdditionalSources(workspaceOrigin string) []string {
+	fn := filepath.Join(workspaceOrigin, "go.work")
+	if _, err := os.Stat(fn); err == nil {
+		return []string{fn}
+	}
+
 	return []string{}
 }
 
@@ -523,7 +529,7 @@ type DockerPkgConfig struct {
 }
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
-func (cfg DockerPkgConfig) AdditionalSources() []string {
+func (cfg DockerPkgConfig) AdditionalSources(workspaceOrigin string) []string {
 	return []string{cfg.Dockerfile}
 }
 
@@ -535,7 +541,7 @@ type GenericPkgConfig struct {
 }
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
-func (cfg GenericPkgConfig) AdditionalSources() []string {
+func (cfg GenericPkgConfig) AdditionalSources(workspaceOrigin string) []string {
 	return []string{}
 }
 
