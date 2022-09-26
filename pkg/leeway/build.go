@@ -247,7 +247,6 @@ type buildOptions struct {
 	DontTest               bool
 	MaxConcurrentTasks     int64
 	CoverageOutputPath     string
-	DontRetag              bool
 	DockerBuildOptions     *DockerBuildOptions
 	JailedExecution        bool
 
@@ -332,14 +331,6 @@ func WithMaxConcurrentTasks(n int64) BuildOption {
 func WithCoverageOutputPath(output string) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.CoverageOutputPath = output
-		return nil
-	}
-}
-
-// WithDontRetag disables the Docker image retagging
-func WithDontRetag(dontRetag bool) BuildOption {
-	return func(opts *buildOptions) error {
-		opts.DontRetag = dontRetag
 		return nil
 	}
 }
@@ -569,28 +560,12 @@ func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
 }
 
 func (p *Package) build(buildctx *buildContext) (err error) {
-	artifact, alreadyBuilt := buildctx.LocalCache.Location(p)
+	_, alreadyBuilt := buildctx.LocalCache.Location(p)
 	if p.Ephemeral {
 		// ephemeral packages always require a rebuild
 	} else if alreadyBuilt {
-		// some package types still need to do work even if we find their prior build artifact in the cache.
-		if p.Type == DockerPackage && !buildctx.DontRetag {
-			doBuild := buildctx.ObtainBuildLock(p)
-			if !doBuild {
-				return nil
-			}
-			defer buildctx.ReleaseBuildLock(p)
-
-			err = p.retagDocker(buildctx, filepath.Dir(artifact), artifact)
-			if err != nil {
-				log.WithError(err).Warn("cannot re-use prior build artifact - building afresh.")
-			} else {
-				return
-			}
-		} else {
-			log.WithField("package", p.FullName()).Debug("already built")
-			return nil
-		}
+		log.WithField("package", p.FullName()).Debug("already built")
+		return nil
 	}
 
 	doBuild := buildctx.ObtainBuildLock(p)
@@ -1415,76 +1390,6 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		BuildCommands:   commands,
 		PackageCommands: [][]string{{"tar", "cfz", result, "."}},
 	}, nil
-}
-
-// retagDocker is called when we already have the build artifact for this package (and version)
-// in the build cache. This function makes sure that if the build arguments changed the name of the
-// Docker image this build time, we just re-tag the image.
-func (p *Package) retagDocker(buildctx *buildContext, wd, prev string) (err error) {
-	buildctx.LimitConcurrentBuilds()
-	defer buildctx.ReleaseConcurrentBuild()
-
-	cfg, ok := p.Config.(DockerPkgConfig)
-	if !ok {
-		return xerrors.Errorf("package should have Docker config")
-	}
-	if len(cfg.Image) == 0 {
-		// this is not a pushed Docker image and as such needs no re-use
-		log.WithField("package", p.FullName()).Debug("already built")
-		return
-	}
-
-	// the previous build artifact should contain the name of the original image. Let's read that name/those names.
-	if _, err := os.Stat(prev); os.IsNotExist(err) {
-		return err
-	}
-	cmd := exec.Command("tar", "Ozfx", prev, "--no-same-owner", dockerImageNamesFiles)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return err
-	}
-	names := strings.Split(string(out), "\n")
-	if len(names) == 0 {
-		return xerrors.Errorf("build artifact is invalid")
-	}
-
-	commands := [][]string{
-		{"docker", "pull", names[0]},
-	}
-	var needsRetagging bool
-	for _, img := range cfg.Image {
-		var found bool
-		for _, nme := range names {
-			if nme == img {
-				found = true
-				break
-			}
-		}
-		if found {
-			continue
-		}
-
-		needsRetagging = true
-		commands = append(commands, [][]string{
-			{"docker", "tag", names[0], img},
-			{"docker", "push", img},
-		}...)
-	}
-	if !needsRetagging {
-		log.WithField("package", p.FullName()).Debug("already built")
-		return
-	}
-
-	buildctx.Reporter.PackageBuildStarted(p)
-	defer func(err *error) {
-		buildctx.Reporter.PackageBuildFinished(p, *err)
-	}(&err)
-
-	err = executeCommandsForPackage(buildctx, p, wd, commands)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, commands [][]string) error {
