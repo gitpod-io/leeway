@@ -10,8 +10,7 @@
       "mode": "auto",
       "program": "${workspaceFolder}/main.go",
       "env": {
-          "LEEWAY_EXPERIMENTAL": "true",
-          "LEEWAY_NESTED_WORKSPACE": "true"
+          "LEEWAY_EXPERIMENTAL": "true"
       },
       "args": ["fmt", "fixtures/nested-ws/pkg0/BUILD.yaml"]
     }

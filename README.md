@@ -303,38 +303,6 @@ environmentManifest:
 
 Using this mechanism you can also overwrite the default manifest entries, e.g. "go" or "yarn".
 
-## Nested Workspaces
-Leeway has some experimental support for nested workspaces, e.g. a structure like this one:
-```
-/workspace
-/workspace/WORKSPACE.yaml
-/workspace/comp1/BUILD.yaml
-/workspace/otherWorkspace/WORKSPACE.yaml
-/workspace/otherWorkspace/comp2/BUILD.yaml
-```
-
-By default leeway would just ignore the nested `otherWorkspace/` folder and everything below, because of `otherWorkspace/WORKSPACE.yaml`. When nested workspace support is enabled though, the `otherWorkspace/` would be loaded as if it stood alone and merged into `/workspace`. For example:
-```
-$ export LEEWAY_NESTED_WORKSPACE=true
-$ leeway collect
-comp1:app
-otherWorkspace/comp2:app
-otherWorkspace/comp2:lib
-```
-
-- **inner workspaces are loaded as if they stood alone**: when leeway loads any nested workspace it does so as if that workspace stood for itself, i.e. were not nested. This means that all components are relative to that workspace root. In particular, dependencies remain stable no matter if a workspace is nested or not. E.g. `comp2:app` depending on `comp2:lib` works irregardless of workspace nesting.
-- **nested dependencies**: dependencies from an oter workspace into a nested one are possible and behave as if all packages were in the same workspace, e.g. `comp1:app` could depend on `otherWorkspace/comp2:app`. Dependencies out of a nested workspace are not allowed, e.g. `otherWorkspace/comp2:app` cannot depend on `comp1:app`.
-- **default arguments**: there is one exception to the "standalone", that is `defaultArgs`. The `defaultArgs` of the root workspace override the defaults of the nested workspaces. This is demonstrated by leeways test fixtures, where the message changes depending on the workspace that's loaded:
-  ```
-  $ export LEEWAY_NESTED_WORKSPACE=true
-  $ leeway run fixtures/nested-ws/wsa/pkg1:echo
-  hello world
-
-  $ leeway run -w fixtures/nested-ws wsa/pkg1:echo
-  hello root
-  ```
-- **variants**: only the root workspace's variants matter. Even if the nested workspace defined any, they'd simply be ignored.
-
 # Configuration
 Leeway is configured exclusively through the WORKSPACE.yaml/BUILD.yaml files and environment variables. The following environment
 variables have an effect on leeway:
@@ -344,7 +312,6 @@ variables have an effect on leeway:
 - `LEEWAY_BUILD_DIR`: Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O which makes it advisable to place this on a fast SSD or in RAM.
 - `LEEWAY_YARN_MUTEX`: Configures the mutex flag leeway will pass to yarn. Defaults to "network". See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
 - `LEEWAY_EXPERIMENTAL`: Enables exprimental features
-- `LEEWAY_NESTED_WORKSPACE`: Enables nested workspaces. By default leeway ignores everything below another `WORKSPACE.yaml`, but if this env var is set leeway will try and link packages from the other workspace as if they were part of the parent one. This does not work for scripts yet.
 
 # Provenance (SLSA) - EXPERIMENTAL
 leeway can produce provenance information as part of a build. At the moment only [SLSA](https://slsa.dev/spec/v0.1/) is supported. This supoprt is **experimental**.
@@ -388,7 +355,6 @@ leeway provenance export --decode file://some-bundle.jsonl
 
 ## Caveats
 - provenance is part of the leeway package version, i.e. when you enable provenance that will naturally invalidate previously built packages.
-- provenance is not supported for nested workspaces. The presence of `LEEWAY_NESTED_WORKSPACE` will make the build fail.
 - if attestation bundle entries grow too large this can break the build process. Use `LEEWAY_MAX_PROVENANCE_BUNDLE_SIZE` to set the buffer size in bytes. This defaults to 2MiB. The larger this buffer is, the larger bundle entries can be used, but the more memory the build process will consume. If you exceed the default, inspect the bundles first (especially the one that fails to load) and see if the produced `subjects` make sense.
 
 # Debugging

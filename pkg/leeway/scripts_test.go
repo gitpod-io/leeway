@@ -126,11 +126,6 @@ func (ft *CommandFixtureTest) Run() {
 		cmd.Stdout = sout
 		cmd.Stderr = serr
 		cmd.Dir = "../../"
-		if !ft.NoNestedWorkspace {
-			env := os.Environ()
-			env = append(env, "LEEWAY_NESTED_WORKSPACE=true")
-			cmd.Env = env
-		}
 		err = cmd.Run()
 
 		var exitCode int
