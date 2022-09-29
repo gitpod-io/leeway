@@ -573,12 +573,12 @@ func filterExcludedComponents(variant *PackageVariant, c *Component) (ignoreComp
 
 	for _, p := range c.Packages {
 		for i, dep := range p.Dependencies {
-			segs := strings.Split(dep, ":")
-			if len(segs) != 2 {
+			comp := dep.Component()
+			if comp == "" {
 				continue
 			}
 
-			if variant.ExcludeComponent(segs[0]) {
+			if variant.ExcludeComponent(comp) {
 				p.Dependencies[i] = p.Dependencies[len(p.Dependencies)-1]
 				p.Dependencies = p.Dependencies[:len(p.Dependencies)-1]
 			}
@@ -759,11 +759,11 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 
 		// make all dependencies fully qualified
 		for idx, dep := range pkg.Dependencies {
-			if !strings.HasPrefix(dep, ":") {
+			if !dep.Relative() {
 				continue
 			}
 
-			pkg.Dependencies[idx] = comp.Name + dep
+			pkg.Dependencies[idx] = dep.WithComponent(comp.Name)
 		}
 		// make all layout entries full qualified
 		if pkg.Layout == nil {
@@ -807,11 +807,11 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 
 		// make all dependencies fully qualified
 		for idx, dep := range scr.Dependencies {
-			if !strings.HasPrefix(dep, ":") {
+			if !dep.Relative() {
 				continue
 			}
 
-			scr.Dependencies[idx] = comp.Name + dep
+			scr.Dependencies[idx] = dep.WithComponent(comp.Name)
 		}
 	}
 

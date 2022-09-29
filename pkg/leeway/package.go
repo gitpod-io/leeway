@@ -124,7 +124,7 @@ func (c *Component) Git() *GitInfo {
 
 // PackageNotFoundErr is used when something references a package we don't know about
 type PackageNotFoundErr struct {
-	Package string
+	Package PackageDependency
 }
 
 func (n PackageNotFoundErr) Error() string {
@@ -132,15 +132,59 @@ func (n PackageNotFoundErr) Error() string {
 }
 
 type packageInternal struct {
-	Name                 string            `yaml:"name"`
-	Type                 PackageType       `yaml:"type"`
-	Sources              []string          `yaml:"srcs"`
-	Dependencies         []string          `yaml:"deps"`
-	Layout               map[string]string `yaml:"layout"`
-	ArgumentDependencies []string          `yaml:"argdeps"`
-	Environment          []string          `yaml:"env"`
-	Ephemeral            bool              `yaml:"ephemeral"`
-	PreparationCommands  [][]string        `yaml:"prep"`
+	Name                 string              `yaml:"name"`
+	Type                 PackageType         `yaml:"type"`
+	Sources              []string            `yaml:"srcs"`
+	Dependencies         []PackageDependency `yaml:"deps"`
+	Layout               map[string]string   `yaml:"layout"`
+	ArgumentDependencies []string            `yaml:"argdeps"`
+	Environment          []string            `yaml:"env"`
+	Ephemeral            bool                `yaml:"ephemeral"`
+	PreparationCommands  [][]string          `yaml:"prep"`
+}
+
+type PackageDependency string
+
+func (dep PackageDependency) Valid() bool {
+	_, pkg := dep.segs()
+	return pkg != ""
+}
+
+func (dep PackageDependency) segs() (comp, pkg string) {
+	segs := strings.Split(dep.FullPackage(), ":")
+	if len(segs) != 2 {
+		return
+	}
+	return segs[0], segs[1]
+}
+
+// Component returns the component of the depdency
+func (dep PackageDependency) Component() string {
+	comp, _ := dep.segs()
+	return comp
+}
+
+// FullPackage returns the name of the package this dependency refers to
+func (dep PackageDependency) FullPackage() string {
+	return strings.TrimSuffix(string(dep), "?")
+}
+
+// Optional returns true if the dependency is optional
+func (dep PackageDependency) Optional() bool {
+	return strings.HasSuffix(string(dep), "?")
+}
+
+// Relative returns true if the dependency is relative within its component
+func (dep PackageDependency) Relative() bool {
+	return strings.HasPrefix(string(dep), ":")
+}
+
+func (dep PackageDependency) WithComponent(comp string) PackageDependency {
+	_, pkg := dep.segs()
+	if dep.Optional() {
+		pkg += "?"
+	}
+	return PackageDependency(comp + ":" + pkg)
 }
 
 // Package is a single buildable artifact within a component
@@ -168,17 +212,20 @@ func (p *Package) link(idx map[string]*Package) error {
 		return nil
 	}
 
-	p.dependencies = make([]*Package, len(p.Dependencies))
+	p.dependencies = make([]*Package, 0, len(p.Dependencies))
 	p.layout = make(map[*Package]string)
-	for i, dep := range p.Dependencies {
-		deppkg, ok := idx[dep]
+	for _, dep := range p.Dependencies {
+		deppkg, ok := idx[dep.FullPackage()]
 		if !ok {
+			if dep.Optional() {
+				continue
+			}
 			return PackageNotFoundErr{dep}
 		}
-		p.dependencies[i] = deppkg
+		p.dependencies = append(p.dependencies, deppkg)
 
 		// if the user hasn't specified a layout, tie it down at this point
-		p.layout[deppkg], ok = p.Layout[dep]
+		p.layout[deppkg], ok = p.Layout[dep.FullPackage()]
 		if !ok {
 			p.layout[deppkg] = deppkg.FilesystemSafeName()
 		}

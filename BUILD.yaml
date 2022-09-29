@@ -17,6 +17,7 @@ packages:
       - go.sum
     deps:
       - :helloworld
+      - :doesntExist?
     argdeps:
       - version
     prep:

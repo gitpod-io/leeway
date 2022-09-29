@@ -67,6 +67,7 @@ description: A sentence describing what the script is good for.
 # contains tools you want to use in a script.
 deps:
 - some/other:package
+- some/other:optional?
 # Env sets environment variables which are present during script execution.
 env:
 - MESSAGE=hello

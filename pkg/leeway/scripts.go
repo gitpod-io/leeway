@@ -37,13 +37,13 @@ const (
 type Script struct {
 	C *Component
 
-	Name          string        `yaml:"name"`
-	Description   string        `yaml:"description"`
-	Dependencies  []string      `yaml:"deps"`
-	Environment   []string      `yaml:"env"`
-	WorkdirLayout WorkdirLayout `yaml:"workdir"`
-	Type          ScriptType    `yaml:"type"`
-	Script        string        `yaml:"script"`
+	Name          string              `yaml:"name"`
+	Description   string              `yaml:"description"`
+	Dependencies  []PackageDependency `yaml:"deps"`
+	Environment   []string            `yaml:"env"`
+	WorkdirLayout WorkdirLayout       `yaml:"workdir"`
+	Type          ScriptType          `yaml:"type"`
+	Script        string              `yaml:"script"`
 
 	dependencies []*Package
 }
@@ -55,13 +55,16 @@ func (p *Script) FullName() string {
 
 // link connects resolves the references to the dependencies
 func (p *Script) link(idx map[string]*Package) error {
-	p.dependencies = make([]*Package, len(p.Dependencies))
-	for i, dep := range p.Dependencies {
-		var ok bool
-		p.dependencies[i], ok = idx[dep]
+	p.dependencies = make([]*Package, 0, len(p.Dependencies))
+	for _, dep := range p.Dependencies {
+		pkg, ok := idx[dep.FullPackage()]
 		if !ok {
+			if dep.Optional() {
+				continue
+			}
 			return PackageNotFoundErr{dep}
 		}
+		p.dependencies = append(p.dependencies, pkg)
 	}
 	return nil
 }

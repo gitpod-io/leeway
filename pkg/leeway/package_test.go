@@ -6,6 +6,108 @@ import (
 	"testing"
 )
 
+func TestPackageDependencyValid(t *testing.T) {
+	tests := []struct {
+		Input       string
+		Expectation bool
+	}{
+		{":foo", true},
+		{":foo?", true},
+		{"absolute/component:foo?", true},
+		{"missing/package", false},
+		{":", false},
+		{"", false},
+	}
+	for _, test := range tests {
+		t.Run(test.Input, func(t *testing.T) {
+			act := PackageDependency(test.Input).Valid()
+			if act != test.Expectation {
+				t.Fatalf("expected %v, got %v", test.Expectation, act)
+			}
+		})
+	}
+}
+
+func TestPackageDependencyOptional(t *testing.T) {
+	tests := []struct {
+		Input       string
+		Expectation bool
+	}{
+		{":foo", false},
+		{":foo?", true},
+		{"absolute/component:foo", false},
+		{"absolute/component:foo?", true},
+	}
+	for _, test := range tests {
+		t.Run(test.Input, func(t *testing.T) {
+			act := PackageDependency(test.Input).Optional()
+			if act != test.Expectation {
+				t.Fatalf("expected %v, got %v", test.Expectation, act)
+			}
+		})
+	}
+}
+
+func TestPackageDependencyRelative(t *testing.T) {
+	tests := []struct {
+		Input       string
+		Expectation bool
+	}{
+		{":foo", true},
+		{":foo?", true},
+		{"absolute/component:foo", false},
+		{"absolute/component:foo?", false},
+	}
+	for _, test := range tests {
+		t.Run(test.Input, func(t *testing.T) {
+			act := PackageDependency(test.Input).Relative()
+			if act != test.Expectation {
+				t.Fatalf("expected %v, got %v", test.Expectation, act)
+			}
+		})
+	}
+}
+
+func TestPackageDependencyComponent(t *testing.T) {
+	tests := []struct {
+		Input       string
+		Expectation string
+	}{
+		{":foo", ""},
+		{":foo?", ""},
+		{"absolute/component:foo?", "absolute/component"},
+		{"", ""},
+	}
+	for _, test := range tests {
+		t.Run(test.Input, func(t *testing.T) {
+			act := PackageDependency(test.Input).Component()
+			if act != test.Expectation {
+				t.Fatalf("expected %v, got %v", test.Expectation, act)
+			}
+		})
+	}
+}
+
+func TestPackageDependencyFullPackage(t *testing.T) {
+	tests := []struct {
+		Input       string
+		Expectation string
+	}{
+		{":foo", ":foo"},
+		{":foo?", ":foo"},
+		{"absolute/component:foo?", "absolute/component:foo"},
+		{"", ""},
+	}
+	for _, test := range tests {
+		t.Run(test.Input, func(t *testing.T) {
+			act := PackageDependency(test.Input).FullPackage()
+			if act != test.Expectation {
+				t.Fatalf("expected %v, got %v", test.Expectation, act)
+			}
+		})
+	}
+}
+
 func TestResolveBuiltinVariables(t *testing.T) {
 	tests := []struct {
 		PkgType     PackageType
