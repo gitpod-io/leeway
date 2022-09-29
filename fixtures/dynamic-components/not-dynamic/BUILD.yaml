@@ -1,0 +1,10 @@
+packages:
+  - name: echo
+    type: generic
+    deps:
+      - dynamic:message
+    config:
+      commands: [
+        ["sh", "-c", "echo 'The message is...'"],
+        ["cat", "dynamic--message/message.txt"]
+      ]
