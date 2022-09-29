@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gitpod-io/leeway/pkg/gokart"
 	"github.com/in-toto/in-toto-golang/in_toto"
 	"github.com/opencontainers/runc/libcontainer/specconv"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -1095,23 +1094,6 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		} else {
 			commands = append(commands, cfg.LintCommand)
 		}
-	}
-	if cfg.GoKart.Enabled {
-		var apiDepPtn *regexp.Regexp
-		if cfg.GoKart.APIDepsPattern == "" {
-			apiDepPtn = regexp.MustCompile(`\/api`)
-		} else {
-			apiDepPtn, err = regexp.Compile(cfg.GoKart.APIDepsPattern)
-			if err != nil {
-				return nil, err
-			}
-			log.WithField("exp", apiDepPtn).Debug("using custom api dependency pattern for GoKart")
-		}
-		err = gokart.BuildAnalyzerConfig(wd, apiDepPtn)
-		if err != nil {
-			return nil, err
-		}
-		commands = append(commands, []string{"gokart", "scan", "-i", gokart.AnalyzerFilename, "-x"})
 	}
 	if !cfg.DontTest && !buildctx.DontTest {
 		testCommand := []string{goCommand, "test", "-v"}
