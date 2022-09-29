@@ -468,14 +468,10 @@ type GoPkgConfig struct {
 	DontTest       bool        `yaml:"dontTest,omitempty"`
 	DontCheckGoFmt bool        `yaml:"dontCheckGoFmt,omitempty"`
 	DontLint       bool        `yaml:"dontLint,omitempty"`
-	GoKart         struct {
-		Enabled        bool   `yaml:"enabled,omitempty"`
-		APIDepsPattern string `yaml:"apiDepsPattern,omitempty"`
-	} `yaml:"gokart,omitempty"`
-	BuildFlags   []string `yaml:"buildFlags,omitempty"`
-	BuildCommand []string `yaml:"buildCommand,omitempty"`
-	LintCommand  []string `yaml:"lintCommand,omitempty"`
-	GoVersion    string   `yaml:"goVersion,omitempty"`
+	BuildFlags     []string    `yaml:"buildFlags,omitempty"`
+	BuildCommand   []string    `yaml:"buildCommand,omitempty"`
+	LintCommand    []string    `yaml:"lintCommand,omitempty"`
+	GoVersion      string      `yaml:"goVersion,omitempty"`
 }
 
 // Validate ensures this config can be acted upon/is valid
