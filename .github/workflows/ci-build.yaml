@@ -83,6 +83,9 @@ jobs:
       - name: Download and vendor all required packages
         run: |
           go mod download
+      - name: Create checkout directory
+        run: |
+          curl -sSL https://github.com/containerd/nerdctl/releases/download/v0.23.0/nerdctl-full-0.23.0-linux-amd64.tar.gz -o - | sudo tar -xz -C /usr/local
       - name: Run all unit tests
         run: go test -v -coverprofile=coverage.out $(go list ./...)
       - name: Generate code coverage artifacts
