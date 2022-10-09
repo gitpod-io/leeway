@@ -28,6 +28,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	dockerCommand  = "docker"
+	nerdctlCommand = "nerdctl"
+)
+
+var (
+	buildCommand = dockerCommand
+)
+
+func init() {
+	// check if nerdctl exists and use it instead of docker
+	_, err := exec.LookPath(nerdctlCommand)
+	if err == nil {
+		buildCommand = nerdctlCommand
+	}
+}
+
 // PkgNotBuiltErr is used when a package's dependency hasn't been built yet
 type PkgNotBuiltErr struct {
 	Package *Package
@@ -1172,7 +1189,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		return nil, err
 	}
 
-	buildcmd := []string{"docker", "build", "--pull", "-t", version}
+	buildcmd := []string{buildCommand, "build", "--pull", "-t", version}
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
 	}
@@ -1192,7 +1209,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// we don't push the image, let's export it
 		ef := strings.TrimSuffix(result, ".gz")
 		buildCommands = append(buildCommands, [][]string{
-			{"docker", "save", "-o", ef, version},
+			{buildCommand, "save", "-o", ef, version},
 		}...)
 	}
 
@@ -1214,8 +1231,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	} else if len(cfg.Image) > 0 {
 		for _, img := range cfg.Image {
 			pkgCommands = append(pkgCommands, [][]string{
-				{"docker", "tag", version, img},
-				{"docker", "push", img},
+				{buildCommand, "tag", version, img},
+				{buildCommand, "push", img},
 			}...)
 		}
 
@@ -1249,7 +1266,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 					err = xerrors.Errorf("provenance get subjects: %w", err)
 				}
 			}()
-			out, err := exec.Command("docker", "inspect", version).CombinedOutput()
+			out, err := exec.Command(buildCommand, "inspect", version).CombinedOutput()
 			if err != nil {
 				return nil, xerrors.Errorf("cannot determine ID of the image we just built")
 			}
