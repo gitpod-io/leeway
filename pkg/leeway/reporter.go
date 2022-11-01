@@ -8,7 +8,10 @@ import (
 	"strings"
 	"sync"
 	"text/tabwriter"
+	"text/template"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/gookit/color"
 	"github.com/segmentio/textio"
@@ -24,7 +27,7 @@ type Reporter interface {
 	// have been built.
 	BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus)
 
-	// BuildFinished is called when the build of a package whcih was started by the user has finished.
+	// BuildFinished is called when the build of a package which was started by the user has finished.
 	// This is not the same as a dependency build finished (see PackageBuildFinished for that).
 	// The root package will also be passed into PackageBuildFinished once it's been built.
 	BuildFinished(pkg *Package, err error)
@@ -224,4 +227,149 @@ func (r *WerftReporter) PackageBuildFinished(pkg *Package, err error) {
 		msg = err.Error()
 	}
 	fmt.Printf("[%s|%s] %s\n", pkg.FullName(), status, msg)
+}
+
+type PackageReport struct {
+	logs     strings.Builder
+	start    time.Time
+	duration time.Duration
+	status   PackageBuildStatus
+	err      error
+}
+
+func (r *PackageReport) StatusIcon() string {
+	if r.HasError() {
+		return "❌"
+	}
+	switch r.status {
+	case PackageBuilt:
+		return "✅"
+	case PackageBuilding:
+		return "🏃"
+	case PackageNotBuiltYet:
+		return "🔧"
+	default:
+		return "?"
+	}
+}
+
+func (r *PackageReport) HasError() bool {
+	return r.err != nil
+}
+
+func (r *PackageReport) DurationInSeconds() string {
+	return fmt.Sprintf("%.2fs", r.duration.Seconds())
+}
+
+func (r *PackageReport) Logs() string {
+	return strings.TrimSpace(r.logs.String())
+}
+
+func (r *PackageReport) Error() string {
+	return fmt.Sprintf("%s", r.err)
+}
+
+type HTMLReporter struct {
+	delegate    Reporter
+	filename    string
+	reports     map[string]*PackageReport
+	rootPackage *Package
+	mu          sync.RWMutex
+}
+
+func NewHTMLReporter(del Reporter, filename string) *HTMLReporter {
+	return &HTMLReporter{
+		delegate: del,
+		filename: filename,
+		reports:  make(map[string]*PackageReport),
+	}
+}
+
+func (r *HTMLReporter) getReport(pkg *Package) *PackageReport {
+	name := pkg.FullName()
+
+	r.mu.RLock()
+	rep, ok := r.reports[name]
+	r.mu.RUnlock()
+
+	if !ok {
+		r.mu.Lock()
+		rep, ok = r.reports[name]
+		if ok {
+			r.mu.Unlock()
+			return rep
+		}
+
+		rep = &PackageReport{status: PackageNotBuiltYet}
+		r.reports[name] = rep
+		r.mu.Unlock()
+	}
+
+	return rep
+}
+
+func (r *HTMLReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {
+	r.rootPackage = pkg
+	r.delegate.BuildStarted(pkg, status)
+}
+
+func (r *HTMLReporter) BuildFinished(pkg *Package, err error) {
+	r.delegate.BuildFinished(pkg, err)
+	r.Report()
+}
+
+func (r *HTMLReporter) PackageBuildStarted(pkg *Package) {
+	r.delegate.PackageBuildStarted(pkg)
+	rep := r.getReport(pkg)
+	rep.start = time.Now()
+	rep.status = PackageBuilding
+}
+
+func (r *HTMLReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {
+	report := r.getReport(pkg)
+	report.logs.Write(buf)
+	r.delegate.PackageBuildLog(pkg, isErr, buf)
+}
+
+func (r *HTMLReporter) PackageBuildFinished(pkg *Package, err error) {
+	r.delegate.PackageBuildFinished(pkg, err)
+	rep := r.getReport(pkg)
+	rep.duration = time.Since(rep.start)
+	rep.status = PackageBuilt
+	rep.err = err
+}
+
+func (r *HTMLReporter) Report() {
+	vars := make(map[string]interface{})
+	vars["Name"] = r.filename
+	vars["Packages"] = r.reports
+	vars["RootPackage"] = r.rootPackage
+
+	tmplString := `
+<h1> Leeway build for <code>{{ .RootPackage.FullName }}</code></h1>
+{{ range $pkg, $report := .Packages }}
+<details{{ if $report.HasError }} open{{ end }}><summary> {{ $report.StatusIcon }} <b>{{ $pkg }}</b> - {{ $report.DurationInSeconds }}</summary>
+
+{{ if $report.HasError }}
+<pre>
+{{ $report.Error }}
+</pre>
+{{ end }}
+
+<pre>
+{{ $report.Logs }}
+</pre>
+
+</details>
+{{ end }}
+`
+	tmpl, _ := template.New("Report").Parse(strings.ReplaceAll(tmplString, "'", "`"))
+
+	file, _ := os.Create(r.filename)
+	defer file.Close()
+
+	err := tmpl.Execute(file, vars)
+	if err != nil {
+		log.WithError(err).Fatal("Can't render template")
+	}
 }
