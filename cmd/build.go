@@ -154,6 +154,7 @@ func init() {
 	buildCmd.Flags().String("serve", "", "After a successful build this starts a webserver on the given address serving the build result (e.g. --serve localhost:8080)")
 	buildCmd.Flags().String("save", "", "After a successful build this saves the build result as tar.gz file in the local filesystem (e.g. --save build-result.tar.gz)")
 	buildCmd.Flags().Bool("watch", false, "Watch source files and re-build on change")
+
 }
 
 func addBuildFlags(cmd *cobra.Command) {
@@ -172,7 +173,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().UintP("max-concurrent-tasks", "j", uint(runtime.NumCPU()), "Limit the number of max concurrent build tasks - set to 0 to disable the limit")
 	cmd.Flags().String("coverage-output-path", "", "Output path where test coverage file will be copied after running tests")
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
-
+	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemCache) {
@@ -255,6 +256,14 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		reporter = leeway.NewWerftReporter()
 	} else {
 		reporter = leeway.NewConsoleReporter()
+	}
+
+	report, err := cmd.Flags().GetString("report")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if report != "" {
+		reporter = leeway.NewHTMLReporter(reporter, report)
 	}
 
 	dontTest, err := cmd.Flags().GetBool("dont-test")
