@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/minio/highwayhash"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
 
@@ -33,6 +34,9 @@ const (
 	// BuildinArgGitCommit is a builtin argument/variable which contains the current Git commit if the build is executed from within a Git working copy.
 	// If this variable is used and the build is not executed from within a Git working copy the variable resolution will fail.
 	BuildinArgGitCommit = "__git_commit"
+
+	// BuildinArgGitCommitShort is the shortened version of BuildinArgGitCommit to the first 7 characters
+	BuildinArgGitCommitShort = "__git_commit_short"
 
 	// contentHashKey is the key we use to hash source files. Change this key and you'll break all past versions of all leeway builds ever.
 	contentHashKey = "0340f3c8947cad7875140f4c4af7c62b43131dc2a8c7fc4628f0685e369a3b0b"
@@ -773,7 +777,7 @@ func (p *Package) resolveBuiltinVariables() error {
 	for _, n := range ur {
 		n = strings.TrimSuffix(strings.TrimPrefix(n, "${"), "}")
 		switch n {
-		case BuildinArgGitCommit:
+		case BuildinArgGitCommit, BuildinArgGitCommitShort:
 			foundGitVar = true
 			fallthrough
 		case BuiltinArgPackageVersion:
@@ -1002,7 +1006,59 @@ func resolveBuiltinGitVariables(pkg *Package, vars map[string]string) error {
 		return fmt.Errorf("package sources are not within a Git working copy")
 	}
 
+	if len(commit) != 40 {
+		return fmt.Errorf("unexpected commit hash length [%d]: [%s]", len(commit), commit)
+	}
+
+	commitShort := commit[0:7]
+	isDirty := pkg.C != nil && pkg.C.Git() != nil && pkg.C.Git().dirty && isPkgDirty(pkg, pkg.C.Git())
+	if isDirty {
+		version, err := pkg.Version()
+		if err != nil {
+			return fmt.Errorf("unable to get version hash: [%v]", err)
+		}
+
+		commitShort = fmt.Sprintf("%s-%s", commitShort, version)
+		commit = fmt.Sprintf("%s-%s", commit, version)
+	}
+
 	vars[BuildinArgGitCommit] = commit
+	vars[BuildinArgGitCommitShort] = commitShort
 
 	return nil
+}
+
+// isPkgDirty recursively checks whether a package and all its dependencies are dirty
+// by comparing the git working copy with the content of the package and if there is a match, marks the package as dirty
+func isPkgDirty(pkg *Package, info *GitInfo) bool {
+	for _, s := range pkg.Sources {
+		// paths in `GitInfo.dirtyFiles` don't contain the git work dir, so we strip it
+		source := strings.TrimPrefix(s, info.WorkingCopyLoc+string(os.PathSeparator))
+		if _, ok := info.dirtyFiles[source]; ok {
+			log.WithFields(log.Fields{
+				"pkg":  pkg.Name,
+				"file": source,
+			}).Debug("Package is dirty")
+			return true
+		}
+
+		// if we get a dir in our dirty files (dirs), it doesn't have a trailing slash, so we add it
+		dirMatch := filepath.Dir(source) + string(os.PathSeparator)
+		if _, ok := info.dirtyFiles[dirMatch]; ok {
+			log.WithFields(log.Fields{
+				"pkg":  pkg.Name,
+				"dir":  dirMatch,
+				"file": source,
+			}).Debug("Package is dirty")
+			return true
+		}
+	}
+
+	for _, d := range pkg.GetDependencies() {
+		if dirty := isPkgDirty(d, info); dirty {
+			return true
+		}
+	}
+
+	return false
 }

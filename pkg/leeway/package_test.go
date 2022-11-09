@@ -2,9 +2,144 @@ package leeway
 
 import (
 	"fmt"
+	"os"
+	"path"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
+
+func TestResolveBuiltinGitVariables(t *testing.T) {
+	// get the current file/dir so we can insert files/paths that will actually resolve to something
+	_, filename, _, _ := runtime.Caller(0)
+	// also files/dirs in `GitInfo.dirtyFiles` don't have a leading/trailing separator, so strip it
+	filename = strings.TrimPrefix(filename, string(os.PathSeparator))
+	dir := path.Dir(filename) + string(os.PathSeparator)
+
+	depNotChanged := NewTestPackage("dep-no-change")
+	depWithChange := NewTestPackage("dep-with-change")
+	depWithChange.Sources = append(depWithChange.Sources, filename)
+
+	tests := []struct {
+		name              string
+		gitInfo           *GitInfo
+		sources           []string
+		deps              []*Package
+		expectedBuildArgs map[string]string
+		expectedErr       error
+	}{
+		{
+			name: "package is clean",
+			gitInfo: &GitInfo{
+				Commit: "425b74bc42c2eba6409cf2b869b084fe8c03067f",
+				dirty:  false,
+			},
+			expectedBuildArgs: map[string]string{
+				BuildinArgGitCommit:      "425b74bc42c2eba6409cf2b869b084fe8c03067f",
+				BuildinArgGitCommitShort: "425b74b",
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "dirty tree, package is clean",
+			gitInfo: &GitInfo{
+				Commit: "425b74bc42c2eba6409cf2b869b084fe8c03067f",
+				dirty:  true,
+				dirtyFiles: map[string]struct{}{
+					filename: {},
+					dir:      {},
+				},
+			},
+			expectedBuildArgs: map[string]string{
+				BuildinArgGitCommit:      "425b74bc42c2eba6409cf2b869b084fe8c03067f",
+				BuildinArgGitCommitShort: "425b74b",
+			},
+			expectedErr: nil,
+		},
+		{
+			name:    "package is dirty. file not committed",
+			sources: []string{filename},
+			gitInfo: &GitInfo{
+				Commit: "425b74bc42c2eba6409cf2b869b084fe8c03067f",
+				dirty:  true,
+				dirtyFiles: map[string]struct{}{
+					filename: {},
+				},
+			},
+			expectedBuildArgs: map[string]string{
+				BuildinArgGitCommit:      "425b74bc42c2eba6409cf2b869b084fe8c03067f-this-version",
+				BuildinArgGitCommitShort: "425b74b-this-version",
+			},
+			expectedErr: nil,
+		},
+		{
+			name:    "package is dirty. source added and dir not in git",
+			sources: []string{filename},
+			gitInfo: &GitInfo{
+				Commit: "425b74bc42c2eba6409cf2b869b084fe8c03067f",
+				dirty:  true,
+				dirtyFiles: map[string]struct{}{
+					dir: {},
+				},
+			},
+			expectedBuildArgs: map[string]string{
+				BuildinArgGitCommit:      "425b74bc42c2eba6409cf2b869b084fe8c03067f-this-version",
+				BuildinArgGitCommitShort: "425b74b-this-version",
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "has dep, dirty tree, pkg not dirty",
+			gitInfo: &GitInfo{
+				Commit: "425b74bc42c2eba6409cf2b869b084fe8c03067f",
+				dirty:  true,
+				dirtyFiles: map[string]struct{}{
+					filename: {},
+				},
+			},
+			deps: []*Package{depNotChanged},
+			expectedBuildArgs: map[string]string{
+				BuildinArgGitCommit:      "425b74bc42c2eba6409cf2b869b084fe8c03067f",
+				BuildinArgGitCommitShort: "425b74b",
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "has dirty dep",
+			gitInfo: &GitInfo{
+				Commit: "425b74bc42c2eba6409cf2b869b084fe8c03067f",
+				dirty:  true,
+				dirtyFiles: map[string]struct{}{
+					filename: {},
+				},
+			},
+			deps: []*Package{depWithChange},
+			expectedBuildArgs: map[string]string{
+				BuildinArgGitCommit:      "425b74bc42c2eba6409cf2b869b084fe8c03067f-this-version",
+				BuildinArgGitCommitShort: "425b74b-this-version",
+			},
+			expectedErr: nil,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := NewTestPackage("pkg")
+			pkg.Sources = append(pkg.Sources, test.sources...)
+			pkg.dependencies = append(pkg.dependencies, test.deps...)
+			pkg.C.git = test.gitInfo
+
+			vars := map[string]string{}
+			err := resolveBuiltinGitVariables(pkg, vars)
+
+			assert.ErrorIs(t, test.expectedErr, err)
+			assert.Equal(t, test.expectedBuildArgs, vars)
+		})
+	}
+}
 
 func TestResolveBuiltinVariables(t *testing.T) {
 	tests := []struct {

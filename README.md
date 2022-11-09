@@ -265,7 +265,8 @@ In a package definition one can use _build arguments_. Build args have the form 
 
 Leeway supports built-in build arguments:
 - `__pkg_version` resolves to the leeway version hash of a component.
-- `__git_commit` contains the current Git commit if the build is executed from within a Git working copy. If this variable is used and the build is not executed from within a Git working copy the variable resolution will fail.
+- `__git_commit` contains the current Git commit if the build is executed from within a Git working copy. If this variable is used and the build is not executed from within a Git working copy the variable resolution will fail. If the package sources contain uncommitted files/directories, then `__pkg_version` will be appended to `__git_commit`
+- `__git_commit_short`  shortened version of `__git_commit` to the first 7 characters.
 
 ## Package Variants
 Leeway supports build-time variance through "package variants". Those variants are defined on the workspace level and can modify the list of sources, environment variables and config of packages.
