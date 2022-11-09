@@ -311,6 +311,10 @@ type pushOnlyRemoteCache struct {
 	C leeway.RemoteCache
 }
 
+func (c *pushOnlyRemoteCache) Exists(pkgs []*leeway.Package) (map[*leeway.Package]bool, error) {
+	return c.C.Exists(pkgs)
+}
+
 func (c *pushOnlyRemoteCache) Download(dst leeway.Cache, pkgs []*leeway.Package) error {
 	return nil
 }
@@ -321,6 +325,10 @@ func (c *pushOnlyRemoteCache) Upload(src leeway.Cache, pkgs []*leeway.Package) e
 
 type pullOnlyRemoteCache struct {
 	C leeway.RemoteCache
+}
+
+func (c *pullOnlyRemoteCache) Exists(pkgs []*leeway.Package) (map[*leeway.Package]bool, error) {
+	return c.C.Exists(pkgs)
 }
 
 func (c *pullOnlyRemoteCache) Download(dst leeway.Cache, pkgs []*leeway.Package) error {

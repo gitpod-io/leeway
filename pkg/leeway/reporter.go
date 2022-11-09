@@ -109,7 +109,11 @@ func (r *ConsoleReporter) BuildStarted(pkg *Package, status map[*Package]Package
 
 		format := "%s\t%s\t%s\n"
 		if status == PackageBuilt {
-			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📦\tcached"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
+			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📦\tcached locally"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
+		} else if status == PackageInRemoteCache {
+			lines[i] = fmt.Sprintf(format, color.Green.Sprint("🌎\tcached remotely (ignored)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
+		} else if status == PackageDownloaded {
+			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📥\tcached remotely (downloaded)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
 		} else {
 			lines[i] = fmt.Sprintf(format, color.Yellow.Sprint("🔧\tbuild"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
 		}
@@ -246,6 +250,10 @@ func (r *PackageReport) StatusIcon() string {
 		return "✅"
 	case PackageBuilding:
 		return "🏃"
+	case PackageInRemoteCache:
+		return "🌎"
+	case PackageDownloaded:
+		return "📥"
 	case PackageNotBuiltYet:
 		return "🔧"
 	default:

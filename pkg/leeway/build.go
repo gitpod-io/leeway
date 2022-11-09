@@ -45,8 +45,12 @@ const (
 	PackageNotBuiltYet PackageBuildStatus = "not-built-yet"
 	// PackageBuilding means we're building this package at the moment
 	PackageBuilding PackageBuildStatus = "building"
-	// PackageBuilt means the package has been built already
-	PackageBuilt PackageBuildStatus = "built"
+	// PackageBuilt means the package has been built and exists in the local cache already
+	PackageBuilt PackageBuildStatus = "built-locally"
+	// PackageDownloaded means the package was downloaded from the remote cache as part of this build
+	PackageDownloaded PackageBuildStatus = "downloaded"
+	// PackageInRemoteCache means the package has been built but currently only exists in the remote cache
+	PackageInRemoteCache PackageBuildStatus = "built-remotely"
 )
 
 type buildContext struct {
@@ -390,39 +394,53 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	requirements := pkg.GetTransitiveDependencies()
+
 	allpkg := append(requirements, pkg)
 
-	// respect per-package cache level when downloading from remote cache
-	remotelyCachedReq := make([]*Package, 0, len(requirements))
-	remotelyCachedReq = append(remotelyCachedReq, requirements...)
+	pkgsInLocalCache := make(map[*Package]bool)
+	pkgsToCheckRemoteCache := []*Package{}
+	for _, p := range allpkg {
+		if p.Ephemeral {
+			// Ephemeral packages will always need to be build
+			continue
+		}
 
-	err = options.RemoteCache.Download(ctx.LocalCache, remotelyCachedReq)
+		_, exists := ctx.LocalCache.Location(p)
+		if exists {
+			pkgsInLocalCache[p] = true
+		} else {
+			pkgsToCheckRemoteCache = append(pkgsToCheckRemoteCache, p)
+		}
+	}
+
+	pkgsInRemoteCache, err := ctx.RemoteCache.Exists(pkgsToCheckRemoteCache)
 	if err != nil {
 		return err
 	}
 
-	// Download only downloads packages that do not exist locally, yet
-	for _, arc := range options.AdditionalRemoteCaches {
-		err = arc.Download(ctx.LocalCache, remotelyCachedReq)
-		if err != nil {
-			return err
-		}
-	}
+	pkgsWillBeDownloaded := make(map[*Package]bool)
+	pkg.packagesToDownload(pkgsInLocalCache, pkgsInRemoteCache, pkgsWillBeDownloaded)
 
 	pkgstatus := make(map[*Package]PackageBuildStatus)
 	unresolvedArgs := make(map[string][]string)
 	for _, dep := range allpkg {
-		_, exists := ctx.LocalCache.Location(dep)
+		existsInLocalCache := pkgsInLocalCache[dep]
+		existsInRemoteCache := pkgsInRemoteCache[dep]
+		willBeDownloaded := pkgsWillBeDownloaded[dep]
 		if dep.Ephemeral {
-			// ephemeral packages are never built at the begining of a build
+			// ephemeral packages are never built at the beginning of a build
 			pkgstatus[dep] = PackageNotBuiltYet
-		} else if exists {
+		} else if existsInLocalCache {
 			pkgstatus[dep] = PackageBuilt
+		} else if willBeDownloaded {
+			pkgstatus[dep] = PackageDownloaded
+		} else if existsInRemoteCache {
+			pkgstatus[dep] = PackageInRemoteCache
 		} else {
 			pkgstatus[dep] = PackageNotBuiltYet
 		}
 
-		if exists {
+		if pkgstatus[dep] != PackageNotBuiltYet {
 			continue
 		}
 
@@ -439,6 +457,18 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 			unresolvedArgs[arg] = pkgs
 		}
 	}
+
+	pkgsToDownload := make([]*Package, 0, len(pkgsWillBeDownloaded))
+	for p, willBeDownloaded := range pkgsWillBeDownloaded {
+		if willBeDownloaded {
+			pkgsToDownload = append(pkgsToDownload, p)
+		}
+	}
+	err = options.RemoteCache.Download(ctx.LocalCache, pkgsToDownload)
+	if err != nil {
+		return err
+	}
+
 	options.Reporter.BuildStarted(pkg, pkgstatus)
 	defer func(err *error) {
 		options.Reporter.BuildFinished(pkg, *err)
@@ -536,6 +566,7 @@ func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
 	donechan := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(len(p.GetDependencies()))
+
 	for _, dep := range p.GetDependencies() {
 		go func(dep *Package) {
 			err := dep.build(buildctx)
@@ -560,6 +591,7 @@ func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
 
 func (p *Package) build(buildctx *buildContext) (err error) {
 	_, alreadyBuilt := buildctx.LocalCache.Location(p)
+
 	if p.Ephemeral {
 		// ephemeral packages always require a rebuild
 	} else if alreadyBuilt {
@@ -712,6 +744,32 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	}
 
 	return err
+}
+
+// Collects the minimal set of packages to download from the remote cache
+// That is, a package will only be downloaded if it is needed to perform a build.
+//
+// Note: toDownload is a map to avoid having duplicates.
+func (p *Package) packagesToDownload(inLocalCache map[*Package]bool, inRemoteCache map[*Package]bool, toDownload map[*Package]bool) {
+	existsInLocalCache := inLocalCache[p]
+	existsInRemoteCache := inRemoteCache[p]
+
+	if existsInLocalCache {
+		// If the package is already in the local cache then we don't need to download it or any of its dependencies
+		return
+	}
+
+	if existsInRemoteCache {
+		// If the package is in the remote cache then we want to download it, but we don't need to download its dependencies
+		// as we will not have to build the package.
+		toDownload[p] = true
+		return
+	}
+
+	// We need to build this package so lets iterate over its dependencies to see if any of them needs to be downloaded
+	for _, p := range p.GetDependencies() {
+		p.packagesToDownload(inLocalCache, inRemoteCache, toDownload)
+	}
 }
 
 type packageBuild struct {
