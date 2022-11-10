@@ -766,6 +766,7 @@ func (p *Package) FilesystemSafeName() string {
 }
 
 func (p *Package) resolveBuiltinVariables() error {
+	log.Infof("%s.resolveBuiltinVariables()", p.FullName())
 	ur, err := FindUnresolvedArguments(p)
 	if err != nil {
 		return err
@@ -1031,6 +1032,7 @@ func resolveBuiltinGitVariables(pkg *Package, vars map[string]string) error {
 // isPkgDirty recursively checks whether a package and all its dependencies are dirty
 // by comparing the git working copy with the content of the package and if there is a match, marks the package as dirty
 func isPkgDirty(pkg *Package, info *GitInfo) bool {
+	log.Infof("IsPgkDirty(%s)", pkg.FullName())
 	for _, s := range pkg.Sources {
 		// paths in `GitInfo.dirtyFiles` don't contain the git work dir, so we strip it
 		source := strings.TrimPrefix(s, info.WorkingCopyLoc+string(os.PathSeparator))
