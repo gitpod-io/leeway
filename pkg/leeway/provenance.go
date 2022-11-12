@@ -295,26 +295,13 @@ type provenanceEnvironment struct {
 func (p *Package) inTotoMaterials() ([]in_toto.ProvenanceMaterial, error) {
 	res := make([]in_toto.ProvenanceMaterial, 0, len(p.Sources))
 	for _, src := range p.Sources {
-		stat, err := os.Lstat(src)
+		skip, err := shouldSkipSource(src)
 		if err != nil {
 			return nil, err
 		}
 
-		if stat.Mode().IsDir() || !stat.Mode().IsRegular() {
+		if skip {
 			continue
-		}
-
-		// in case of symlinks, we need to resolve the link and check the target
-		if stat.Mode()&os.ModeSymlink == os.ModeSymlink {
-			targetSrc, _ := os.Readlink(src)
-			stat, err := os.Lstat(targetSrc)
-			if err != nil {
-				return nil, err
-			}
-
-			if stat.Mode().IsDir() || !stat.Mode().IsRegular() {
-				continue
-			}
 		}
 
 		hash, err := sha256Hash(src)
@@ -396,6 +383,15 @@ func (fset fileset) Subjects(base string) ([]in_toto.Subject, error) {
 		f, err := os.Open(filepath.Join(base, src))
 		if err != nil {
 			return nil, xerrors.Errorf("cannot compute hash of %s: %w", src, err)
+		}
+
+		skip, err := shouldSkipSource(f.Name())
+		if err != nil {
+			return nil, xerrors.Errorf("cannot compute hash of %s: %w", src, err)
+		}
+
+		if skip {
+			continue
 		}
 
 		hash := sha256.New()
@@ -493,3 +489,30 @@ func (a *AttestationBundle) AddFromBundle(other io.Reader) error {
 }
 
 func (a *AttestationBundle) Len() int { return len(a.keys) }
+
+func shouldSkipSource(src string) (bool, error) {
+	stat, err := os.Lstat(src)
+	if err != nil {
+		return false, err
+	}
+
+	if stat.Mode().IsDir() || !stat.Mode().IsRegular() {
+		return true, nil
+	}
+
+	// in case of symlinks, we need to resolve the link and check the target
+	if stat.Mode()&os.ModeSymlink == os.ModeSymlink {
+		targetSrc, _ := os.Readlink(src)
+		stat, err := os.Lstat(targetSrc)
+		if err != nil {
+			return false, err
+		}
+
+		if stat.Mode().IsDir() || !stat.Mode().IsRegular() {
+			return true, nil
+		}
+	}
+
+	return false, nil
+
+}
