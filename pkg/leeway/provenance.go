@@ -295,17 +295,26 @@ type provenanceEnvironment struct {
 func (p *Package) inTotoMaterials() ([]in_toto.ProvenanceMaterial, error) {
 	res := make([]in_toto.ProvenanceMaterial, 0, len(p.Sources))
 	for _, src := range p.Sources {
-		stat, err := os.Lstat(src);
+		stat, err := os.Lstat(src)
 		if err != nil {
 			return nil, err
 		}
 
-		if stat.Mode().IsDir() {
+		if stat.Mode().IsDir() || !stat.Mode().IsRegular() {
 			continue
 		}
 
-		if !stat.Mode().IsRegular() {
-			continue
+		// in case of symlinks, we need to resolve the link and check the target
+		if stat.Mode()&os.ModeSymlink == os.ModeSymlink {
+			targetSrc, _ := os.Readlink(src)
+			stat, err := os.Lstat(targetSrc)
+			if err != nil {
+				return nil, err
+			}
+
+			if stat.Mode().IsDir() || !stat.Mode().IsRegular() {
+				continue
+			}
 		}
 
 		hash, err := sha256Hash(src)
@@ -340,7 +349,6 @@ func sha256Hash(fn string) (res string, err error) {
 	if err != nil {
 		return "", xerrors.Errorf("cannot compute hash of %s: %w", fn, err)
 	}
-
 
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
