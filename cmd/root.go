@@ -173,10 +173,6 @@ func getRemoteCache() leeway.RemoteCache {
 			return leeway.GSUtilRemoteCache{
 				BucketName: remoteCacheBucket,
 			}
-		case "MINIO":
-			return leeway.MinioRemoteCache{
-				BucketName: remoteCacheBucket,
-			}
 		default:
 			return leeway.GSUtilRemoteCache{
 				BucketName: remoteCacheBucket,
