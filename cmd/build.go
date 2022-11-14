@@ -164,7 +164,6 @@ func addBuildFlags(cmd *cobra.Command) {
 	}
 
 	cmd.Flags().StringP("cache", "c", cacheDefault, "Configures the caching behaviour: none=no caching, local=local caching only, remote-pull=download from remote but never upload, remote-push=push to remote cache only but don't download, remote=use all configured caches")
-	cmd.Flags().StringSlice("add-remote-cache", []string{}, "Configures additional (pull-only) remote caches")
 	cmd.Flags().Bool("dry-run", false, "Don't actually build but stop after showing what would need to be built")
 	cmd.Flags().String("dump-plan", "", "Writes the build plan as JSON to a file. Use \"-\" to write the build plan to stderr.")
 	cmd.Flags().Bool("werft", false, "Produce werft CI compatible output")
@@ -213,16 +212,6 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 	localCache, err := leeway.NewFilesystemCache(localCacheLoc)
 	if err != nil {
 		log.Fatal(err)
-	}
-
-	var arcs []leeway.RemoteCache
-	additionalRemoteCaches, _ := cmd.Flags().GetStringSlice("add-remote-cache")
-	for _, arc := range additionalRemoteCaches {
-		arcs = append(arcs, &pullOnlyRemoteCache{
-			C: leeway.GSUtilRemoteCache{
-				BucketName: arc,
-			},
-		})
 	}
 
 	dryrun, err := cmd.Flags().GetBool("dry-run")
@@ -295,7 +284,6 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
-		leeway.WithAdditionalRemoteCaches(arcs),
 		leeway.WithDryRun(dryrun),
 		leeway.WithBuildPlan(planOutlet),
 		leeway.WithReporter(reporter),

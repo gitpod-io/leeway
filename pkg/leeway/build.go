@@ -278,14 +278,6 @@ func WithRemoteCache(cache RemoteCache) BuildOption {
 	}
 }
 
-// WithAdditionalRemoteCaches configures the remote cache
-func WithAdditionalRemoteCaches(caches []RemoteCache) BuildOption {
-	return func(opts *buildOptions) error {
-		opts.AdditionalRemoteCaches = caches
-		return nil
-	}
-}
-
 // WithReporter sets the reporter which is notified about the build progress
 func WithReporter(reporter Reporter) BuildOption {
 	return func(opts *buildOptions) error {
