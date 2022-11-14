@@ -748,18 +748,40 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]bool, inRemoteCac
 
 	if existsInLocalCache {
 		// If the package is already in the local cache then we don't need to download it or any of its dependencies
+		// The assumption here is that if the package exists locally, then we have already performed a build of the package
+		// so any required dependencies are already present in the cache too.
 		return
 	}
 
 	if existsInRemoteCache {
-		// If the package is in the remote cache then we want to download it, but we don't need to download its dependencies
-		// as we will not have to build the package.
+		// If the package is in the remote cache then we want to download it
 		toDownload[p] = true
-		return
+
+		// For Generic and Docker packages we can short-circuit here.
+		// For Yarn and Go we can not, see comment below for details.
+		switch p.Type {
+		case GenericPackage, DockerPackage:
+			return
+		}
 	}
 
-	// We need to build this package so lets iterate over its dependencies to see if any of them needs to be downloaded
-	for _, p := range p.GetDependencies() {
+	var deps []*Package
+	switch p.Type {
+	// For Go and Typescript packages we need all transitive dependencies of a component to be available on disk
+	// to perform a build.
+	//
+	// Example: components/ee/agent-smith:app depends on components/gitpod-protocol/go:lib
+	// 			components/gitpod-protocol/go:lib depends on components/gitpod-protocol:gitpod-schema
+	// 			To build components/ee/agent-smith:app it is not enough to just download components/gitpod-protocol/go:lib
+	// 			as we also need components/gitpod-protocol:gitpod-schema to be available on disk to perform the build.
+	case YarnPackage, GoPackage, DeprecatedTypescriptPackage:
+		deps = p.GetTransitiveDependencies()
+	// For Generic and Docker packages it is sufficient to have the direct dependencies.
+	case GenericPackage, DockerPackage:
+		deps = p.GetDependencies()
+	}
+
+	for _, p := range deps {
 		p.packagesToDownload(inLocalCache, inRemoteCache, toDownload)
 	}
 }
