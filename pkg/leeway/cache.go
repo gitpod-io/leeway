@@ -54,8 +54,8 @@ func (fsc *FilesystemCache) Location(pkg *Package) (path string, exists bool) {
 
 // RemoteCache can download and upload build artifacts into a local cache
 type RemoteCache interface {
-	// Exists checks if the there are build artifacts for the given packages in the remote cache.
-	Exists(pkgs []*Package) (map[*Package]bool, error)
+	// ExistingPackages returns existing cached build artifacts in the remote cache
+	ExistingPackages(pkgs []*Package) (map[*Package]struct{}, error)
 
 	// Download makes a best-effort attempt at downloading previously cached build artifacts for the given packages
 	// in their current version. A cache miss (i.e. a build artifact not being available) does not constitute an
@@ -70,13 +70,9 @@ type RemoteCache interface {
 // NoRemoteCache implements the default no-remote cache behavior
 type NoRemoteCache struct{}
 
-// Exists checks if cached build artifacts exist in the remote cache
-func (NoRemoteCache) Exists(pkgs []*Package) (map[*Package]bool, error) {
-	exists := make(map[*Package]bool)
-	for _, p := range pkgs {
-		exists[p] = false
-	}
-	return exists, nil
+// ExistingPackages returns existing cached build artifacts in the remote cache
+func (NoRemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{}, error) {
+	return map[*Package]struct{}{}, nil
 }
 
 // Download makes a best-effort attempt at downloading previously cached build artifacts
@@ -94,8 +90,8 @@ type GSUtilRemoteCache struct {
 	BucketName string
 }
 
-// Exists checks if cached build artifacts exist in the remote cache
-func (rs GSUtilRemoteCache) Exists(pkgs []*Package) (map[*Package]bool, error) {
+// ExistingPackages returns existing cached build artifacts in the remote cache
+func (rs GSUtilRemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{}, error) {
 	fmt.Printf("☁️  checking remote cache for past build artifacts for %d packages\n", len(pkgs))
 
 	packageToURLMap := make(map[*Package]string)
@@ -115,34 +111,33 @@ func (rs GSUtilRemoteCache) Exists(pkgs []*Package) (map[*Package]bool, error) {
 		urls = append(urls, url)
 	}
 
+	if len(urls) == 0 {
+		return map[*Package]struct{}{}, nil
+	}
+
 	log.Debugf("Checking if %d packages exist in the remote cache using gsutil", len(urls))
 	args := append([]string{"stat"}, urls...)
 	cmd := exec.Command("gsutil", args...)
 
-	var stdoutBuffer bytes.Buffer
+	var stdoutBuffer, stderrBuffer bytes.Buffer
 	cmd.Stdout = &stdoutBuffer
+	cmd.Stderr = &stderrBuffer
 
-	err := cmd.Start()
-	if err != nil {
-		return make(map[*Package]bool), xerrors.Errorf("Failed to check remote cache: %w", err)
+	err := cmd.Run()
+	if err != nil && !strings.Contains(stderrBuffer.String(), "No URLs matched") {
+		return nil, xerrors.Errorf("Failed to check remote cache: [%w]. stderr: [%v]", err, stderrBuffer.String())
 	}
 
-	err = cmd.Wait()
-	if err != nil {
-		// gsutil stat will return a non-zero exist code of 1 if at least one of the requested URLS don't exist.
-		// Unfortunately, it also uses an exit code of 1 for other errors like invalid command line arguments.
-		// So we we can't use the error for much, so we simply debug log it
-		log.Debugf("gsutil stat returned non-zero exit code: %s", err.Error())
-	}
-
-	urlExists := parseGSUtilStatOutput(bytes.NewReader(stdoutBuffer.Bytes()))
-	exists := make(map[*Package]bool)
+	existingURLs := parseGSUtilStatOutput(bytes.NewReader(stdoutBuffer.Bytes()))
+	existingPackages := make(map[*Package]struct{})
 	for _, p := range pkgs {
 		url := packageToURLMap[p]
-		exists[p] = urlExists[url]
+		if _, exists := existingURLs[url]; exists {
+			existingPackages[p] = struct{}{}
+		}
 	}
 
-	return exists, nil
+	return existingPackages, nil
 }
 
 // Download makes a best-effort attempt at downloading previously cached build artifacts
@@ -183,19 +178,14 @@ func (rs GSUtilRemoteCache) Upload(src Cache, pkgs []*Package) error {
 	return gsutilTransfer(fmt.Sprintf("gs://%s", rs.BucketName), files)
 }
 
-func parseGSUtilStatOutput(reader io.Reader) map[string]bool {
-	exists := make(map[string]bool)
+func parseGSUtilStatOutput(reader io.Reader) map[string]struct{} {
+	exists := make(map[string]struct{})
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "gs://") {
 			url := strings.TrimSuffix(line, ":")
-			exists[url] = true
-			continue
-		}
-		if strings.HasPrefix(line, "No URLs matched: ") {
-			url := strings.TrimPrefix(line, "No URLs matched: ")
-			exists[url] = false
+			exists[url] = struct{}{}
 			continue
 		}
 	}
