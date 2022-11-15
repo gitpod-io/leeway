@@ -386,39 +386,38 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	requirements := pkg.GetTransitiveDependencies()
-
 	allpkg := append(requirements, pkg)
 
-	pkgsInLocalCache := make(map[*Package]bool)
-	pkgsToCheckRemoteCache := []*Package{}
+	pkgsInLocalCache := make(map[*Package]struct{})
+	var pkgsToCheckRemoteCache []*Package
 	for _, p := range allpkg {
 		if p.Ephemeral {
 			// Ephemeral packages will always need to be build
 			continue
 		}
 
-		_, exists := ctx.LocalCache.Location(p)
-		if exists {
-			pkgsInLocalCache[p] = true
-		} else {
-			pkgsToCheckRemoteCache = append(pkgsToCheckRemoteCache, p)
+		if _, exists := ctx.LocalCache.Location(p); exists {
+			pkgsInLocalCache[p] = struct{}{}
+			continue
 		}
+
+		pkgsToCheckRemoteCache = append(pkgsToCheckRemoteCache, p)
 	}
 
-	pkgsInRemoteCache, err := ctx.RemoteCache.Exists(pkgsToCheckRemoteCache)
+	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(pkgsToCheckRemoteCache)
 	if err != nil {
 		return err
 	}
 
-	pkgsWillBeDownloaded := make(map[*Package]bool)
+	pkgsWillBeDownloaded := make(map[*Package]struct{})
 	pkg.packagesToDownload(pkgsInLocalCache, pkgsInRemoteCache, pkgsWillBeDownloaded)
 
 	pkgstatus := make(map[*Package]PackageBuildStatus)
 	unresolvedArgs := make(map[string][]string)
 	for _, dep := range allpkg {
-		existsInLocalCache := pkgsInLocalCache[dep]
-		existsInRemoteCache := pkgsInRemoteCache[dep]
-		willBeDownloaded := pkgsWillBeDownloaded[dep]
+		_, existsInLocalCache := pkgsInLocalCache[dep]
+		_, existsInRemoteCache := pkgsInRemoteCache[dep]
+		_, willBeDownloaded := pkgsWillBeDownloaded[dep]
 		if dep.Ephemeral {
 			// ephemeral packages are never built at the beginning of a build
 			pkgstatus[dep] = PackageNotBuiltYet
@@ -451,11 +450,10 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	pkgsToDownload := make([]*Package, 0, len(pkgsWillBeDownloaded))
-	for p, willBeDownloaded := range pkgsWillBeDownloaded {
-		if willBeDownloaded {
-			pkgsToDownload = append(pkgsToDownload, p)
-		}
+	for p := range pkgsWillBeDownloaded {
+		pkgsToDownload = append(pkgsToDownload, p)
 	}
+
 	err = options.RemoteCache.Download(ctx.LocalCache, pkgsToDownload)
 	if err != nil {
 		return err
@@ -742,9 +740,9 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 // That is, a package will only be downloaded if it is needed to perform a build.
 //
 // Note: toDownload is a map to avoid having duplicates.
-func (p *Package) packagesToDownload(inLocalCache map[*Package]bool, inRemoteCache map[*Package]bool, toDownload map[*Package]bool) {
-	existsInLocalCache := inLocalCache[p]
-	existsInRemoteCache := inRemoteCache[p]
+func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemoteCache map[*Package]struct{}, toDownload map[*Package]struct{}) {
+	_, existsInLocalCache := inLocalCache[p]
+	_, existsInRemoteCache := inRemoteCache[p]
 
 	if existsInLocalCache {
 		// If the package is already in the local cache then we don't need to download it or any of its dependencies
@@ -755,7 +753,7 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]bool, inRemoteCac
 
 	if existsInRemoteCache {
 		// If the package is in the remote cache then we want to download it
-		toDownload[p] = true
+		toDownload[p] = struct{}{}
 
 		// For Generic and Docker packages we can short-circuit here.
 		// For Yarn and Go we can not, see comment below for details.

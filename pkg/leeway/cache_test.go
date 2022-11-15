@@ -35,11 +35,9 @@ func TestParseGSUTilStat(t *testing.T) {
 			Metageneration:         1
 	`
 	output = strings.Replace(output, "\t\t", "", -1)
-	expected := map[string]bool{
-		"gs://gitpod-core-leeway-cache-branch/232bbf468ca410aabddb02037a4297eebf828940.tar.gz":  true,
-		"gs://gitpod-core-leeway-cache-branch/232bbf468ca410aabddb02037a4297eebf828941.tar.gz":  true,
-		"gs://gitpod-core-leeway-cache-branch/232bbf468ca410aabddb02037a4297eebf828943.tar.gz":  false,
-		"gs://gitpod-core-leeway-cache-branch/232bbf468ca410aabddb02037a4297eebf8289434.tar.gz": false,
+	expected := map[string]struct{}{
+		"gs://gitpod-core-leeway-cache-branch/232bbf468ca410aabddb02037a4297eebf828940.tar.gz": {},
+		"gs://gitpod-core-leeway-cache-branch/232bbf468ca410aabddb02037a4297eebf828941.tar.gz": {},
 	}
 	actual := parseGSUtilStatOutput(strings.NewReader(output))
 
