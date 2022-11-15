@@ -45,8 +45,12 @@ const (
 	PackageNotBuiltYet PackageBuildStatus = "not-built-yet"
 	// PackageBuilding means we're building this package at the moment
 	PackageBuilding PackageBuildStatus = "building"
-	// PackageBuilt means the package has been built already
-	PackageBuilt PackageBuildStatus = "built"
+	// PackageBuilt means the package has been built and exists in the local cache already
+	PackageBuilt PackageBuildStatus = "built-locally"
+	// PackageDownloaded means the package was downloaded from the remote cache as part of this build
+	PackageDownloaded PackageBuildStatus = "downloaded"
+	// PackageInRemoteCache means the package has been built but currently only exists in the remote cache
+	PackageInRemoteCache PackageBuildStatus = "built-remotely"
 )
 
 type buildContext struct {
@@ -274,14 +278,6 @@ func WithRemoteCache(cache RemoteCache) BuildOption {
 	}
 }
 
-// WithAdditionalRemoteCaches configures the remote cache
-func WithAdditionalRemoteCaches(caches []RemoteCache) BuildOption {
-	return func(opts *buildOptions) error {
-		opts.AdditionalRemoteCaches = caches
-		return nil
-	}
-}
-
 // WithReporter sets the reporter which is notified about the build progress
 func WithReporter(reporter Reporter) BuildOption {
 	return func(opts *buildOptions) error {
@@ -392,37 +388,50 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	requirements := pkg.GetTransitiveDependencies()
 	allpkg := append(requirements, pkg)
 
-	// respect per-package cache level when downloading from remote cache
-	remotelyCachedReq := make([]*Package, 0, len(requirements))
-	remotelyCachedReq = append(remotelyCachedReq, requirements...)
+	pkgsInLocalCache := make(map[*Package]struct{})
+	var pkgsToCheckRemoteCache []*Package
+	for _, p := range allpkg {
+		if p.Ephemeral {
+			// Ephemeral packages will always need to be build
+			continue
+		}
 
-	err = options.RemoteCache.Download(ctx.LocalCache, remotelyCachedReq)
+		if _, exists := ctx.LocalCache.Location(p); exists {
+			pkgsInLocalCache[p] = struct{}{}
+			continue
+		}
+
+		pkgsToCheckRemoteCache = append(pkgsToCheckRemoteCache, p)
+	}
+
+	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(pkgsToCheckRemoteCache)
 	if err != nil {
 		return err
 	}
 
-	// Download only downloads packages that do not exist locally, yet
-	for _, arc := range options.AdditionalRemoteCaches {
-		err = arc.Download(ctx.LocalCache, remotelyCachedReq)
-		if err != nil {
-			return err
-		}
-	}
+	pkgsWillBeDownloaded := make(map[*Package]struct{})
+	pkg.packagesToDownload(pkgsInLocalCache, pkgsInRemoteCache, pkgsWillBeDownloaded)
 
 	pkgstatus := make(map[*Package]PackageBuildStatus)
 	unresolvedArgs := make(map[string][]string)
 	for _, dep := range allpkg {
-		_, exists := ctx.LocalCache.Location(dep)
+		_, existsInLocalCache := pkgsInLocalCache[dep]
+		_, existsInRemoteCache := pkgsInRemoteCache[dep]
+		_, willBeDownloaded := pkgsWillBeDownloaded[dep]
 		if dep.Ephemeral {
-			// ephemeral packages are never built at the begining of a build
+			// ephemeral packages are never built at the beginning of a build
 			pkgstatus[dep] = PackageNotBuiltYet
-		} else if exists {
+		} else if existsInLocalCache {
 			pkgstatus[dep] = PackageBuilt
+		} else if willBeDownloaded {
+			pkgstatus[dep] = PackageDownloaded
+		} else if existsInRemoteCache {
+			pkgstatus[dep] = PackageInRemoteCache
 		} else {
 			pkgstatus[dep] = PackageNotBuiltYet
 		}
 
-		if exists {
+		if pkgstatus[dep] != PackageNotBuiltYet {
 			continue
 		}
 
@@ -439,6 +448,17 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 			unresolvedArgs[arg] = pkgs
 		}
 	}
+
+	pkgsToDownload := make([]*Package, 0, len(pkgsWillBeDownloaded))
+	for p := range pkgsWillBeDownloaded {
+		pkgsToDownload = append(pkgsToDownload, p)
+	}
+
+	err = options.RemoteCache.Download(ctx.LocalCache, pkgsToDownload)
+	if err != nil {
+		return err
+	}
+
 	options.Reporter.BuildStarted(pkg, pkgstatus)
 	defer func(err *error) {
 		options.Reporter.BuildFinished(pkg, *err)
@@ -536,6 +556,7 @@ func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
 	donechan := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(len(p.GetDependencies()))
+
 	for _, dep := range p.GetDependencies() {
 		go func(dep *Package) {
 			err := dep.build(buildctx)
@@ -560,6 +581,7 @@ func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
 
 func (p *Package) build(buildctx *buildContext) (err error) {
 	_, alreadyBuilt := buildctx.LocalCache.Location(p)
+
 	if p.Ephemeral {
 		// ephemeral packages always require a rebuild
 	} else if alreadyBuilt {
@@ -712,6 +734,54 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	}
 
 	return err
+}
+
+// Collects the minimal set of packages to download from the remote cache
+// That is, a package will only be downloaded if it is needed to perform a build.
+//
+// Note: toDownload is a map to avoid having duplicates.
+func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemoteCache map[*Package]struct{}, toDownload map[*Package]struct{}) {
+	_, existsInLocalCache := inLocalCache[p]
+	_, existsInRemoteCache := inRemoteCache[p]
+
+	if existsInLocalCache {
+		// If the package is already in the local cache then we don't need to download it or any of its dependencies
+		// The assumption here is that if the package exists locally, then we have already performed a build of the package
+		// so any required dependencies are already present in the cache too.
+		return
+	}
+
+	if existsInRemoteCache {
+		// If the package is in the remote cache then we want to download it
+		toDownload[p] = struct{}{}
+
+		// For Generic and Docker packages we can short-circuit here.
+		// For Yarn and Go we can not, see comment below for details.
+		switch p.Type {
+		case GenericPackage, DockerPackage:
+			return
+		}
+	}
+
+	var deps []*Package
+	switch p.Type {
+	// For Go and Typescript packages we need all transitive dependencies of a component to be available on disk
+	// to perform a build.
+	//
+	// Example: components/ee/agent-smith:app depends on components/gitpod-protocol/go:lib
+	// 			components/gitpod-protocol/go:lib depends on components/gitpod-protocol:gitpod-schema
+	// 			To build components/ee/agent-smith:app it is not enough to just download components/gitpod-protocol/go:lib
+	// 			as we also need components/gitpod-protocol:gitpod-schema to be available on disk to perform the build.
+	case YarnPackage, GoPackage, DeprecatedTypescriptPackage:
+		deps = p.GetTransitiveDependencies()
+	// For Generic and Docker packages it is sufficient to have the direct dependencies.
+	case GenericPackage, DockerPackage:
+		deps = p.GetDependencies()
+	}
+
+	for _, p := range deps {
+		p.packagesToDownload(inLocalCache, inRemoteCache, toDownload)
+	}
 }
 
 type packageBuild struct {
