@@ -124,8 +124,9 @@ func (rs GSUtilRemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]stru
 	cmd.Stderr = &stderrBuffer
 
 	err := cmd.Run()
-	if err != nil && !strings.Contains(stderrBuffer.String(), "No URLs matched") {
-		return nil, xerrors.Errorf("Failed to check remote cache: [%w]. stderr: [%v]", err, stderrBuffer.String())
+	if err != nil && (!strings.Contains(stderrBuffer.String(), "No URLs matched")) {
+		log.Debugf("gsutil stat returned non-zero exit code: [%v], stderr: [%v]", err, stderrBuffer.String())
+		return map[*Package]struct{}{}, nil
 	}
 
 	existingURLs := parseGSUtilStatOutput(bytes.NewReader(stdoutBuffer.Bytes()))
