@@ -190,7 +190,7 @@ func Run(workspace leeway.Workspace, options ...RunOpt) ([]Finding, []error) {
 	for _, check := range checks {
 		err := check.Init(workspace)
 		if err != nil {
-			return nil, []error{err}
+			return nil, []error{fmt.Errorf("init %s: %w", check.Info().Name, err)}
 		}
 	}
 
@@ -207,7 +207,7 @@ func Run(workspace leeway.Workspace, options ...RunOpt) ([]Finding, []error) {
 			log.WithField("check", info.Name).WithField("cmp", comp.Name).Debug("running component check")
 			f, err := c.RunCmp(comp)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", comp.Name, err))
+				errs = append(errs, fmt.Errorf("[%s] %s: %w", info.Name, comp.Name, err))
 				return
 			}
 			for i := range f {
@@ -228,7 +228,7 @@ func Run(workspace leeway.Workspace, options ...RunOpt) ([]Finding, []error) {
 			log.WithField("check", info.Name).WithField("pkg", pkg.FullName()).Debug("running package check")
 			f, err := c.RunPkg(pkg)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", pkg.FullName(), err))
+				errs = append(errs, fmt.Errorf("[%s] %s: %w", info.Name, pkg.FullName(), err))
 				return
 			}
 			for i := range f {
