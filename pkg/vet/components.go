@@ -17,6 +17,10 @@ func checkComponentsFmt(comp *leeway.Component) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(fc) == 0 {
+		// empty BUILD.yaml files are ok
+		return nil, nil
+	}
 
 	buf := bytes.NewBuffer(nil)
 	err = leeway.FormatBUILDyaml(buf, bytes.NewReader(fc), false)
