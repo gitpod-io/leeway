@@ -1121,11 +1121,25 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		}...)
 	}
 
+	// We don't check if ephemeral packages in the transitive dependency tree have been built,
+	// as they may be too far down the tree to trigger a build (e.g. their parent may be built already).
+	// Hence, we need to ensure all direct dependencies on ephemeral packages have been built.
+	for _, deppkg := range p.GetDependencies() {
+		_, ok := buildctx.LocalCache.Location(deppkg)
+		if deppkg.Ephemeral && !ok {
+			return nil, PkgNotBuiltErr{deppkg}
+		}
+	}
+
 	transdep := p.GetTransitiveDependencies()
 	if len(transdep) > 0 {
 		commands = append(commands, []string{"mkdir", "_deps"})
 
 		for _, dep := range transdep {
+			if dep.Ephemeral {
+				continue
+			}
+
 			builtpkg, ok := buildctx.LocalCache.Location(dep)
 			if !ok {
 				return nil, PkgNotBuiltErr{dep}
