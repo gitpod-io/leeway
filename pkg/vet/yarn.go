@@ -20,6 +20,7 @@ import (
 func init() {
 	register(PackageCheck("deprecated-type", "checks if the package uses the deprecated typescript type", leeway.YarnPackage, checkYarnDeprecatedType))
 	register(&checkImplicitTransitiveDependencies{})
+	register(PackageCheck("node-modules-source", "checks if the package's sources include node_modules/", leeway.YarnPackage, checkYarnNodeModulesSource))
 }
 
 func checkYarnDeprecatedType(pkg *leeway.Package) ([]Finding, error) {
@@ -208,4 +209,35 @@ func (c *checkImplicitTransitiveDependencies) RunPkg(pkg *leeway.Package) ([]Fin
 	}
 
 	return findings, nil
+}
+
+func checkYarnNodeModulesSource(pkg *leeway.Package) ([]Finding, error) {
+	var res []string
+	for _, src := range pkg.Sources {
+		segs := strings.Split(src, "/")
+		var found bool
+		for _, seg := range segs {
+			if seg == "node_modules" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		if res == nil || len(segs) < len(res) {
+			res = segs
+		}
+	}
+
+	if res == nil {
+		return nil, nil
+	}
+	return []Finding{
+		{
+			Component:   pkg.C,
+			Package:     pkg,
+			Description: fmt.Sprintf("package contains node_modules/ as source: %s", strings.Join(res, "/")),
+		},
+	}, nil
 }
