@@ -12,36 +12,12 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
-	"gopkg.in/yaml.v3"
 
 	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
 func init() {
-	register(PackageCheck("deprecated-type", "checks if the package uses the deprecated typescript type", leeway.YarnPackage, checkYarnDeprecatedType))
 	register(&checkImplicitTransitiveDependencies{})
-}
-
-func checkYarnDeprecatedType(pkg *leeway.Package) ([]Finding, error) {
-	var rp struct {
-		Type string `yaml:"type"`
-	}
-	err := yaml.Unmarshal(pkg.Definition, &rp)
-	if err != nil {
-		return nil, err
-	}
-
-	if rp.Type == string(leeway.DeprecatedTypescriptPackage) {
-		return []Finding{
-			{
-				Description: "package uses deprecated \"typescript\" type - use \"yarn\" instead (run `leeway fmt -fi` to fix this)",
-				Component:   pkg.C,
-				Package:     pkg,
-			},
-		}, nil
-	}
-
-	return nil, nil
 }
 
 type pkgJSON struct {

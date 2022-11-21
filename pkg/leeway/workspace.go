@@ -585,10 +585,6 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 
 	for i, pkg := range comp.Packages {
 		pkg.C = &comp
-		if pkg.Type == "typescript" {
-			log.WithField("pkg", pkg.FullName()).Warn("package uses deprecated \"typescript\" type - use \"yarn\" instead")
-			pkg.Type = YarnPackage
-		}
 
 		pkg.Definition, err = yaml.Marshal(&rawcomp.Packages[i])
 		if err != nil {

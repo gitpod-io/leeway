@@ -765,14 +765,14 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 
 	var deps []*Package
 	switch p.Type {
-	// For Go and Typescript packages we need all transitive dependencies of a component to be available on disk
+	// For Go and Yarn packages we need all transitive dependencies of a component to be available on disk
 	// to perform a build.
 	//
 	// Example: components/ee/agent-smith:app depends on components/gitpod-protocol/go:lib
 	// 			components/gitpod-protocol/go:lib depends on components/gitpod-protocol:gitpod-schema
 	// 			To build components/ee/agent-smith:app it is not enough to just download components/gitpod-protocol/go:lib
 	// 			as we also need components/gitpod-protocol:gitpod-schema to be available on disk to perform the build.
-	case YarnPackage, GoPackage, DeprecatedTypescriptPackage:
+	case YarnPackage, GoPackage:
 		deps = p.GetTransitiveDependencies()
 	// For Generic and Docker packages it is sufficient to have the direct dependencies.
 	case GenericPackage, DockerPackage:
@@ -821,7 +821,7 @@ rm -r yarn.lock _temp_yarn_cache
 	installerPackageJSONTemplate = `{"name":"local","version":"%s","license":"UNLICENSED","dependencies":{"%s":"%s"}}`
 )
 
-// buildYarn implements the build process for Typescript packages.
+// buildYarn implements the build process for Yarn packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
 func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *packageBuild, err error) {
 	cfg, ok := p.Config.(YarnPkgConfig)
@@ -1050,7 +1050,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 	} else if cfg.Packaging == YarnArchive {
 		pkgCommands = append(pkgCommands, []string{"tar", "cfz", result, "."})
 	} else {
-		return nil, xerrors.Errorf("unknown Typescript packaging: %s", cfg.Packaging)
+		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
 	}
 	res.PackageCommands = pkgCommands
 	res.PostBuild = func(sources fileset) (subjects []in_toto.Subject, absResultDir string, err error) {
