@@ -106,11 +106,6 @@ Example use:
 			}
 		}
 
-		for i, ft := range filterType {
-			if ft == string(leeway.DeprecatedTypescriptPackage) {
-				filterType[i] = string(leeway.YarnPackage)
-			}
-		}
 		if len(filterType) > 0 {
 			for pkg := range pkgs {
 				var found bool

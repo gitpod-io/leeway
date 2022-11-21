@@ -352,8 +352,6 @@ func (p *Package) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 func unmarshalTypeDependentConfig(tpe PackageType, unmarshal func(interface{}) error) (PackageConfig, error) {
 	switch tpe {
-	case DeprecatedTypescriptPackage:
-		fallthrough
 	case YarnPackage:
 		var cfg struct {
 			Config YarnPkgConfig `yaml:"config"`
@@ -549,9 +547,6 @@ func (cfg GenericPkgConfig) AdditionalSources(workspaceOrigin string) []string {
 type PackageType string
 
 const (
-	// DeprecatedTypescriptPackage runs tsc in a package and produces a yarn offline mirror
-	DeprecatedTypescriptPackage PackageType = "typescript"
-
 	// YarnPackage uses the yarn package manager to download dependencies and build the package
 	YarnPackage PackageType = "yarn"
 
@@ -575,7 +570,7 @@ func (p *PackageType) UnmarshalYAML(unmarshal func(interface{}) error) (err erro
 
 	*p = PackageType(val)
 	switch *p {
-	case DeprecatedTypescriptPackage, YarnPackage, GoPackage, DockerPackage, GenericPackage:
+	case YarnPackage, GoPackage, DockerPackage, GenericPackage:
 	default:
 		return fmt.Errorf("invalid package type: %s", err)
 	}
