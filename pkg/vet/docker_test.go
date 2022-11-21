@@ -59,7 +59,7 @@ ADD from-some-pkg--build/hello.txt hello.txt`,
 
 			tmpdir, err := os.MkdirTemp("", "leeway-test-*")
 			failOnErr(err)
-			// defer os.RemoveAll(tmpdir)
+			defer os.RemoveAll(tmpdir)
 
 			var pkgdeps string
 			failOnErr(os.WriteFile(filepath.Join(tmpdir, "WORKSPACE.yaml"), []byte("environmentManifest:\n  - name: \"docker\"\n    command: [\"echo\"]"), 0644))
