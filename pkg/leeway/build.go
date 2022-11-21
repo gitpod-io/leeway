@@ -1167,7 +1167,12 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	if cfg.Generate {
 		commands = append(commands, []string{goCommand, "generate", "-v", "./..."})
 	}
-	commands = append(commands, []string{goCommand, "mod", "download", "-x"})
+
+	dlcmd := []string{goCommand, "mod", "download"}
+	if log.IsLevelEnabled(log.DebugLevel) {
+		dlcmd = append(dlcmd, "-x")
+	}
+	commands = append(commands, dlcmd)
 
 	if !cfg.DontCheckGoFmt {
 		commands = append(commands, []string{"sh", "-c", `if [ ! $(go fmt ./... | wc -l) -eq 0 ]; then echo; echo; echo please gofmt your code; echo; echo; exit 1; fi`})
