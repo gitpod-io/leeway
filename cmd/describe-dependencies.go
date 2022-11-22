@@ -2,16 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"strings"
-	"time"
 
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/gitpod-io/leeway/pkg/graphview"
 	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
@@ -46,8 +41,6 @@ var describeDependenciesCmd = &cobra.Command{
 
 		if dot, _ := cmd.Flags().GetBool("dot"); dot {
 			return printDepGraphAsDot(pkgs)
-		} else if serve, _ := cmd.Flags().GetString("serve"); serve != "" {
-			serveDepGraph(serve, pkgs)
 		} else {
 			for _, pkg := range pkgs {
 				printDepTree(pkg, 0)
@@ -122,30 +115,8 @@ func printDepGraphAsDot(pkgs []*leeway.Package) error {
 	return nil
 }
 
-func serveDepGraph(addr string, pkgs []*leeway.Package) {
-	go func() {
-		browser := os.Getenv("BROWSER")
-		if browser == "" {
-			return
-		}
-
-		time.Sleep(2 * time.Second)
-		taddr := addr
-		if strings.HasPrefix(taddr, ":") {
-			taddr = fmt.Sprintf("localhost%s", addr)
-		}
-		taddr = fmt.Sprintf("http://%s", taddr)
-		//nolint:errcheck
-		exec.Command(browser, taddr).Start()
-	}()
-
-	log.Infof("serving dependency graph on %s", addr)
-	log.Fatal(graphview.Serve(addr, pkgs...))
-}
-
 func init() {
 	describeCmd.AddCommand(describeDependenciesCmd)
 
 	describeDependenciesCmd.Flags().Bool("dot", false, "produce Graphviz dot output")
-	describeDependenciesCmd.Flags().String("serve", "", "serve the interactive dependency graph on this address")
 }
