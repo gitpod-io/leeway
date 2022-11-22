@@ -134,6 +134,7 @@ var defaultEnvManifestEntries = map[PackageType]EnvironmentManifest{
 	},
 	GoPackage: []EnvironmentManifestEntry{
 		{Name: "go", Command: []string{"go", "version"}},
+		{Name: "golangci-lint", Command: []string{"golangci-lint", "version"}},
 	},
 	YarnPackage: []EnvironmentManifestEntry{
 		{Name: "yarn", Command: []string{"yarn", "-v"}},
