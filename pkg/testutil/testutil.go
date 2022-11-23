@@ -19,6 +19,7 @@ type Component struct {
 	Files    map[string]string `yaml:"files"`
 	Comp     leeway.Component  `yaml:"comp"`
 	Packages []leeway.Package  `yaml:"packages"`
+	Scripts  []leeway.Script   `yaml:"scripts"`
 }
 
 // LoadFromYAML loads a workspace setup from a YAML file
@@ -62,11 +63,11 @@ func (s Setup) Materialize() (workspaceRoot string, err error) {
 		cmp := struct {
 			Constants leeway.Arguments `yaml:"const,omitempty"`
 			Packages  []leeway.Package `yaml:"packages,omitempty"`
-			Scripts   []*leeway.Script `yaml:"scripts,omitempty"`
+			Scripts   []leeway.Script  `yaml:"scripts,omitempty"`
 		}{
 			Constants: comp.Comp.Constants,
 			Packages:  comp.Packages,
-			Scripts:   comp.Comp.Scripts,
+			Scripts:   comp.Scripts,
 		}
 
 		fc, err = yaml.Marshal(cmp)

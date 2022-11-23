@@ -1,5 +1,0 @@
-defaultArgs:
-  message: "hello world"
-environmentManifest:
-  - name: "foobar"
-    command: ["echo", "foobar"]
