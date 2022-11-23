@@ -54,8 +54,8 @@ type WorkspaceProvenance struct {
 	Enabled bool `yaml:"enabled"`
 	SLSA    bool `yaml:"slsa"`
 
-	KeyPath string `yaml:"key"`
-	key     *in_toto.Key
+	KeyPath string       `yaml:"key"`
+	key     *in_toto.Key `yaml:"-"`
 }
 
 // EnvironmentManifest is a collection of environment manifest entries

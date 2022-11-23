@@ -301,7 +301,7 @@ func NewTestPackage(name string) *Package {
 			Name:   "testcomp",
 		},
 
-		packageInternal: packageInternal{
+		PackageInternal: PackageInternal{
 			Name: name,
 			Type: GenericPackage,
 		},
