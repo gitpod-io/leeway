@@ -109,7 +109,7 @@ func (p *Script) Run(opts ...BuildOption) error {
 		err = Build(&Package{
 			C:            p.C,
 			dependencies: p.dependencies,
-			packageInternal: packageInternal{
+			PackageInternal: PackageInternal{
 				Name:        fmt.Sprintf("%s-deps", p.Name),
 				Environment: p.Environment,
 				Ephemeral:   true,

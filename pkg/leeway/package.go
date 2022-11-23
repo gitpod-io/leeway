@@ -47,7 +47,7 @@ func FindUnresolvedArguments(pkg *Package) ([]string, error) {
 	// re-marshal packageInternal without the variants. Their unresolved arguments do not matter.
 	// Only when a variant becomes selected do its argumnents play a role, at which point they'll
 	// show up during the config/env re-marshalling.
-	pi := pkg.packageInternal
+	pi := pkg.PackageInternal
 	meta, err := yaml.Marshal(pi)
 	if err != nil {
 		return nil, err
@@ -135,27 +135,28 @@ func (n PackageNotFoundErr) Error() string {
 	return fmt.Sprintf("package \"%s\" is unknown", n.Package)
 }
 
-type packageInternal struct {
+// PackageInternal is the YAML serialised content of a package
+type PackageInternal struct {
 	Name                 string            `yaml:"name"`
 	Type                 PackageType       `yaml:"type"`
-	Sources              []string          `yaml:"srcs"`
-	Dependencies         []string          `yaml:"deps"`
-	Layout               map[string]string `yaml:"layout"`
-	ArgumentDependencies []string          `yaml:"argdeps"`
-	Environment          []string          `yaml:"env"`
-	Ephemeral            bool              `yaml:"ephemeral"`
-	PreparationCommands  [][]string        `yaml:"prep"`
+	Sources              []string          `yaml:"srcs,omitempty"`
+	Dependencies         []string          `yaml:"deps,omitempty"`
+	Layout               map[string]string `yaml:"layout,omitempty"`
+	ArgumentDependencies []string          `yaml:"argdeps,omitempty"`
+	Environment          []string          `yaml:"env,omitempty"`
+	Ephemeral            bool              `yaml:"ephemeral,omitempty"`
+	PreparationCommands  [][]string        `yaml:"prep,omitempty"`
 }
 
 // Package is a single buildable artifact within a component
 type Package struct {
-	C *Component
+	C *Component `yaml:"-"`
 
 	// computing the version is expensive - let's cache that
 	versionCache string
 
-	packageInternal
-	Config PackageConfig `yaml:"config"`
+	PackageInternal `yaml:"_,inline"`
+	Config          PackageConfig `yaml:"config,omitempty"`
 	// Definition is the raw package definition YAML
 	Definition []byte `yaml:"-"`
 
@@ -328,12 +329,12 @@ func (p *Package) BuildLayoutLocation(dependency *Package) (loc string) {
 
 // UnmarshalYAML unmarshals the package definition
 func (p *Package) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	var tpe packageInternal
+	var tpe PackageInternal
 	err := unmarshal(&tpe)
 	if err != nil {
 		return err
 	}
-	*p = Package{packageInternal: tpe}
+	*p = Package{PackageInternal: tpe}
 
 	var buf yaml.Node
 	err = unmarshal(&buf)
