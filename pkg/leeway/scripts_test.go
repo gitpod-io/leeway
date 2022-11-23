@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gitpod-io/leeway/cmd"
+	"github.com/gitpod-io/leeway/pkg/testutil"
 )
 
 var dut = flag.Bool("dut", false, "run command/device under test")
@@ -104,6 +105,8 @@ type CommandFixtureTest struct {
 	StderrSub         string
 	NoStderrSub       string
 	Eval              func(t *testing.T, stdout, stderr string)
+	Fixture           *testutil.Setup
+	FixturePath       string
 }
 
 // Run executes the fixture test - do not forget to call this one
@@ -114,6 +117,40 @@ func (ft *CommandFixtureTest) Run() {
 	}
 
 	ft.T.Run(ft.Name, func(t *testing.T) {
+		loc := "../../"
+
+		if ft.FixturePath != "" {
+			fp, err := os.Open(ft.FixturePath)
+			if err != nil {
+				t.Fatalf("cannot load fixture from %s: %v", ft.FixturePath, err)
+			}
+			ft.Fixture, err = testutil.LoadFromYAML(fp)
+			fp.Close()
+			if err != nil {
+				t.Fatalf("cannot load fixture from %s: %v", ft.FixturePath, err)
+			}
+		}
+		if ft.Fixture != nil {
+			var err error
+			loc, err = ft.Fixture.Materialize()
+			if err != nil {
+				t.Fatalf("cannot materialize fixture: %v", err)
+			}
+			t.Logf("materialized fixture workspace: %s", loc)
+			t.Cleanup(func() { os.RemoveAll(loc) })
+		}
+
+		env := os.Environ()
+		n := 0
+		for _, x := range env {
+			if strings.HasPrefix(x, "LEEWAY_") {
+				continue
+			}
+			env[n] = x
+			n++
+		}
+		env = env[:n]
+
 		self, err := os.Executable()
 		if err != nil {
 			t.Fatalf("cannot identify test binary: %q", err)
@@ -125,7 +162,8 @@ func (ft *CommandFixtureTest) Run() {
 		)
 		cmd.Stdout = sout
 		cmd.Stderr = serr
-		cmd.Dir = "../../"
+		cmd.Dir = loc
+		cmd.Env = env
 		err = cmd.Run()
 
 		var exitCode int

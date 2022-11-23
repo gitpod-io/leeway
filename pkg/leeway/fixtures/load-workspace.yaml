@@ -1,0 +1,48 @@
+workspace:
+  environmentManifest:
+    - name: "foobar"
+      command: ["echo", "foobar"]
+  defaultArgs:
+    message: "hello root"
+
+components:
+  - location: wsa/pkg0
+    packages:
+    - name: app
+      type: generic
+      config:
+        commands:
+        - ["echo"]
+  - location: wsa/pkg1
+    packages:
+    - name: app
+      type: generic
+      config:
+        commands:
+        - ["echo"]
+    scripts:
+    - name: echo
+      script: |
+        echo ${message}
+  - location: wsa
+    packages:
+    - name: app
+      type: generic
+      config:
+        commands:
+        - ["echo", "${message}"]
+    scripts:
+    - name: echo
+      script: |
+        echo ${message}
+  - location: deeper/pkg0
+    packages:
+    - name: app
+      type: generic
+      deps:
+      - wsa/pkg0:app
+      - wsa/pkg1:app
+      - wsa:app
+      config:
+        commands:
+        - ["echo"]
