@@ -16,31 +16,25 @@ func TestFixtureLoadWorkspace(t *testing.T) {
 		{
 			Name:              "single workspace packages",
 			T:                 t,
-			Args:              []string{"collect", "-w", "fixtures/nested-ws/wsa"},
+			Args:              []string{"collect"},
 			NoNestedWorkspace: true,
 			ExitCode:          0,
 			StdoutSub:         "pkg1:app",
+			FixturePath:       "fixtures/load-workspace.yaml",
 		},
 		{
 			Name:              "workspace components",
 			T:                 t,
-			Args:              []string{"collect", "-w", "fixtures/nested-ws/wsa", "components"},
+			Args:              []string{"collect", "components"},
 			NoNestedWorkspace: true,
 			ExitCode:          0,
-			StdoutSub:         "//\npkg0\npkg1",
-		},
-		{
-			Name:              "ignore nested workspaces",
-			T:                 t,
-			Args:              []string{"collect", "-w", "fixtures/nested-ws", "components"},
-			NoNestedWorkspace: true,
-			ExitCode:          1,
-			StderrSub:         "pkg0:app: package \\\"wsa/pkg0:app\\\" is unknown",
+			StdoutSub:         "deeper/pkg0\nwsa\nwsa/pkg0\nwsa/pkg1",
+			FixturePath:       "fixtures/load-workspace.yaml",
 		},
 		{
 			Name: "environment manifest",
 			T:    t,
-			Args: []string{"describe", "-w", "fixtures/nested-ws/wsa", "environment-manifest"},
+			Args: []string{"describe", "environment-manifest"},
 			Eval: func(t *testing.T, stdout, stderr string) {
 				for _, k := range []string{"os", "arch", "foobar"} {
 					if !strings.Contains(stdout, fmt.Sprintf("%s: ", k)) {
@@ -48,7 +42,8 @@ func TestFixtureLoadWorkspace(t *testing.T) {
 					}
 				}
 			},
-			ExitCode: 0,
+			ExitCode:    0,
+			FixturePath: "fixtures/load-workspace.yaml",
 		},
 	}
 
