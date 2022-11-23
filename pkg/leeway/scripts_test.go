@@ -29,16 +29,18 @@ func TestScriptArgs(t *testing.T) {
 		{
 			Name:              "unresolved arg",
 			T:                 t,
-			Args:              []string{"run", "fixtures/scripts:echo"},
+			Args:              []string{"run", "scripts:echo"},
 			NoNestedWorkspace: true,
 			ExitCode:          1,
+			FixturePath:       "fixtures/scripts.yaml",
 		},
 		{
 			Name:              "resovled args",
 			T:                 t,
-			Args:              []string{"run", "fixtures/scripts:echo", "-Dmsg=foobar"},
+			Args:              []string{"run", "scripts:echo", "-Dmsg=foobar"},
 			NoNestedWorkspace: true,
 			ExitCode:          0,
+			FixturePath:       "fixtures/scripts.yaml",
 		},
 	}
 
@@ -54,20 +56,22 @@ func TestWorkingDirLayout(t *testing.T) {
 		{
 			Name:              "origin",
 			T:                 t,
-			Args:              []string{"run", "fixtures/scripts:pwd-origin"},
+			Args:              []string{"run", "scripts:pwd-origin"},
 			ExitCode:          0,
 			NoNestedWorkspace: true,
+			FixturePath:       "fixtures/scripts.yaml",
 			StdoutSub: `.
 ./BUILD.yaml`,
 		},
 		{
 			Name:              "packages",
 			T:                 t,
-			Args:              []string{"run", "fixtures/scripts:pwd-packages"},
+			Args:              []string{"run", "scripts:pwd-packages"},
 			ExitCode:          0,
 			NoNestedWorkspace: true,
+			FixturePath:       "fixtures/scripts.yaml",
 			StdoutSub: `.
-./fixtures-pkgs-generic--something`,
+./pkgs-generic--something`,
 		},
 		// 		{
 		// 			Name:              "origin nested",
