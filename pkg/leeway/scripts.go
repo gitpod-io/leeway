@@ -253,7 +253,7 @@ func executeBashScript(script string, wd string, env []string) error {
 	err = cmd.Run()
 	if exiterr, ok := err.(*exec.ExitError); ok {
 		if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
-			os.Exit(status.ExitStatus())
+			return xerrors.Errorf("failed with exit code %d", status.ExitStatus())
 		}
 	}
 	return err

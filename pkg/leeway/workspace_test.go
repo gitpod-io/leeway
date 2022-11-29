@@ -7,19 +7,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gitpod-io/leeway/pkg/testutil"
 )
 
 func TestFixtureLoadWorkspace(t *testing.T) {
-	runDUT()
+	testutil.RunDUT()
 
-	tests := []*CommandFixtureTest{
+	tests := []*testutil.CommandFixtureTest{
 		{
 			Name:              "single workspace packages",
 			T:                 t,
 			Args:              []string{"collect"},
 			NoNestedWorkspace: true,
 			ExitCode:          0,
-			StdoutSub:         "pkg1:app",
+			StdoutSubs:        []string{"pkg1:app"},
 			FixturePath:       "fixtures/load-workspace.yaml",
 		},
 		{
@@ -28,7 +30,7 @@ func TestFixtureLoadWorkspace(t *testing.T) {
 			Args:              []string{"collect", "components"},
 			NoNestedWorkspace: true,
 			ExitCode:          0,
-			StdoutSub:         "deeper/pkg0\nwsa\nwsa/pkg0\nwsa/pkg1",
+			StdoutSubs:        []string{"deeper/pkg0\nwsa\nwsa/pkg0\nwsa/pkg1"},
 			FixturePath:       "fixtures/load-workspace.yaml",
 		},
 		{
@@ -53,7 +55,7 @@ func TestFixtureLoadWorkspace(t *testing.T) {
 }
 
 func TestPackageDefinition(t *testing.T) {
-	runDUT()
+	testutil.RunDUT()
 
 	type pkginfo struct {
 		Metadata struct {
@@ -64,7 +66,7 @@ func TestPackageDefinition(t *testing.T) {
 	tests := []struct {
 		Name    string
 		Layouts []map[string]string
-		Tester  []func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest
+		Tester  []func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest
 	}{
 		{
 			Name: "def change changes version",
@@ -77,9 +79,9 @@ func TestPackageDefinition(t *testing.T) {
 					"pkg1/BUILD.yaml": "packages:\n- name: foo\n  type: generic\n  srcs:\n  - \"alsoDoesNotExist\"",
 				},
 			},
-			Tester: []func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest{
-				func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest {
-					return &CommandFixtureTest{
+			Tester: []func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest{
+				func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest {
+					return &testutil.CommandFixtureTest{
 						T:    t,
 						Args: []string{"describe", "-w", loc, "-o", "json", "pkg1:foo"},
 						Eval: func(t *testing.T, stdout, stderr string) {
@@ -93,8 +95,8 @@ func TestPackageDefinition(t *testing.T) {
 						},
 					}
 				},
-				func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest {
-					return &CommandFixtureTest{
+				func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest {
+					return &testutil.CommandFixtureTest{
 						T:    t,
 						Args: []string{"describe", "-w", loc, "-o", "json", "pkg1:foo"},
 						Eval: func(t *testing.T, stdout, stderr string) {
@@ -123,9 +125,9 @@ func TestPackageDefinition(t *testing.T) {
 					"pkg1/BUILD.yaml": "const:\n  foobar: baz\npackages:\n- name: foo\n  type: generic\n  srcs:\n  - \"doesNotExist\"",
 				},
 			},
-			Tester: []func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest{
-				func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest {
-					return &CommandFixtureTest{
+			Tester: []func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest{
+				func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest {
+					return &testutil.CommandFixtureTest{
 						T:    t,
 						Args: []string{"describe", "-w", loc, "-o", "json", "pkg1:foo"},
 						Eval: func(t *testing.T, stdout, stderr string) {
@@ -139,8 +141,8 @@ func TestPackageDefinition(t *testing.T) {
 						},
 					}
 				},
-				func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest {
-					return &CommandFixtureTest{
+				func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest {
+					return &testutil.CommandFixtureTest{
 						T:    t,
 						Args: []string{"describe", "-w", loc, "-o", "json", "pkg1:foo"},
 						Eval: func(t *testing.T, stdout, stderr string) {
@@ -169,9 +171,9 @@ func TestPackageDefinition(t *testing.T) {
 					"pkg1/BUILD.yaml": "packages:\n- name: foo\n  type: generic\n  srcs:\n  - \"alsoDoesNotExist\"\n- name: bar\n  type: generic\n  srcs:\n  - \"doesNotExist\"\n  deps:\n  - :foo",
 				},
 			},
-			Tester: []func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest{
-				func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest {
-					return &CommandFixtureTest{
+			Tester: []func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest{
+				func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest {
+					return &testutil.CommandFixtureTest{
 						T:    t,
 						Args: []string{"describe", "-w", loc, "-o", "json", "pkg1:foo"},
 						Eval: func(t *testing.T, stdout, stderr string) {
@@ -185,8 +187,8 @@ func TestPackageDefinition(t *testing.T) {
 						},
 					}
 				},
-				func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest {
-					return &CommandFixtureTest{
+				func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest {
+					return &testutil.CommandFixtureTest{
 						T:    t,
 						Args: []string{"describe", "-w", loc, "-o", "json", "pkg1:bar"},
 						Eval: func(t *testing.T, stdout, stderr string) {
@@ -213,9 +215,9 @@ func TestPackageDefinition(t *testing.T) {
 				},
 				{},
 			},
-			Tester: []func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest{
-				func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest {
-					return &CommandFixtureTest{
+			Tester: []func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest{
+				func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest {
+					return &testutil.CommandFixtureTest{
 						T:    t,
 						Args: []string{"describe", "-Dmsg=foo", "-w", loc, "-o", "json", "pkg1:foo"},
 						Eval: func(t *testing.T, stdout, stderr string) {
@@ -229,8 +231,8 @@ func TestPackageDefinition(t *testing.T) {
 						},
 					}
 				},
-				func(t *testing.T, loc string, state map[string]string) *CommandFixtureTest {
-					return &CommandFixtureTest{
+				func(t *testing.T, loc string, state map[string]string) *testutil.CommandFixtureTest {
+					return &testutil.CommandFixtureTest{
 						T:    t,
 						Args: []string{"describe", "-Dmsg=bar", "-w", loc, "-o", "json", "pkg1:foo"},
 						Eval: func(t *testing.T, stdout, stderr string) {

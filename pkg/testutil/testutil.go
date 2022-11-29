@@ -1,11 +1,17 @@
 package testutil
 
 import (
+	"bytes"
 	"errors"
+	"flag"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"testing"
 
+	"github.com/gitpod-io/leeway/cmd"
 	"github.com/gitpod-io/leeway/pkg/leeway"
 	"gopkg.in/yaml.v3"
 )
@@ -97,4 +103,120 @@ func (s Setup) Materialize() (workspaceRoot string, err error) {
 	}
 
 	return
+}
+
+var dut = flag.Bool("dut", false, "run command/device under test")
+
+func RunDUT() {
+	if *dut {
+		cmd.Execute()
+		os.Exit(0)
+	}
+}
+
+type CommandFixtureTest struct {
+	Name              string
+	T                 *testing.T
+	Args              []string
+	ExitCode          int
+	NoNestedWorkspace bool
+	StdoutSubs        []string
+	NoStdoutSub       string
+	StderrSub         string
+	NoStderrSub       string
+	Eval              func(t *testing.T, stdout, stderr string)
+	Fixture           *Setup
+	FixturePath       string
+}
+
+// Run executes the fixture test - do not forget to call this one
+func (ft *CommandFixtureTest) Run() {
+	if *dut {
+		cmd.Execute()
+		return
+	}
+
+	ft.T.Run(ft.Name, func(t *testing.T) {
+		loc := "../../"
+
+		if ft.FixturePath != "" {
+			fp, err := os.Open(ft.FixturePath)
+			if err != nil {
+				t.Fatalf("cannot load fixture from %s: %v", ft.FixturePath, err)
+			}
+			ft.Fixture, err = LoadFromYAML(fp)
+			fp.Close()
+			if err != nil {
+				t.Fatalf("cannot load fixture from %s: %v", ft.FixturePath, err)
+			}
+		}
+		if ft.Fixture != nil {
+			var err error
+			loc, err = ft.Fixture.Materialize()
+			if err != nil {
+				t.Fatalf("cannot materialize fixture: %v", err)
+			}
+			t.Logf("materialized fixture workspace: %s", loc)
+			t.Cleanup(func() { os.RemoveAll(loc) })
+		}
+
+		env := os.Environ()
+		n := 0
+		for _, x := range env {
+			if strings.HasPrefix(x, "LEEWAY_") {
+				continue
+			}
+			env[n] = x
+			n++
+		}
+		env = env[:n]
+
+		self, err := os.Executable()
+		if err != nil {
+			t.Fatalf("cannot identify test binary: %q", err)
+		}
+		cmd := exec.Command(self, append([]string{"--dut"}, ft.Args...)...)
+		var (
+			sout = bytes.NewBuffer(nil)
+			serr = bytes.NewBuffer(nil)
+		)
+		cmd.Stdout = sout
+		cmd.Stderr = serr
+		cmd.Dir = loc
+		cmd.Env = env
+		err = cmd.Run()
+
+		var exitCode int
+		if xerr, ok := err.(*exec.ExitError); ok {
+			exitCode = xerr.ExitCode()
+			err = nil
+		}
+		if err != nil {
+			t.Fatalf("cannot re-run test binary: %q", err)
+		}
+		if exitCode != ft.ExitCode {
+			t.Errorf("unepxected exit code: expected %d, actual %d (stderr: %s, stdout: %s)", ft.ExitCode, exitCode, serr.String(), sout.String())
+		}
+		var (
+			stdout = sout.String()
+			stderr = serr.String()
+		)
+		for _, stdoutStub := range ft.StdoutSubs {
+			if !strings.Contains(stdout, stdoutStub) {
+				t.Errorf("stdout: expected to find \"%s\" in \"%s\"", stdoutStub, stdout)
+			}
+		}
+		if ft.NoStdoutSub != "" && strings.Contains(stdout, ft.NoStdoutSub) {
+			t.Errorf("stdout: expected not to find \"%s\" in \"%s\"", ft.NoStdoutSub, stdout)
+		}
+		if !strings.Contains(stderr, ft.StderrSub) {
+			t.Errorf("stderr: expected to find \"%s\" in \"%s\"", ft.StderrSub, stderr)
+		}
+		if ft.NoStderrSub != "" && strings.Contains(stderr, ft.NoStderrSub) {
+			t.Errorf("stderr: expected not to find \"%s\" in \"%s\"", ft.NoStderrSub, stderr)
+		}
+		if ft.Eval != nil {
+			ft.Eval(t, stdout, stderr)
+		}
+	})
 }
