@@ -141,7 +141,7 @@ func (ft *CommandFixtureTest) Run() {
 				t.Fatalf("cannot materialize fixture: %v", err)
 			}
 			t.Logf("materialized fixture workspace: %s", loc)
-			t.Cleanup(func() { os.RemoveAll(loc) })
+			// t.Cleanup(func() { os.RemoveAll(loc) })
 		}
 
 		env := os.Environ()
