@@ -2,12 +2,14 @@ package leeway
 
 import (
 	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1239,7 +1241,10 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		return nil, err
 	}
 
-	var buildCommands [][]string
+	var (
+		buildCommands     [][]string
+		imageDependencies = make(map[string]string)
+	)
 	buildCommands = append(buildCommands, []string{"cp", dockerfile, "Dockerfile"})
 	for _, dep := range p.GetDependencies() {
 		fn, exists := buildctx.LocalCache.Location(dep)
@@ -1252,6 +1257,15 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			{"mkdir", tgt},
 			{"tar", "xfz", fn, "--no-same-owner", "-C", tgt},
 		}...)
+
+		if dep.Type != DockerPackage {
+			continue
+		}
+		depimg, err := extractImageNameFromCache(dep.Name, fn)
+		if err != nil {
+			return nil, err
+		}
+		imageDependencies[strings.ToUpper(strings.ReplaceAll(dep.FilesystemSafeName(), "-", "_"))] = depimg
 	}
 
 	buildCommands = append(buildCommands, p.PreparationCommands...)
@@ -1264,6 +1278,9 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	buildcmd := []string{"docker", "build", "--pull", "-t", version}
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
+	}
+	for arg, val := range imageDependencies {
+		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("DEP_%s=%s", arg, val))
 	}
 	buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("__GIT_COMMIT=%s", p.C.Git().Commit))
 	if cfg.Squash {
@@ -1413,6 +1430,60 @@ func dockerExportPostBuild(builddir, result string) func(sources fileset) (subj 
 
 		return subj, builddir, nil
 	}
+}
+
+// extractImageNameFromCache extracts the Docker image name of a previously built package
+// from the cache tar.gz file of that package.
+func extractImageNameFromCache(pkgName, cacheBundleFN string) (imgname string, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("cannot extract image ref from cache for %s: %w", pkgName, err)
+		}
+	}()
+
+	f, err := os.Open(cacheBundleFN)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	gzin, err := gzip.NewReader(f)
+	if err != nil {
+		return "", err
+	}
+	defer gzin.Close()
+
+	tarin := tar.NewReader(gzin)
+	for {
+		hdr, err := tarin.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		if filepath.Base(hdr.Name) != dockerImageNamesFiles {
+			continue
+		}
+
+		imgnames := make([]byte, hdr.Size)
+		n, err := io.ReadFull(tarin, imgnames)
+		if err != nil {
+			return "", err
+		}
+		if int64(n) != hdr.Size {
+			return "", fmt.Errorf("cannot read %s from cache: %w", dockerImageNamesFiles, io.ErrShortBuffer)
+		}
+
+		lines := strings.Split(string(imgnames), "\n")
+		return lines[0], nil
+	}
+
+	return "", nil
 }
 
 // buildGeneric implements the build process for generic packages.
