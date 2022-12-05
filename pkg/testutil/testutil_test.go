@@ -97,8 +97,9 @@ func TestMaterialise(t *testing.T) {
 					{
 						Location: "comp1",
 						Files: map[string]string{
-							"someFile":        "content",
-							"some/other/file": "more content",
+							"someFile":           "content",
+							"some/other/file":    "more content",
+							"some/other/another": "more content",
 						},
 						Comp: leeway.Component{
 							Constants: leeway.Arguments{
