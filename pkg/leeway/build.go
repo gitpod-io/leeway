@@ -1296,10 +1296,12 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		ef := strings.TrimSuffix(result, ".gz")
 		res.PostBuild = dockerExportPostBuild(wd, ef)
 
-		res.PackageCommands = [][]string{
-			{"tar", "fr", ef, "./" + provenanceBundleFilename},
-			{"gzip", ef},
+		var pkgcmds [][]string
+		if p.C.W.Provenance.Enabled {
+			pkgcmds = append(pkgcmds, []string{"tar", "fr", ef, "./" + provenanceBundleFilename})
 		}
+		pkgcmds = append(pkgcmds, []string{"gzip", ef})
+		res.PackageCommands = pkgcmds
 	} else if len(cfg.Image) > 0 {
 		for _, img := range cfg.Image {
 			pkgCommands = append(pkgCommands, [][]string{
