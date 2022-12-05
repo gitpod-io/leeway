@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -78,6 +79,20 @@ func (s Setup) Materialize() (workspaceRoot string, err error) {
 		err = os.WriteFile(filepath.Join(workspaceRoot, comp.Location, "BUILD.yaml"), fc, 0644)
 		if err != nil {
 			return
+		}
+
+		for fn, content := range comp.Files {
+			err = os.MkdirAll(filepath.Join(workspaceRoot, comp.Location, filepath.Dir(fn)), 0755)
+			if errors.Is(err, os.ErrExist) {
+				err = nil
+			}
+			if err != nil {
+				return
+			}
+			err = os.WriteFile(filepath.Join(workspaceRoot, comp.Location, fn), []byte(content), 0644)
+			if err != nil {
+				return
+			}
 		}
 	}
 
