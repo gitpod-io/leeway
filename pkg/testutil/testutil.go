@@ -139,6 +139,10 @@ func (ft *CommandFixtureTest) Run() {
 	ft.T.Run(ft.Name, func(t *testing.T) {
 		loc := "../../"
 
+		if ft.FixturePath != "" && ft.Fixture != nil {
+			t.Fatalf("Only one of FixturePath and Fixture must be set. You have set both.")
+		}
+
 		if ft.FixturePath != "" {
 			fp, err := os.Open(ft.FixturePath)
 			if err != nil {
