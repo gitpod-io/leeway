@@ -105,10 +105,10 @@ func (s Setup) Materialize() (workspaceRoot string, err error) {
 	return
 }
 
-var dut = flag.Bool("dut", false, "run command/device under test")
+var Dut = flag.Bool("dut", false, "run command/device under test")
 
 func RunDUT() {
-	if *dut {
+	if *Dut {
 		cmd.Execute()
 		os.Exit(0)
 	}
@@ -131,7 +131,7 @@ type CommandFixtureTest struct {
 
 // Run executes the fixture test - do not forget to call this one
 func (ft *CommandFixtureTest) Run() {
-	if *dut {
+	if *Dut {
 		cmd.Execute()
 		return
 	}

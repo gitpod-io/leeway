@@ -36,7 +36,7 @@ fi
 `
 
 func TestBuildDockerDeps(t *testing.T) {
-	if *dut {
+	if *testutil.Dut {
 		pth, err := os.MkdirTemp("", "")
 		if err != nil {
 			t.Fatal(err)
@@ -50,9 +50,9 @@ func TestBuildDockerDeps(t *testing.T) {
 		os.Setenv("PATH", pth+":"+os.Getenv("PATH"))
 		log.WithField("path", os.Getenv("PATH")).Debug("modified path to use dummy docker")
 	}
-	runDUT()
+	testutil.RunDUT()
 
-	tests := []*CommandFixtureTest{
+	tests := []*testutil.CommandFixtureTest{
 		{
 			Name:        "docker dependency",
 			T:           t,
