@@ -2,45 +2,65 @@ package leeway_test
 
 import (
 	// "path/filepath"
-	"bytes"
-	"flag"
-	"os"
-	"os/exec"
-	"strings"
+
+	"fmt"
 	"testing"
 
-	"github.com/gitpod-io/leeway/cmd"
+	"github.com/gitpod-io/leeway/pkg/leeway"
 	"github.com/gitpod-io/leeway/pkg/testutil"
 )
 
-var dut = flag.Bool("dut", false, "run command/device under test")
-
-func runDUT() {
-	if *dut {
-		cmd.Execute()
-		os.Exit(0)
-	}
+// Used in multiple tests to verify how we deal with scripts having dependencies
+var genericPackage = leeway.Package{
+	PackageInternal: leeway.PackageInternal{
+		Name:    "something",
+		Type:    "generic",
+		Sources: []string{"*.txt"},
+	},
+	Config: leeway.GenericPkgConfig{
+		Commands: [][]string{{"echo"}},
+		Test:     [][]string{{"echo", "testing"}},
+	},
 }
 
 func TestScriptArgs(t *testing.T) {
-	runDUT()
+	testutil.RunDUT()
 
-	tests := []*CommandFixtureTest{
+	setup := &testutil.Setup{
+		Components: []testutil.Component{
+			{
+				Location: "scripts",
+				Packages: []leeway.Package{},
+				Scripts: []leeway.Script{
+					{
+						Name:        "echo",
+						Description: "echos an argument",
+						Script:      `echo ${msg}`,
+					},
+				},
+			},
+		},
+	}
+
+	tests := []*testutil.CommandFixtureTest{
+		// If the argument isn't passed then Leeway should fail with an exit code of 1
 		{
 			Name:              "unresolved arg",
 			T:                 t,
 			Args:              []string{"run", "scripts:echo"},
 			NoNestedWorkspace: true,
 			ExitCode:          1,
-			FixturePath:       "fixtures/scripts.yaml",
+			Fixture:           setup,
 		},
+		// The argument should be passed to the script correctly - verified by checking stdout
 		{
 			Name:              "resovled args",
 			T:                 t,
 			Args:              []string{"run", "scripts:echo", "-Dmsg=foobar"},
 			NoNestedWorkspace: true,
 			ExitCode:          0,
-			FixturePath:       "fixtures/scripts.yaml",
+			StdoutSubs:        []string{"foobar"},
+			Fixture:           setup,
 		},
 	}
 
@@ -50,47 +70,54 @@ func TestScriptArgs(t *testing.T) {
 }
 
 func TestWorkingDirLayout(t *testing.T) {
-	runDUT()
+	testutil.RunDUT()
 
-	tests := []*CommandFixtureTest{
+	setup := &testutil.Setup{
+		Components: []testutil.Component{
+			{
+				Location: "scripts",
+				Packages: []leeway.Package{genericPackage},
+				Scripts: []leeway.Script{
+					{
+						Name:          "pwd-origin",
+						WorkdirLayout: "origin",
+						Dependencies:  []string{fmt.Sprintf(":%s", genericPackage.Name)},
+						Script:        `pwd && find .`,
+					},
+					{
+						Name:          "pwd-packages",
+						WorkdirLayout: "packages",
+						Dependencies:  []string{fmt.Sprintf(":%s", genericPackage.Name)},
+						Script:        `pwd && find .`,
+					},
+				},
+			},
+		},
+	}
+
+	tests := []*testutil.CommandFixtureTest{
+		// Shows that even though it depends on a package, it isn't copied into the working directory
 		{
 			Name:              "origin",
 			T:                 t,
 			Args:              []string{"run", "scripts:pwd-origin"},
 			ExitCode:          0,
 			NoNestedWorkspace: true,
-			FixturePath:       "fixtures/scripts.yaml",
-			StdoutSub: `.
-./BUILD.yaml`,
+			Fixture:           setup,
+			StdoutSubs: []string{`.
+./BUILD.yaml`},
 		},
+		// Shows that the dependency is copied into the working directly, and that nothing else is present
 		{
 			Name:              "packages",
 			T:                 t,
 			Args:              []string{"run", "scripts:pwd-packages"},
 			ExitCode:          0,
 			NoNestedWorkspace: true,
-			FixturePath:       "fixtures/scripts.yaml",
-			StdoutSub: `.
-./pkgs-generic--something`,
+			Fixture:           setup,
+			StdoutSubs: []string{`.
+./scripts--something`},
 		},
-		// 		{
-		// 			Name:              "origin nested",
-		// 			T:                 t,
-		// 			Args:              []string{"run", "-w", "fixtures", "//scripts:pwd-origin"},
-		// 			ExitCode:          0,
-		// 			NoNestedWorkspace: false,
-		// 			StdoutSub: `.
-		// ./BUILD.yaml`,
-		// 		},
-		// 		{
-		// 			Name:              "packages nested",
-		// 			T:                 t,
-		// 			Args:              []string{"run", "fixtures/scripts:pwd-packages"},
-		// 			ExitCode:          0,
-		// 			NoNestedWorkspace: false,
-		// 			StdoutSub: `.
-		// ./fixtures-pkgs-generic--something`,
-		// 		},
 	}
 
 	for _, test := range tests {
@@ -98,107 +125,99 @@ func TestWorkingDirLayout(t *testing.T) {
 	}
 }
 
-type CommandFixtureTest struct {
-	Name              string
-	T                 *testing.T
-	Args              []string
-	ExitCode          int
-	NoNestedWorkspace bool
-	StdoutSub         string
-	NoStdoutSub       string
-	StderrSub         string
-	NoStderrSub       string
-	Eval              func(t *testing.T, stdout, stderr string)
-	Fixture           *testutil.Setup
-	FixturePath       string
-}
+func TestPATHEnvironment(t *testing.T) {
+	testutil.RunDUT()
 
-// Run executes the fixture test - do not forget to call this one
-func (ft *CommandFixtureTest) Run() {
-	if *dut {
-		cmd.Execute()
-		return
+	setup := &testutil.Setup{
+		Components: []testutil.Component{
+			{
+				Location: "scripts",
+				Packages: []leeway.Package{genericPackage},
+				Scripts: []leeway.Script{
+					{
+						Name:         "path",
+						Description:  "prints the $PATH of the script execution context",
+						Dependencies: []string{fmt.Sprintf(":%s", genericPackage.Name)},
+						Script:       `echo $PATH`,
+					},
+				},
+			},
+		},
 	}
 
-	ft.T.Run(ft.Name, func(t *testing.T) {
-		loc := "../../"
+	tests := []*testutil.CommandFixtureTest{
+		// The PATH should contain the package that the script depends on
+		{
+			Name:              "resovled args",
+			T:                 t,
+			Args:              []string{"run", "scripts:path"},
+			NoNestedWorkspace: true,
+			ExitCode:          0,
+			StdoutSubs:        []string{"scripts--something"},
+			Fixture:           setup,
+		},
+	}
 
-		if ft.FixturePath != "" {
-			fp, err := os.Open(ft.FixturePath)
-			if err != nil {
-				t.Fatalf("cannot load fixture from %s: %v", ft.FixturePath, err)
-			}
-			ft.Fixture, err = testutil.LoadFromYAML(fp)
-			fp.Close()
-			if err != nil {
-				t.Fatalf("cannot load fixture from %s: %v", ft.FixturePath, err)
-			}
-		}
-		if ft.Fixture != nil {
-			var err error
-			loc, err = ft.Fixture.Materialize()
-			if err != nil {
-				t.Fatalf("cannot materialize fixture: %v", err)
-			}
-			t.Logf("materialized fixture workspace: %s", loc)
-			// t.Cleanup(func() { os.RemoveAll(loc) })
-		}
+	for _, test := range tests {
+		test.Run()
+	}
+}
 
-		env := os.Environ()
-		n := 0
-		for _, x := range env {
-			if strings.HasPrefix(x, "LEEWAY_") {
-				continue
-			}
-			env[n] = x
-			n++
-		}
-		env = env[:n]
+func TestScriptParallel(t *testing.T) {
+	testutil.RunDUT()
 
-		self, err := os.Executable()
-		if err != nil {
-			t.Fatalf("cannot identify test binary: %q", err)
-		}
-		cmd := exec.Command(self, append([]string{"--dut"}, ft.Args...)...)
-		var (
-			sout = bytes.NewBuffer(nil)
-			serr = bytes.NewBuffer(nil)
-		)
-		cmd.Stdout = sout
-		cmd.Stderr = serr
-		cmd.Dir = loc
-		cmd.Env = env
-		err = cmd.Run()
+	setup := &testutil.Setup{
+		Components: []testutil.Component{
+			{
+				Location: "scripts",
+				Packages: []leeway.Package{},
+				Scripts: []leeway.Script{
+					{
+						Name:        "script-a",
+						Description: "Script A",
+						Script:      `echo "Starting script A"`,
+					},
+					{
+						Name:        "script-b",
+						Description: "Script B",
+						Script:      `echo "Starting script B"`,
+					},
+					{
+						Name:        "exit-42",
+						Description: "Exists with exit code 42",
+						Script:      `echo "Exiting" && exit 42`,
+					},
+				},
+			},
+		},
+	}
 
-		var exitCode int
-		if xerr, ok := err.(*exec.ExitError); ok {
-			exitCode = xerr.ExitCode()
-			err = nil
-		}
-		if err != nil {
-			t.Fatalf("cannot re-run test binary: %q", err)
-		}
-		if exitCode != ft.ExitCode {
-			t.Errorf("unepxected exit code: expected %d, actual %d (stderr: %s, stdout: %s)", ft.ExitCode, exitCode, serr.String(), sout.String())
-		}
-		var (
-			stdout = sout.String()
-			stderr = serr.String()
-		)
-		if !strings.Contains(stdout, ft.StdoutSub) {
-			t.Errorf("stdout: expected to find \"%s\" in \"%s\"", ft.StdoutSub, stdout)
-		}
-		if ft.NoStdoutSub != "" && strings.Contains(stdout, ft.NoStdoutSub) {
-			t.Errorf("stdout: expected not to find \"%s\" in \"%s\"", ft.NoStdoutSub, stdout)
-		}
-		if !strings.Contains(stderr, ft.StderrSub) {
-			t.Errorf("stderr: expected to find \"%s\" in \"%s\"", ft.StderrSub, stderr)
-		}
-		if ft.NoStderrSub != "" && strings.Contains(stderr, ft.NoStderrSub) {
-			t.Errorf("stderr: expected not to find \"%s\" in \"%s\"", ft.NoStderrSub, stderr)
-		}
-		if ft.Eval != nil {
-			ft.Eval(t, stdout, stderr)
-		}
-	})
+	tests := []*testutil.CommandFixtureTest{
+		// When two or more scripts are passed, it should execute both.
+		{
+			Name:              "two successful invocations",
+			T:                 t,
+			Args:              []string{"run", "scripts:script-a", "scripts:script-b"},
+			NoNestedWorkspace: true,
+			ExitCode:          0,
+			Fixture:           setup,
+			StdoutSubs:        []string{"Starting script A", "Starting script B"},
+		},
+		// When one of the scripts fail, Leeway should still run the other scripts to completions
+		// and it should fail with an exit code of 1
+		//
+		{
+			Name:              "two successful invocations",
+			T:                 t,
+			Args:              []string{"run", "scripts:exit-42", "scripts:script-a"},
+			NoNestedWorkspace: true,
+			ExitCode:          1,
+			Fixture:           setup,
+			StdoutSubs:        []string{"Starting script A", "Exiting"},
+		},
+	}
+
+	for _, test := range tests {
+		test.Run()
+	}
 }
