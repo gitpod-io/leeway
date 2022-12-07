@@ -1078,7 +1078,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		return nil, xerrors.Errorf("package should have Go config")
 	}
 
-	if _, err := os.Stat(filepath.Join(p.C.Origin, "go.mod")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(wd, "go.mod")); os.IsNotExist(err) {
 		return nil, xerrors.Errorf("can only build Go modules (missing go.mod file)")
 	}
 

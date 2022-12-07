@@ -613,7 +613,7 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 			}
 
 			if _, err := os.Stat(fn); os.IsNotExist(err) {
-				return comp, xerrors.Errorf("%s: %w", comp.Name, err)
+				return comp, xerrors.Errorf("cannot find additional source for %s: %w", comp.Name, err)
 			}
 			if _, found := completeSources[fn]; found {
 				continue

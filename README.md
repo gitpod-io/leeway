@@ -132,6 +132,8 @@ config:
   buildFlags: []
   # Command that's executed to lint the code
   lintCommand: ["golangci-lint", "run"]
+  # GoMod can point to a go.mod file outside the component root. Leeway expects a go.sum alongside the go.mod.
+  goMod: "../go.mod"
 ```
 
 ### Yarn packages
@@ -172,6 +174,14 @@ config:
   - gitpod/leeway:latest
   - gitpod/leeway:${__pkg_version}
 ```
+
+The first image name of each Docker dependency which pushed an image will result in a build argument. This mechanism enables a package to build the base image for another one, by using the build argument as `FROM` value.
+The name of this build argument is the package name of the dependency, transformed as follows:
+- `/` is replaced with `_`
+- `:` is replaced with `__`
+- all uppercase.
+
+E.g. `component/nested:docker` becomes `COMPONENT_NESTED__DOCKER`.
 
 ### Generic packages
 ```YAML
