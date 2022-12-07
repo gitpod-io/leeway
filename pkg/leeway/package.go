@@ -475,6 +475,7 @@ type GoPkgConfig struct {
 	BuildCommand   []string    `yaml:"buildCommand,omitempty"`
 	LintCommand    []string    `yaml:"lintCommand,omitempty"`
 	GoVersion      string      `yaml:"goVersion,omitempty"`
+	GoMod          string      `yaml:"goMod,omitempty"`
 }
 
 // Validate ensures this config can be acted upon/is valid
@@ -495,6 +496,15 @@ func (cfg GoPkgConfig) Validate() error {
 		}
 	}
 
+	if cfg.GoMod != "" {
+		if filepath.IsAbs(cfg.GoMod) {
+			return xerrors.Errorf("goMod must be relative to the component root")
+		}
+		if !strings.HasSuffix(cfg.GoMod, ".mod") {
+			return xerrors.Errorf("goMod must end with .mod")
+		}
+	}
+
 	return nil
 }
 
@@ -510,12 +520,21 @@ const (
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
 func (cfg GoPkgConfig) AdditionalSources(workspaceOrigin string) []string {
+	var res []string
+
 	fn := filepath.Join(workspaceOrigin, "go.work")
 	if _, err := os.Stat(fn); err == nil {
-		return []string{fn}
+		res = append(res, fn)
 	}
 
-	return []string{}
+	if cfg.GoMod != "" {
+		res = append(res,
+			cfg.GoMod,
+			strings.TrimSuffix(cfg.GoMod, ".mod")+".sum",
+		)
+	}
+
+	return res
 }
 
 // DockerPkgConfig configures a Docker package
