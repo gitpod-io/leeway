@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gitpod-io/leeway/pkg/leeway"
 	"github.com/gitpod-io/leeway/pkg/testutil"
 )
 
@@ -32,6 +33,38 @@ func TestFixtureLoadWorkspace(t *testing.T) {
 			ExitCode:          0,
 			StdoutSubs:        []string{"deeper/pkg0\nwsa\nwsa/pkg0\nwsa/pkg1"},
 			FixturePath:       "fixtures/load-workspace.yaml",
+		},
+		{
+			Name:              "workspace args file",
+			T:                 t,
+			Args:              []string{"describe", "comp:pkg"},
+			NoNestedWorkspace: true,
+			ExitCode:          0,
+			StdoutSubs:        []string{"foobar"},
+			Fixture: &testutil.Setup{
+				Files: map[string]string{"WORKSPACE.args.yaml": "msg: foobar"},
+				Workspace: leeway.Workspace{
+					ArgumentDefaults: map[string]string{
+						"msg": "blabla",
+					},
+				},
+				Components: []testutil.Component{
+					{
+						Location: "comp",
+						Packages: []leeway.Package{
+							{
+								PackageInternal: leeway.PackageInternal{
+									Name: "pkg",
+									Type: leeway.GenericPackage,
+								},
+								Config: leeway.GenericPkgConfig{
+									Commands: [][]string{{"echo", "${msg}"}},
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 		{
 			Name: "environment manifest",

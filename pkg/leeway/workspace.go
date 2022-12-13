@@ -227,14 +227,31 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 	workspace.ignores = ignores
 	log.WithField("ignores", workspace.ignores).Debug("computed workspace ignores")
 
+	if workspace.ArgumentDefaults == nil {
+		workspace.ArgumentDefaults = make(map[string]string)
+	}
 	if len(opts.ArgumentDefaults) > 0 {
-		if workspace.ArgumentDefaults == nil {
-			workspace.ArgumentDefaults = make(map[string]string)
-		}
 		for k, v := range opts.ArgumentDefaults {
 			workspace.ArgumentDefaults[k] = v
 		}
 		log.WithField("rootDefaultArgs", opts.ArgumentDefaults).Debug("installed root workspace defaults")
+	}
+
+	defaultArgsFN := filepath.Join(path, "WORKSPACE.args.yaml")
+	if fc, err := os.ReadFile(defaultArgsFN); err == nil {
+		defargs := make(map[string]string)
+		err = yaml.Unmarshal(fc, &defargs)
+		if err != nil {
+			return Workspace{}, xerrors.Errorf("cannot unmarshal %s: %w", defaultArgsFN, err)
+		}
+		for k, v := range defargs {
+			workspace.ArgumentDefaults[k] = v
+		}
+		log.WithField("content", defargs).WithField("filename", defaultArgsFN).Debug("applied workspace default args file")
+	} else if os.IsNotExist(err) {
+		// ignore
+	} else {
+		return Workspace{}, xerrors.Errorf("cannot read %s: %w", defaultArgsFN, err)
 	}
 
 	log.WithField("defaultArgs", workspace.ArgumentDefaults).Debug("applying workspace defaults")
