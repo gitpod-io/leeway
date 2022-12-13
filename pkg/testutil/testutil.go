@@ -17,8 +17,9 @@ import (
 )
 
 type Setup struct {
-	Workspace  leeway.Workspace `yaml:"workspace"`
-	Components []Component      `yaml:"components"`
+	Workspace  leeway.Workspace  `yaml:"workspace"`
+	Components []Component       `yaml:"components"`
+	Files      map[string]string `yaml:"files"`
 }
 
 type Component struct {
@@ -59,6 +60,20 @@ func (s Setup) Materialize() (workspaceRoot string, err error) {
 	err = os.WriteFile(filepath.Join(workspaceRoot, "WORKSPACE.yaml"), fc, 0644)
 	if err != nil {
 		return
+	}
+	for fn, content := range s.Files {
+		fn = filepath.Join(workspaceRoot, fn)
+		err = os.MkdirAll(filepath.Dir(fn), 0755)
+		if errors.Is(err, os.ErrExist) {
+			err = nil
+		}
+		if err != nil {
+			return
+		}
+		err = os.WriteFile(fn, []byte(content), 0644)
+		if err != nil {
+			return
+		}
 	}
 
 	for _, comp := range s.Components {

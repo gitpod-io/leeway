@@ -37,6 +37,14 @@ defaultArgs:
   key: value
 ```
 
+Users can override, and provide additional default arguments using a `WORKSPACE.args.yaml` file in the workspace root. This is useful for providing local overrides which you might not want to commit to Git.
+The `WORKSPACE.args.yaml` takes key value pairs which become available as build arguments. The values herein take precedence over the default arguments in the `WORKSPACE.yaml`.
+
+```YAML
+foo: bar
+key: value
+```
+
 ## Component
 Place a `BUILD.yaml` in a folder somewhere in the workspace to make that folder a component. A `BUILD.yaml` primarily contains the packages of that components, but can also contain constant values (think of them as metadata). For example:
 ```YAML
