@@ -29,9 +29,10 @@ type variantDescription struct {
 
 // collectCmd represents the collect command
 var collectCmd = &cobra.Command{
-	Use:   "collect [components|packages|scripts|files]",
-	Short: "Collects all packages in a workspace",
-	Args:  cobra.MaximumNArgs(1),
+	Use:       "collect [components|packages|scripts|files]",
+	Short:     "Collects all packages in a workspace",
+	Args:      cobra.MatchAll(cobra.OnlyValidArgs, cobra.MaximumNArgs(1)),
+	ValidArgs: []string{"components", "packages", "scripts", "scripts", "files"},
 	Run: func(cmd *cobra.Command, args []string) {
 		workspace, err := getWorkspace()
 		if err != nil {
