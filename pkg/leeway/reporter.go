@@ -397,7 +397,7 @@ func (r *HTMLReporter) Report() {
 {{- range $pkg, $report := .Packages }}
 <h2 id="{{ $pkg }}">{{ $pkg }}</h2>
 {{ if $report.HasError -}}
-<details>
+<details open> 
 	<summary>Error message</summary>
 	<pre><code>{{ $report.Error }}</code></pre>
 </details>
