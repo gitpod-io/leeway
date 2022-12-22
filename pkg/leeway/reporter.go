@@ -125,7 +125,7 @@ func (r *ConsoleReporter) BuildStarted(pkg *Package, status map[*Package]Package
 	tw.Flush()
 }
 
-// BuildFinished is called when the build of a package whcih was started by the user has finished.
+// BuildFinished is called when the build of a package which was started by the user has finished.
 func (r *ConsoleReporter) BuildFinished(pkg *Package, err error) {
 	if err != nil {
 		color.Printf("<red>build failed</>\n<white>Reason:</> %s\n", err)
@@ -238,6 +238,7 @@ type PackageReport struct {
 	start    time.Time
 	duration time.Duration
 	status   PackageBuildStatus
+	results  []string
 	err      error
 }
 
@@ -261,16 +262,28 @@ func (r *PackageReport) StatusIcon() string {
 	}
 }
 
-func (r *PackageReport) HasError() bool {
-	return r.err != nil
-}
-
 func (r *PackageReport) DurationInSeconds() string {
 	return fmt.Sprintf("%.2fs", r.duration.Seconds())
 }
 
+func (r *PackageReport) HasLogs() bool {
+	return r.logs.Len() > 0
+}
+
 func (r *PackageReport) Logs() string {
 	return strings.TrimSpace(r.logs.String())
+}
+
+func (r *PackageReport) HasResults() bool {
+	return len(r.results) > 0
+}
+
+func (r *PackageReport) Results() []string {
+	return r.results
+}
+
+func (r *PackageReport) HasError() bool {
+	return r.err != nil
 }
 
 func (r *PackageReport) Error() string {
@@ -345,6 +358,10 @@ func (r *HTMLReporter) PackageBuildFinished(pkg *Package, err error) {
 	rep.duration = time.Since(rep.start)
 	rep.status = PackageBuilt
 	rep.err = err
+
+	if cfg, ok := pkg.Config.(DockerPkgConfig); ok && pkg.Type == DockerPackage {
+		rep.results = cfg.Image
+	}
 }
 
 func (r *HTMLReporter) Report() {
@@ -354,22 +371,56 @@ func (r *HTMLReporter) Report() {
 	vars["RootPackage"] = r.rootPackage
 
 	tmplString := `
-<h1> Leeway build for <code>{{ .RootPackage.FullName }}</code></h1>
-{{ range $pkg, $report := .Packages }}
-<details{{ if $report.HasError }} open{{ end }}><summary> {{ $report.StatusIcon }} <b>{{ $pkg }}</b> - {{ $report.DurationInSeconds }}</summary>
-
-{{ if $report.HasError }}
-<pre>
-{{ $report.Error }}
-</pre>
-{{ end }}
-
-<pre>
-{{ $report.Logs }}
-</pre>
-
+<h1>{{ .RootPackage.FullName }}</h1>
+<p>Leeway built the following packages</p>
+<table>
+	<thead>
+		<tr>
+			<td>🚦 Status</td>
+			<td>📦 Package</td>
+			<td>⏰ Duration</td>
+			<td>🔬 Details</td>
+		</tr>
+	</thread>
+	<tbody>
+		{{- range $pkg, $report := .Packages }}
+		<tr>
+			<td>{{ $report.StatusIcon }}</td>
+			<td>{{ $pkg }}</td>
+			<td>{{ $report.DurationInSeconds -}}</td>
+			<td><a href="#{{ $pkg }}">See below</td>
+		</tr>
+		{{- end }}
+	</tbody>
+<table>
+<p>For details around each package, see below<p>
+{{- range $pkg, $report := .Packages }}
+<h2 id="{{ $pkg }}">{{ $pkg }}</h2>
+{{ if $report.HasError -}}
+<details>
+	<summary>Error message</summary>
+	<pre><code>{{ $report.Error }}</code></pre>
 </details>
-{{ end }}
+{{ end -}}
+{{ if $report.HasResults -}}
+<details>
+	<summary>Results</summary>
+	<ul>
+	{{- range $result := $report.Results }}
+		<li><code>{{ $result }}</code></li>
+	{{ end -}}
+	</ul>
+</details>
+{{ end -}}
+<details>
+	<summary>Logs</summary>
+	{{ if $report.HasLogs -}}
+	<pre><code>{{ $report.Logs }}</code></pre>
+	{{- else -}}
+	<pre>No logs</pre>
+	{{- end }}
+</details>
+{{- end -}}
 `
 	tmpl, _ := template.New("Report").Parse(strings.ReplaceAll(tmplString, "'", "`"))
 
