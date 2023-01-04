@@ -436,3 +436,18 @@ leeway collect components -l someConstant
 ```bash
 LEEWAY_EXPERIMENTAL=true leeway export --strict /some/destination
 ```
+
+# Contributing
+
+## Creating a new release
+
+Releases of Leeway are created by the [release workflow](.github/workflows/release.yaml) which uses [goreleaser/goreleaser-action](https://github.com/goreleaser/goreleaser-action).
+
+To create a new release create a new Git tag and push it:
+
+```sh
+git tag vX.X.X
+git push origin vX.X.X
+```
+
+This will trigger the workflow which you can find [here](https://github.com/gitpod-io/leeway/actions/workflows/release.yaml). Once it's done a new release will show up in GitHub [here](https://github.com/gitpod-io/leeway/releases).
