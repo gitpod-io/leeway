@@ -173,6 +173,14 @@ func getRemoteCache() leeway.RemoteCache {
 			return leeway.GSUtilRemoteCache{
 				BucketName: remoteCacheBucket,
 			}
+		case "AWS":
+			rc, err := leeway.NewS3RemoteCache(remoteCacheBucket, nil)
+			if err != nil {
+				log.Warnf("S3 cache initialization failed; remote cache will be disabled: %s", err)
+				return leeway.NoRemoteCache{}
+			} else {
+				return rc
+			}
 		default:
 			return leeway.GSUtilRemoteCache{
 				BucketName: remoteCacheBucket,
