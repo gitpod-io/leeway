@@ -3,14 +3,22 @@ package leeway
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 )
@@ -230,4 +238,151 @@ func gsutilTransfer(target string, files []string) error {
 		return err
 	}
 	return nil
+}
+
+// S3RemoteCache uses the AWS Go SDK to implement a remote cache
+type S3RemoteCache struct {
+	BucketName string
+	s3Config   *aws.Config
+	s3Client   *s3.Client
+}
+
+func NewS3RemoteCache(bucketName string, cfg *aws.Config) (*S3RemoteCache, error) {
+	if cfg == nil {
+		v, err := config.LoadDefaultConfig(context.TODO())
+		cfg = &v
+		if err != nil {
+			return nil, fmt.Errorf("cannot load s3 config: %s", err)
+		}
+	}
+	s3Client := s3.NewFromConfig(*cfg)
+
+	log.DebugFn(func() []interface{} {
+		stsClient := sts.NewFromConfig(*cfg)
+		identity, err := stsClient.GetCallerIdentity(context.TODO(), &sts.GetCallerIdentityInput{})
+		if err != nil {
+			log.Warnf("Cannot get AWS caller identity: %s", err)
+			return nil
+		}
+
+		log.WithFields(log.Fields{
+			"Account": aws.ToString(identity.Account),
+			"Arn":     aws.ToString(identity.Arn),
+			"Region":  cfg.Region,
+		}).Debug("Loaded AWS account")
+
+		return nil
+	})
+
+	return &S3RemoteCache{bucketName, cfg, s3Client}, nil
+}
+
+// ExistingPackages returns existing cached build artifacts in the remote cache
+func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{}, error) {
+	packagesToKeys := make(map[*Package]string)
+	for _, p := range pkgs {
+		version, err := p.Version()
+		if err != nil {
+			log.WithField("package", p.FullName()).Debug("Failed to get version for package. Will not check remote cache for package.")
+			continue
+		}
+
+		packagesToKeys[p] = fmt.Sprintf("%s.tar.gz", version)
+	}
+
+	if len(packagesToKeys) == 0 {
+		return map[*Package]struct{}{}, nil
+	}
+	log.Debugf("Checking if %d packages exist in the remote cache using s3", len(packagesToKeys))
+
+	ch := make(chan *Package, len(packagesToKeys))
+	defer close(ch)
+
+	existingPackages := make(map[*Package]struct{})
+	wg := sync.WaitGroup{}
+
+	for pkg, key := range packagesToKeys {
+		go func(pkg *Package, key string) {
+			defer wg.Done()
+
+			stat, _ := rs.hasObject(context.TODO(), key)
+			// TODO error handling
+			if stat {
+				ch <- pkg
+			}
+		}(pkg, key)
+
+		wg.Add(1)
+	}
+	wg.Wait()
+
+	return existingPackages, nil
+}
+
+// Download makes a best-effort attempt at downloading previously cached build artifacts for the given packages
+// in their current version. A cache miss (i.e. a build artifact not being available) does not constitute an
+// error. Get should try and download as many artifacts as possible.
+func (s3 *S3RemoteCache) Download(dst Cache, pkgs []*Package) error {
+	panic("not implemented") // TODO: Implement
+}
+
+// Upload makes a best effort to upload the build arfitacts to a remote cache. If uploading an artifact fails, that
+// does not constitute an error.
+func (s3 *S3RemoteCache) Upload(src Cache, pkgs []*Package) error {
+	panic("not implemented") // TODO: Implement
+}
+
+func (rs *S3RemoteCache) hasBucket(ctx context.Context) (bool, error) {
+	cfg := *rs.s3Config
+	fields := log.Fields{
+		"bucket": rs.BucketName,
+		"region": cfg.Region,
+	}
+	log.WithFields(fields).Debugf("Checking s3 for cache bucket")
+
+	_, err := rs.s3Client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(rs.BucketName),
+	})
+
+	if err != nil {
+		var nsk *types.NoSuchBucket
+		if errors.As(err, &nsk) {
+			return false, nil
+		}
+		log.WithFields(fields).Errorf("Failed to get bucket: %s", err)
+		return false, err
+	}
+	return true, nil
+}
+
+func (rs *S3RemoteCache) hasObject(ctx context.Context, key string) (bool, error) {
+	cfg := *rs.s3Config
+	fields := log.Fields{
+		"key":    key,
+		"bucket": rs.BucketName,
+		"region": cfg.Region,
+	}
+	log.WithFields(fields).Debugf("Checking s3 for cached package")
+
+	_, err := rs.s3Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(rs.BucketName),
+		Key:    aws.String(key),
+		Range:  aws.String("bytes=0-0"),
+	})
+
+	if err != nil {
+		var nsk *types.NoSuchKey
+		if errors.As(err, &nsk) {
+			return false, nil
+		}
+
+		// We've received an error that's not a simple missing key error. Collect more information
+		_, _ = rs.hasBucket(ctx)
+
+		log.WithFields(fields).Warnf("S3 GetObject failed: %s", err)
+		return false, err
+	}
+
+	// XXX
+	return true, nil
 }
