@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -250,10 +251,10 @@ type S3RemoteCache struct {
 func NewS3RemoteCache(bucketName string, cfg *aws.Config) (*S3RemoteCache, error) {
 	if cfg == nil {
 		v, err := config.LoadDefaultConfig(context.TODO())
-		cfg = &v
 		if err != nil {
 			return nil, fmt.Errorf("cannot load s3 config: %s", err)
 		}
+		cfg = &v
 	}
 	s3Client := s3.NewFromConfig(*cfg)
 
@@ -287,7 +288,7 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 			continue
 		}
 
-		packagesToKeys[p] = fmt.Sprintf("%s.tar.gz", version)
+		packagesToKeys[p] = filepath.Base(fmt.Sprintf("%s.tar.gz", version))
 	}
 
 	if len(packagesToKeys) == 0 {
@@ -296,12 +297,12 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 	log.Debugf("Checking if %d packages exist in the remote cache using s3", len(packagesToKeys))
 
 	ch := make(chan *Package, len(packagesToKeys))
-	defer close(ch)
 
 	existingPackages := make(map[*Package]struct{})
 	wg := sync.WaitGroup{}
 
 	for pkg, key := range packagesToKeys {
+		wg.Add(1)
 		go func(pkg *Package, key string) {
 			defer wg.Done()
 
@@ -311,10 +312,13 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 				ch <- pkg
 			}
 		}(pkg, key)
-
-		wg.Add(1)
 	}
 	wg.Wait()
+	close(ch)
+
+	for p := range ch {
+		existingPackages[p] = struct{}{}
+	}
 
 	return existingPackages, nil
 }
@@ -322,14 +326,94 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 // Download makes a best-effort attempt at downloading previously cached build artifacts for the given packages
 // in their current version. A cache miss (i.e. a build artifact not being available) does not constitute an
 // error. Get should try and download as many artifacts as possible.
-func (s3 *S3RemoteCache) Download(dst Cache, pkgs []*Package) error {
-	panic("not implemented") // TODO: Implement
+func (rs *S3RemoteCache) Download(dst Cache, pkgs []*Package) error {
+	fmt.Printf("☁️  downloading %d cached build artifacts from s3 remote cache\n", len(pkgs))
+	var (
+		files []string
+		dest  string
+	)
+
+	for _, pkg := range pkgs {
+		fn, exists := dst.Location(pkg)
+		if exists {
+			continue
+		}
+
+		if dest == "" {
+			dest = filepath.Dir(fn)
+		} else if dest != filepath.Dir(fn) {
+			return xerrors.Errorf("s3 cache only supports one target folder, not %s and %s", dest, filepath.Dir(fn))
+		}
+
+		files = append(files, fmt.Sprintf("%s/%s", rs.BucketName, strings.TrimLeft(fn, "/")))
+	}
+
+	wg := sync.WaitGroup{}
+
+	for _, file := range files {
+		wg.Add(1)
+
+		go func(file string) {
+			defer wg.Done()
+
+			key := filepath.Base(file)
+			fields := log.Fields{
+				"key":    key,
+				"bucket": rs.BucketName,
+				"region": rs.s3Config.Region,
+			}
+			log.WithFields(fields).Debug("downloading object from s3")
+			len, err := rs.getObject(context.TODO(), key, fmt.Sprintf("%s/%s", dest, key))
+			if err != nil {
+				log.WithFields(fields).Warnf("failed to download and store object %s from s3: %s", key, err)
+			} else {
+				log.WithFields(fields).Debugf("downloaded %d byte object from s3 to %s", len, file)
+			}
+
+		}(file)
+	}
+	wg.Wait()
+
+	return nil
 }
 
 // Upload makes a best effort to upload the build arfitacts to a remote cache. If uploading an artifact fails, that
 // does not constitute an error.
-func (s3 *S3RemoteCache) Upload(src Cache, pkgs []*Package) error {
-	panic("not implemented") // TODO: Implement
+func (rs *S3RemoteCache) Upload(src Cache, pkgs []*Package) error {
+	var files []string
+	for _, pkg := range pkgs {
+		file, exists := src.Location(pkg)
+		if !exists {
+			continue
+		}
+		files = append(files, file)
+	}
+	fmt.Fprintf(os.Stdout, "☁️  uploading %d build artifacts to s3 remote cache\n", len(files))
+
+	wg := sync.WaitGroup{}
+
+	for _, file := range files {
+		wg.Add(1)
+		go func(file string) {
+			defer wg.Done()
+			key := filepath.Base(file)
+			fields := log.Fields{
+				"key":    key,
+				"bucket": rs.BucketName,
+				"region": rs.s3Config.Region,
+			}
+			log.WithFields(fields).Debug("uploading object to s3")
+			res, err := rs.uploadObject(context.TODO(), filepath.Base(file), file)
+			if err != nil {
+				log.WithFields(fields).Warnf("Failed to upload object to s3: %s", err)
+			} else {
+				log.WithFields(fields).Debugf("completed upload to %s", res.Location)
+			}
+		}(file)
+	}
+	wg.Wait()
+
+	return nil
 }
 
 func (rs *S3RemoteCache) hasBucket(ctx context.Context) (bool, error) {
@@ -356,11 +440,10 @@ func (rs *S3RemoteCache) hasBucket(ctx context.Context) (bool, error) {
 }
 
 func (rs *S3RemoteCache) hasObject(ctx context.Context, key string) (bool, error) {
-	cfg := *rs.s3Config
 	fields := log.Fields{
 		"key":    key,
 		"bucket": rs.BucketName,
-		"region": cfg.Region,
+		"region": rs.s3Config.Region,
 	}
 	log.WithFields(fields).Debugf("Checking s3 for cached package")
 
@@ -377,7 +460,10 @@ func (rs *S3RemoteCache) hasObject(ctx context.Context, key string) (bool, error
 		}
 
 		// We've received an error that's not a simple missing key error. Collect more information
-		_, _ = rs.hasBucket(ctx)
+		hasBucket, _ := rs.hasBucket(ctx)
+		if !hasBucket {
+			return false, err
+		}
 
 		log.WithFields(fields).Warnf("S3 GetObject failed: %s", err)
 		return false, err
@@ -385,4 +471,48 @@ func (rs *S3RemoteCache) hasObject(ctx context.Context, key string) (bool, error
 
 	// XXX
 	return true, nil
+}
+
+func (rs *S3RemoteCache) getObject(ctx context.Context, key string, path string) (int64, error) {
+
+	var partMiBs int64 = 10
+	downloader := manager.NewDownloader(rs.s3Client, func(d *manager.Downloader) {
+		d.PartSize = partMiBs * 1024 * 1024
+	})
+	buffer := manager.NewWriteAtBuffer([]byte{})
+	res, err := downloader.Download(context.TODO(), buffer, &s3.GetObjectInput{
+		Bucket: aws.String(rs.BucketName),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return res, err
+	}
+
+	err = os.WriteFile(path, buffer.Bytes(), 0644)
+	if err != nil {
+		return 0, xerrors.Errorf("failed to write s3 download to %s: %s", path, err)
+	}
+	return res, nil
+}
+
+func (rs *S3RemoteCache) uploadObject(ctx context.Context, key string, path string) (*manager.UploadOutput, error) {
+
+	fN, err := os.Open(path)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot open %s for S3 upload: %s", path, err)
+	}
+
+	var partMiBs int64 = 10
+	uploader := manager.NewUploader(rs.s3Client, func(u *manager.Uploader) {
+		u.PartSize = partMiBs * 1024 * 1024
+	})
+	res, err := uploader.Upload(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(rs.BucketName),
+		Key:    aws.String(key),
+		Body:   fN,
+	})
+	if err != nil {
+		return res, err
+	}
+	return res, nil
 }
