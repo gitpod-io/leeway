@@ -80,9 +80,11 @@ var rootCmd = &cobra.Command{
 Leeway is configured exclusively through the WORKSPACE/BUILD files and environment variables. The following environment
 variables have an effect on leeway:
        <light_blue>LEEWAY_WORKSPACE_ROOT</>  Contains the path where to look for a WORKSPACE file. Can also be set using --workspace.
-  <light_blue>LEEWAY_REMOTE_CACHE_BUCKET</>  Enables remote caching using GCP buckets. Set this variable to the bucket name used for caching.
-                              When this variable is set, leeway expects "gsutil" in the path configured and authenticated so
-                              that it can work with the bucket.
+ <light_blue>LEEWAY_REMOTE_CACHE_STORAGE</>  Defines the remote caching storage provider. Valid values are "GCP" and "AWS". Defaults to "GCP".
+  <light_blue>LEEWAY_REMOTE_CACHE_BUCKET</>  Enables remote caching using GCP or S3 buckets. Required credentials depend on the storage provider:
+                             - GCP: leeway expects "gsutil" in the path configured and authenticated so that it can work with the bucket.
+                             - AWS: leeway expects that AWS credentials have been provided and with read/write access to the S3 bucket.
+                               For details on configuring AWS credentials see https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
             <light_blue>LEEWAY_CACHE_DIR</>  Location of the local build cache. The directory does not have to exist yet.
             <light_blue>LEEWAY_BUILD_DIR</>  Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O
                               which makes it advisable to place this on a fast SSD or in RAM.
