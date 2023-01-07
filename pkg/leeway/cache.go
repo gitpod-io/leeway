@@ -24,6 +24,10 @@ import (
 	"golang.org/x/xerrors"
 )
 
+// The part size of S3 bucket uploads/downloads for multipart file operations.
+// See also: https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html
+const S3_PART_SIZE = 5 * 1024 * 1024
+
 // Cache provides filesystem locations for package build artifacts.
 type Cache interface {
 	// Location returns the absolute filesystem path for a package build artifact
@@ -241,7 +245,7 @@ func gsutilTransfer(target string, files []string) error {
 	return nil
 }
 
-// S3RemoteCache uses the AWS Go SDK to implement a remote cache
+// S3RemoteCache uses the AWS Go SDK to implement a remote cache.
 type S3RemoteCache struct {
 	BucketName string
 	s3Config   *aws.Config
@@ -259,6 +263,8 @@ func NewS3RemoteCache(bucketName string, cfg *aws.Config) (*S3RemoteCache, error
 	s3Client := s3.NewFromConfig(*cfg)
 
 	log.DebugFn(func() []interface{} {
+		// When the log level is set to debug fetch the AWS caller identity in case there's uncertainty about
+		// which AWS profile is active and interacting with the caching bucket.
 		stsClient := sts.NewFromConfig(*cfg)
 		identity, err := stsClient.GetCallerIdentity(context.TODO(), &sts.GetCallerIdentityInput{})
 		if err != nil {
@@ -301,13 +307,16 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 	existingPackages := make(map[*Package]struct{})
 	wg := sync.WaitGroup{}
 
+	ctx := context.TODO()
 	for pkg, key := range packagesToKeys {
 		wg.Add(1)
 		go func(pkg *Package, key string) {
 			defer wg.Done()
 
-			stat, _ := rs.hasObject(context.TODO(), key)
-			// TODO error handling
+			stat, err := rs.hasObject(ctx, key)
+			if err != nil {
+				log.WithField("bucket", rs.BucketName).WithField("key", key).Debugf("Failed to check for remote cached object: %s", err)
+			}
 			if stat {
 				ch <- pkg
 			}
@@ -319,6 +328,7 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 	for p := range ch {
 		existingPackages[p] = struct{}{}
 	}
+	log.WithField("bucket", rs.BucketName).Debugf("%d/%d packages found in remote cache", len(existingPackages), len(packagesToKeys))
 
 	return existingPackages, nil
 }
@@ -350,6 +360,7 @@ func (rs *S3RemoteCache) Download(dst Cache, pkgs []*Package) error {
 
 	wg := sync.WaitGroup{}
 
+	ctx := context.TODO()
 	for _, file := range files {
 		wg.Add(1)
 
@@ -363,7 +374,7 @@ func (rs *S3RemoteCache) Download(dst Cache, pkgs []*Package) error {
 				"region": rs.s3Config.Region,
 			}
 			log.WithFields(fields).Debug("downloading object from s3")
-			len, err := rs.getObject(context.TODO(), key, fmt.Sprintf("%s/%s", dest, key))
+			len, err := rs.getObject(ctx, key, fmt.Sprintf("%s/%s", dest, key))
 			if err != nil {
 				log.WithFields(fields).Warnf("failed to download and store object %s from s3: %s", key, err)
 			} else {
@@ -392,6 +403,7 @@ func (rs *S3RemoteCache) Upload(src Cache, pkgs []*Package) error {
 
 	wg := sync.WaitGroup{}
 
+	ctx := context.TODO()
 	for _, file := range files {
 		wg.Add(1)
 		go func(file string) {
@@ -403,7 +415,7 @@ func (rs *S3RemoteCache) Upload(src Cache, pkgs []*Package) error {
 				"region": rs.s3Config.Region,
 			}
 			log.WithFields(fields).Debug("uploading object to s3")
-			res, err := rs.uploadObject(context.TODO(), filepath.Base(file), file)
+			res, err := rs.uploadObject(ctx, filepath.Base(file), file)
 			if err != nil {
 				log.WithFields(fields).Warnf("Failed to upload object to s3: %s", err)
 			} else {
@@ -447,6 +459,10 @@ func (rs *S3RemoteCache) hasObject(ctx context.Context, key string) (bool, error
 	}
 	log.WithFields(fields).Debugf("Checking s3 for cached package")
 
+	// The AWS HeadObject API call would be slightly more suitable here but the Go API
+	// buries missing object errors behind some internal types. Using GetObject with a zero
+	// byte range provides a more clear error message that can indicate the absence of an
+	// object at the expense of performing a slightly more expensive API call.
 	_, err := rs.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(rs.BucketName),
 		Key:    aws.String(key),
@@ -459,7 +475,8 @@ func (rs *S3RemoteCache) hasObject(ctx context.Context, key string) (bool, error
 			return false, nil
 		}
 
-		// We've received an error that's not a simple missing key error. Collect more information
+		// We've received an error that's not a simple missing key error. Attempt to look up
+		// the cache bucket in case we're trying to use a bucket that doesn't exist.
 		hasBucket, _ := rs.hasBucket(ctx)
 		if !hasBucket {
 			return false, err
@@ -469,15 +486,13 @@ func (rs *S3RemoteCache) hasObject(ctx context.Context, key string) (bool, error
 		return false, err
 	}
 
-	// XXX
 	return true, nil
 }
 
 func (rs *S3RemoteCache) getObject(ctx context.Context, key string, path string) (int64, error) {
 
-	var partMiBs int64 = 10
 	downloader := manager.NewDownloader(rs.s3Client, func(d *manager.Downloader) {
-		d.PartSize = partMiBs * 1024 * 1024
+		d.PartSize = S3_PART_SIZE
 	})
 	buffer := manager.NewWriteAtBuffer([]byte{})
 	res, err := downloader.Download(context.TODO(), buffer, &s3.GetObjectInput{
@@ -502,9 +517,8 @@ func (rs *S3RemoteCache) uploadObject(ctx context.Context, key string, path stri
 		return nil, xerrors.Errorf("cannot open %s for S3 upload: %s", path, err)
 	}
 
-	var partMiBs int64 = 10
 	uploader := manager.NewUploader(rs.s3Client, func(u *manager.Uploader) {
-		u.PartSize = partMiBs * 1024 * 1024
+		u.PartSize = S3_PART_SIZE
 	})
 	res, err := uploader.Upload(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(rs.BucketName),
