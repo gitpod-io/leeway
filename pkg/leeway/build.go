@@ -456,14 +456,14 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToDownload = append(pkgsToDownload, p)
 	}
 
-	err = options.RemoteCache.Download(ctx.LocalCache, pkgsToDownload)
+	err = ctx.RemoteCache.Download(ctx.LocalCache, pkgsToDownload)
 	if err != nil {
 		return err
 	}
 
-	options.Reporter.BuildStarted(pkg, pkgstatus)
+	ctx.Reporter.BuildStarted(pkg, pkgstatus)
 	defer func(err *error) {
-		options.Reporter.BuildFinished(pkg, *err)
+		ctx.Reporter.BuildFinished(pkg, *err)
 	}(&err)
 
 	if len(unresolvedArgs) != 0 {
@@ -475,21 +475,21 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return xerrors.Errorf(msg)
 	}
 
-	if options.BuildPlan != nil {
+	if ctx.BuildPlan != nil {
 		log.Debug("writing build plan")
-		err = writeBuildPlan(options.BuildPlan, pkg, pkgstatus)
+		err = writeBuildPlan(ctx.BuildPlan, pkg, pkgstatus)
 		if err != nil {
 			return err
 		}
 	}
 
-	if options.DryRun {
+	if ctx.DryRun {
 		// This is a dry-run. We've prepared everything for the build but do not execute the build itself.
 		return nil
 	}
 
 	buildErr := pkg.build(ctx)
-	cacheErr := options.RemoteCache.Upload(ctx.LocalCache, ctx.GetNewPackagesForCache())
+	cacheErr := ctx.RemoteCache.Upload(ctx.LocalCache, ctx.GetNewPackagesForCache())
 
 	if buildErr != nil {
 		// We deliberately swallow the target pacakge build error as that will have already been reported using the reporter.
