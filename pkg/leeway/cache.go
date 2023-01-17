@@ -98,6 +98,40 @@ func (NoRemoteCache) Upload(src Cache, pkgs []*Package) error {
 	return nil
 }
 
+// PushOnlyRemoteCache implements a remote cache that will only push packages to the cache
+type PushOnlyRemoteCache struct {
+	C RemoteCache
+}
+
+func (c *PushOnlyRemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{}, error) {
+	return c.C.ExistingPackages(pkgs)
+}
+
+func (c *PushOnlyRemoteCache) Download(dst Cache, pkgs []*Package) error {
+	return nil
+}
+
+func (c *PushOnlyRemoteCache) Upload(src Cache, pkgs []*Package) error {
+	return c.C.Upload(src, pkgs)
+}
+
+// PullOnlyRemoteCache implements a remote cache that will only pull packages from the cache
+type PullOnlyRemoteCache struct {
+	C RemoteCache
+}
+
+func (c *PullOnlyRemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{}, error) {
+	return c.C.ExistingPackages(pkgs)
+}
+
+func (c *PullOnlyRemoteCache) Download(dst Cache, pkgs []*Package) error {
+	return c.C.Download(dst, pkgs)
+}
+
+func (c *PullOnlyRemoteCache) Upload(src Cache, pkgs []*Package) error {
+	return nil
+}
+
 // GSUtilRemoteCache uses the gsutil command to implement a remote cache
 type GSUtilRemoteCache struct {
 	BucketName string

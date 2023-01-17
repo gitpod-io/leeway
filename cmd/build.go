@@ -185,9 +185,9 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 	case leeway.CacheNone, leeway.CacheLocal:
 		remoteCache = leeway.NoRemoteCache{}
 	case leeway.CacheRemotePull:
-		remoteCache = &pullOnlyRemoteCache{C: remoteCache}
+		remoteCache = &leeway.PullOnlyRemoteCache{C: remoteCache}
 	case leeway.CacheRemotePush:
-		remoteCache = &pushOnlyRemoteCache{C: remoteCache}
+		remoteCache = &leeway.PushOnlyRemoteCache{C: remoteCache}
 	case leeway.CacheRemote:
 	default:
 		log.Fatalf("invalid cache level: %s", cacheLevel)
@@ -293,36 +293,4 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		leeway.WithDockerBuildOptions(&dockerBuildOptions),
 		leeway.WithJailedExecution(jailedExecution),
 	}, localCache
-}
-
-type pushOnlyRemoteCache struct {
-	C leeway.RemoteCache
-}
-
-func (c *pushOnlyRemoteCache) ExistingPackages(pkgs []*leeway.Package) (map[*leeway.Package]struct{}, error) {
-	return c.C.ExistingPackages(pkgs)
-}
-
-func (c *pushOnlyRemoteCache) Download(dst leeway.Cache, pkgs []*leeway.Package) error {
-	return nil
-}
-
-func (c *pushOnlyRemoteCache) Upload(src leeway.Cache, pkgs []*leeway.Package) error {
-	return c.C.Upload(src, pkgs)
-}
-
-type pullOnlyRemoteCache struct {
-	C leeway.RemoteCache
-}
-
-func (c *pullOnlyRemoteCache) ExistingPackages(pkgs []*leeway.Package) (map[*leeway.Package]struct{}, error) {
-	return c.C.ExistingPackages(pkgs)
-}
-
-func (c *pullOnlyRemoteCache) Download(dst leeway.Cache, pkgs []*leeway.Package) error {
-	return c.C.Download(dst, pkgs)
-}
-
-func (c *pullOnlyRemoteCache) Upload(src leeway.Cache, pkgs []*leeway.Package) error {
-	return nil
 }
