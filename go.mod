@@ -12,7 +12,7 @@ require (
 	github.com/in-toto/in-toto-golang v0.3.3
 	github.com/karrick/godirwalk v1.17.0
 	github.com/minio/highwayhash v1.0.2
-	github.com/opencontainers/runc v1.1.4
+	github.com/opencontainers/runc v1.1.5
 	github.com/opencontainers/runtime-spec v1.0.3-0.20210326190908-1c3f411f0417
 	github.com/segmentio/textio v1.2.0
 	github.com/sirupsen/logrus v1.9.0
