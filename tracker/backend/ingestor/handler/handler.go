@@ -2,7 +2,6 @@ package handler
 
 import (
 	context "context"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	connect_go "github.com/bufbuild/connect-go"
@@ -39,22 +38,7 @@ func (handler *BuildReportHandler) BuildStarted(ctx context.Context, req *connec
 
 // PackageBuildFinished implements v1connect.ReporterServiceHandler
 func (handler *BuildReportHandler) PackageBuildFinished(ctx context.Context, req *connect_go.Request[v1.PackageBuildFinishedRequest]) (*connect_go.Response[v1.EmptyResponse], error) {
-	var status PackageStatus
-	switch {
-	case req.Msg.Error != "":
-		status = PackageStatusFailed
-	default:
-		status = PackageStatusSuccess
-	}
-	sample := PackageSample{
-		FullName:         req.Msg.Package.Name,
-		BuildDuration:    time.Duration(req.Msg.DurationMs) * time.Millisecond,
-		Time:             time.Now(),
-		Status:           status,
-		DirtyWorkingCopy: req.Msg.Package.DirtyWorkingCopy,
-		Type:             req.Msg.Package.Type,
-	}
-	err := handler.storeSample(ctx, sample)
+	err := handler.storeSample(ctx, req.Msg)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +55,7 @@ func (handler *BuildReportHandler) PackageBuildLog(ctx context.Context, req *con
 
 // PackageBuildStarted implements v1connect.ReporterServiceHandler
 func (handler *BuildReportHandler) PackageBuildStarted(ctx context.Context, req *connect_go.Request[v1.PackageBuildStartedRequest]) (*connect_go.Response[v1.EmptyResponse], error) {
-	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.Package.Name).WithField("dirtyWorkingCopy", req.Msg.Package.DirtyWorkingCopy).Debug("PackageBuildStarted")
+	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.Package.Name).WithField("dirtyWorkingCopy", req.Msg.Package.Git.DirtyWorkingCopy).Debug("PackageBuildStarted")
 	return &connect_go.Response[v1.EmptyResponse]{Msg: &v1.EmptyResponse{}}, nil
 }
 

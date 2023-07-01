@@ -81,10 +81,6 @@ func (rep *Reporter) BuildStarted(pkg *leeway.Package, status map[*leeway.Packag
 			SessionId: rep.session(),
 			Package:   toRemotePackage(pkg),
 			Status:    msgStatus,
-			Git: &v1.BuildStartedRequest_GitInfo{
-				Origin: pkg.C.W.Git.Origin,
-				Commit: pkg.C.W.Git.Commit,
-			},
 		},
 	}))
 }
@@ -164,11 +160,15 @@ func toRemotePackage(pkg *leeway.Package) *v1.Package {
 	}
 
 	return &v1.Package{
-		Name:             pkg.FullName(),
-		Type:             pkgType,
-		Sources:          pkg.Sources,
-		Dependencies:     pkg.Dependencies,
-		DirtyWorkingCopy: pkg.C.W.Git.DirtyFiles(pkg.Sources),
+		Name:         pkg.FullName(),
+		Type:         pkgType,
+		Sources:      pkg.Sources,
+		Dependencies: pkg.Dependencies,
+		Git: &v1.Package_GitInfo{
+			Origin:           pkg.C.W.Git.Origin,
+			Commit:           pkg.C.W.Git.Commit,
+			DirtyWorkingCopy: pkg.C.W.Git.DirtyFiles(pkg.Sources),
+		},
 	}
 }
 

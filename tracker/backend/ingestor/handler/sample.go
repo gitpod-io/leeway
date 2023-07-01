@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/InfluxCommunity/influxdb3-go/influx"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
@@ -29,28 +30,28 @@ const (
 	PackageStatusFailedTests PackageStatus = "failed_tests"
 )
 
-type SampleStorageFunc func(ctx context.Context, sample PackageSample) error
+type SampleStorageFunc func(ctx context.Context, sample *v1.PackageBuildFinishedRequest) error
 
-func PrintSample(ctx context.Context, sample PackageSample) error {
+func PrintSample(ctx context.Context, sample *v1.PackageBuildFinishedRequest) error {
 	logrus.WithField("sample", sample).Info("package sample")
 	return nil
 }
 
 func PutCloudwatchMetric(cw *cloudwatch.Client) SampleStorageFunc {
-	return func(ctx context.Context, sample PackageSample) error {
+	return func(ctx context.Context, sample *v1.PackageBuildFinishedRequest) error {
 		_, err := cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
 			Namespace: aws.String("leeway"),
 			MetricData: []types.MetricDatum{
 				{
-					Timestamp:  aws.Time(sample.Time),
-					Value:      aws.Float64(sample.BuildDuration.Seconds()),
+					Timestamp:  aws.Time(time.Now()),
+					Value:      aws.Float64((time.Duration(sample.DurationMs) * time.Millisecond).Seconds()),
 					Unit:       types.StandardUnitSeconds,
 					MetricName: aws.String("package_build_duration"),
 					Dimensions: []types.Dimension{
-						{Name: aws.String("name"), Value: aws.String(sample.FullName)},
-						{Name: aws.String("status"), Value: aws.String(string(sample.Status))},
-						{Name: aws.String("type"), Value: aws.String(sample.Type.String())},
-						{Name: aws.String("dirtyWorkingCopy"), Value: aws.String(strconv.FormatBool(sample.DirtyWorkingCopy))},
+						{Name: aws.String("name"), Value: aws.String(sample.Package.Name)},
+						{Name: aws.String("success"), Value: aws.String(strconv.FormatBool(sample.Error == ""))},
+						{Name: aws.String("type"), Value: aws.String(sample.Package.Type.String())},
+						{Name: aws.String("dirtyWorkingCopy"), Value: aws.String(strconv.FormatBool(sample.Package.Git.DirtyWorkingCopy))},
 					},
 				},
 			},
