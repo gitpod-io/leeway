@@ -2,6 +2,7 @@ package remotereporter
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	connect_go "github.com/bufbuild/connect-go"
@@ -10,6 +11,15 @@ import (
 	"github.com/gitpod-io/leeway/pkg/remotereporter/api/gen/v1/v1connect"
 	"github.com/sirupsen/logrus"
 )
+
+func NewReporter(endpoint string) *Reporter {
+	httpclient := &http.Client{Timeout: 2 * time.Second}
+	client := v1connect.NewReporterServiceClient(httpclient, endpoint)
+	return &Reporter{
+		sessionID: time.Now().Format(time.RFC3339Nano),
+		Client:    client,
+	}
+}
 
 type Reporter struct {
 	Client v1connect.ReporterServiceClient

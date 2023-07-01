@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gitpod-io/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/remotereporter"
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -173,6 +174,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().String("coverage-output-path", "", "Output path where test coverage file will be copied after running tests")
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
+	cmd.Flags().String("remote-report", "", "Report the build progress to a remote endoint")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemCache) {
@@ -248,6 +250,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		log.Fatal(err)
 	} else if report != "" {
 		reporter = append(reporter, leeway.NewHTMLReporter(report))
+	}
+	if ep, err := cmd.Flags().GetString("remote-report"); err != nil {
+		log.Fatal(err)
+	} else if ep != "" {
+		reporter = append(reporter, remotereporter.NewReporter(ep))
 	}
 
 	dontTest, err := cmd.Flags().GetBool("dont-test")
