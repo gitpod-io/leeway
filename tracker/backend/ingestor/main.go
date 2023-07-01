@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 	grpcreflect "github.com/bufbuild/connect-grpcreflect-go"
+	segment "github.com/segmentio/analytics-go/v3"
 	"github.com/sirupsen/logrus"
 
 	"github.com/gitpod-io/leeway/pkg/remotereporter/api/gen/v1/v1connect"
@@ -21,9 +22,9 @@ import (
 )
 
 var (
-	listen     = flag.String("listen", ":8080", "address to listen on when not running as lambda")
-	verbose    = flag.Bool("verbose", false, "enable verbose logging")
-	sampleSink = flag.String("sample-sink", "console", "where to write samples to. Valid values are: console, cloudwatch")
+	listen  = flag.String("listen", ":8080", "address to listen on when not running as lambda")
+	verbose = flag.Bool("verbose", false, "enable verbose logging")
+	sink    = flag.String("sink", "console", "where to write samples to. Valid values are: console, cloudwatch, influxdb, segment")
 )
 
 func main() {
@@ -41,7 +42,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	var store handler.SampleStorageFunc
-	switch *sampleSink {
+	switch *sink {
 	case "console":
 		store = handler.PrintSample
 	case "cloudwatch":
@@ -57,8 +58,11 @@ func main() {
 			log.Fatalf("cannot create InfluxDB client: %v", err)
 		}
 		store = handler.WriteToInfluxDB(client, os.Getenv("INFLUXDB_DATABASE"))
+	case "segment":
+		client := segment.New(os.Getenv("SEGMENT_KEY"))
+		store = handler.WriteToSegment(client)
 	default:
-		logrus.Fatalf("unsupported --sample-sink: %s", *sampleSink)
+		logrus.Fatalf("unsupported --sample-sink: %s", *sink)
 	}
 	mux.Handle(v1connect.NewReporterServiceHandler(handler.NewBuildReportHandler(store)))
 

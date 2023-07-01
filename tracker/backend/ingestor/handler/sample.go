@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	v1 "github.com/gitpod-io/leeway/pkg/remotereporter/api/gen/v1"
+	segment "github.com/segmentio/analytics-go/v3"
 	"github.com/sirupsen/logrus"
 )
 
@@ -71,5 +72,30 @@ func WriteToInfluxDB(client *influx.Client, database string) SampleStorageFunc {
 			AddField("gitDirty", sample.Package.Git.DirtyWorkingCopy).
 			AddField("durationSeconds", (time.Duration(sample.DurationMs)*time.Millisecond).Seconds()),
 		)
+	}
+}
+
+func WriteToSegment(client segment.Client) SampleStorageFunc {
+	return func(ctx context.Context, sample *v1.PackageBuildFinishedRequest) error {
+		eventName := "package_build_"
+		if sample.Error == "" {
+			eventName += "succeeded"
+		} else {
+			eventName += "failed"
+		}
+
+		client.Enqueue(segment.Track{
+			AnonymousId: sample.SessionId,
+			Event:       eventName,
+			Timestamp:   time.Now(),
+			Properties: segment.Properties{
+				"name":             sample.Package.Name,
+				"durationMS":       sample.DurationMs,
+				"repo":             sample.Package.Git.Origin,
+				"dirtyWorkingCopy": sample.Package.Git.DirtyWorkingCopy,
+				"commit":           sample.Package.Git.Commit,
+			},
+		})
+		return nil
 	}
 }
