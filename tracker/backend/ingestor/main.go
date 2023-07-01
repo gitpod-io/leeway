@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 	grpcreflect "github.com/bufbuild/connect-grpcreflect-go"
 	"github.com/sirupsen/logrus"
@@ -18,11 +19,17 @@ import (
 )
 
 var (
-	listen = flag.String("listen", ":8080", "address to listen on when not running as lambda")
+	listen     = flag.String("listen", ":8080", "address to listen on when not running as lambda")
+	verbose    = flag.Bool("verbose", false, "enable verbose logging")
+	sampleSink = flag.String("sample-sink", "console", "where to write samples to. Valid values are: console, cloudwatch")
 )
 
 func main() {
 	flag.Parse()
+
+	if *verbose {
+		logrus.SetLevel(logrus.DebugLevel)
+	}
 
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -31,7 +38,16 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	mux.Handle(v1connect.NewReporterServiceHandler(handler.NewBuildReportHandler(cfg)))
+	var store handler.SampleStorageFunc
+	switch *sampleSink {
+	case "console":
+		store = handler.PrintSample
+	case "cloudwatch":
+		store = handler.PutCloudwatchMetric(cloudwatch.NewFromConfig(cfg))
+	default:
+		logrus.Fatalf("unsupported --sample-sink: %s", *sampleSink)
+	}
+	mux.Handle(v1connect.NewReporterServiceHandler(handler.NewBuildReportHandler(store)))
 
 	reflector := grpcreflect.NewStaticReflector(
 		v1connect.ReporterServiceName,

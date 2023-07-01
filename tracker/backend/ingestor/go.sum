@@ -71,6 +71,8 @@ github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.28 h1:srIVS45eQuewqz6fKK
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.28/go.mod h1:7VRpKQQedkfIEXb4k52I7swUnZP0wohVajJMRn3vsUw=
 github.com/aws/aws-sdk-go-v2/internal/ini v1.3.35 h1:LWA+3kDM8ly001vJ1X1waCuLJdtTl48gwkPKWy9sosI=
 github.com/aws/aws-sdk-go-v2/internal/ini v1.3.35/go.mod h1:0Eg1YjxE0Bhn56lx+SHJwCzhW+2JGtizsrx+lCqrfm0=
+github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.26.2 h1:PWGu2JhCb/XJlJ7SSFJq76pxk4xWsN76nZxh7TzMHx0=
+github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.26.2/go.mod h1:2KOZkkzMDZCo/aLzPhys06mHNkiU74u85aMJA3PLRvg=
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.9.28 h1:bkRyG4a929RCnpVSTvLM2j/T4ls015ZhhYApbmYs15s=
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.9.28/go.mod h1:jj7znCIg05jXlaGBlFMGP8+7UN3VtCkRBG2spnmRQkU=
 github.com/aws/aws-sdk-go-v2/service/sso v1.12.12 h1:nneMBM2p79PGWBQovYO/6Xnc2ryRMw3InnDJq1FHkSY=
@@ -265,6 +267,7 @@ github.com/iris-contrib/go.uuid v2.0.0+incompatible/go.mod h1:iz2lgM/1UnEf1kP0L/
 github.com/iris-contrib/httpexpect/v2 v2.3.1/go.mod h1:ICTf89VBKSD3KB0fsyyHviKF8G8hyepP0dOXJPWz3T0=
 github.com/iris-contrib/jade v1.1.4/go.mod h1:EDqR+ur9piDl6DUgs6qRrlfzmlx/D5UybogqrXvJTBE=
 github.com/iris-contrib/schema v0.0.6/go.mod h1:iYszG0IOsuIsfzjymw1kMzTL8YQcCWlm65f3wX8J5iA=
+github.com/jmespath/go-jmespath v0.4.0 h1:BEgLn5cpjn8UN1mAw4NjwDrS35OdebyEtFe+9YPoQUg=
 github.com/jmespath/go-jmespath v0.4.0/go.mod h1:T8mJZnbsbmF+m6zOOFylbeCJqk5+pHWvzYPziyZiYoo=
 github.com/jmespath/go-jmespath/internal/testify v1.5.1/go.mod h1:L3OGu8Wl2/fWfCI6z80xFu9LTZmf1ZRjMHUOPmWr69U=
 github.com/josharian/intern v1.0.0/go.mod h1:5DoeVV0s6jJacbCEi61lwdGj/aVlrQvzHFFd8Hwg//Y=

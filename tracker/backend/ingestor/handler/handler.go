@@ -11,33 +11,29 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func NewBuildReportHandler(cfg aws.Config) *BuildReportHandler {
+func NewBuildReportHandler(store SampleStorageFunc) *BuildReportHandler {
 	hdlr := &BuildReportHandler{
-		Config: cfg,
-		storeSample: func(ctx context.Context, sample PackageSample) error {
-			logrus.WithField("sample", sample).Info("package sample")
-			return nil
-		},
+		storeSample: store,
 	}
 	return hdlr
 }
 
 type BuildReportHandler struct {
 	Config      aws.Config
-	storeSample func(ctx context.Context, sample PackageSample) error
+	storeSample SampleStorageFunc
 
 	v1connect.UnimplementedReporterServiceHandler
 }
 
 // BuildFinished implements v1connect.ReporterServiceHandler
 func (handler *BuildReportHandler) BuildFinished(ctx context.Context, req *connect_go.Request[v1.BuildFinishedRequest]) (*connect_go.Response[v1.EmptyResponse], error) {
-	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.Package.Name).Info("BuildFinished")
+	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.Package.Name).Debug("BuildFinished")
 	return &connect_go.Response[v1.EmptyResponse]{Msg: &v1.EmptyResponse{}}, nil
 }
 
 // BuildStarted implements v1connect.ReporterServiceHandler
 func (handler *BuildReportHandler) BuildStarted(ctx context.Context, req *connect_go.Request[v1.BuildStartedRequest]) (*connect_go.Response[v1.EmptyResponse], error) {
-	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.Package.Name).WithField("status", req.Msg.Status).Info("BuildStarted")
+	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.Package.Name).WithField("status", req.Msg.Status).Debug("BuildStarted")
 	return &connect_go.Response[v1.EmptyResponse]{Msg: &v1.EmptyResponse{}}, nil
 }
 
@@ -56,25 +52,26 @@ func (handler *BuildReportHandler) PackageBuildFinished(ctx context.Context, req
 		Time:             time.Now(),
 		Status:           status,
 		DirtyWorkingCopy: req.Msg.Package.DirtyWorkingCopy,
+		Type:             req.Msg.Package.Type,
 	}
 	err := handler.storeSample(ctx, sample)
 	if err != nil {
 		return nil, err
 	}
 
-	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.Package.Name).WithField("dur", req.Msg.DurationMs).WithField("success", req.Msg.Error == "").Info("PackageBuildFinished")
+	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.Package.Name).WithField("dur", req.Msg.DurationMs).WithField("success", req.Msg.Error == "").Debug("PackageBuildFinished")
 	return &connect_go.Response[v1.EmptyResponse]{Msg: &v1.EmptyResponse{}}, nil
 }
 
 // PackageBuildLog implements v1connect.ReporterServiceHandler
 func (handler *BuildReportHandler) PackageBuildLog(ctx context.Context, req *connect_go.Request[v1.PackageBuildLogRequest]) (*connect_go.Response[v1.EmptyResponse], error) {
-	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.PackageName).Info("PackageBuildLog")
+	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.PackageName).Debug("PackageBuildLog")
 	return &connect_go.Response[v1.EmptyResponse]{Msg: &v1.EmptyResponse{}}, nil
 }
 
 // PackageBuildStarted implements v1connect.ReporterServiceHandler
 func (handler *BuildReportHandler) PackageBuildStarted(ctx context.Context, req *connect_go.Request[v1.PackageBuildStartedRequest]) (*connect_go.Response[v1.EmptyResponse], error) {
-	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.Package.Name).WithField("dirtyWorkingCopy", req.Msg.Package.DirtyWorkingCopy).Info("PackageBuildStarted")
+	logrus.WithField("session", req.Msg.SessionId).WithField("pkg", req.Msg.Package.Name).WithField("dirtyWorkingCopy", req.Msg.Package.DirtyWorkingCopy).Debug("PackageBuildStarted")
 	return &connect_go.Response[v1.EmptyResponse]{Msg: &v1.EmptyResponse{}}, nil
 }
 
