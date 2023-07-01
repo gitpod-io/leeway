@@ -1,0 +1,9 @@
+scripts:
+  - name: generate
+    description: generates the Go API for the remote reporter gRPC interface
+    script: |
+      go install github.com/bufbuild/buf/cmd/buf@latest
+      go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+      go install github.com/bufbuild/connect-go/cmd/protoc-gen-connect-go@latest
+      go install github.com/golang/mock/mockgen@latest
+      buf generate
