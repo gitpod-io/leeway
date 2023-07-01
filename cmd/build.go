@@ -254,7 +254,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 	if ep, err := cmd.Flags().GetString("remote-report"); err != nil {
 		log.Fatal(err)
 	} else if ep != "" {
-		reporter = append(reporter, remotereporter.NewReporter(ep))
+		reporter = append(reporter, remotereporter.NewReporter(ep, os.Getenv("LEEWAY_REMOTE_REPORT_TOKEN")))
 	}
 
 	dontTest, err := cmd.Flags().GetBool("dont-test")

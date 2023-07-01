@@ -15,14 +15,21 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func NewReporter(endpoint string) *Reporter {
+func NewReporter(endpoint, token string) *Reporter {
 	id, err := uuid.NewRandom()
 	if err != nil {
 		panic(fmt.Sprintf("cannot create remote reporting sesison UUID: %v.\nTry running without --remote-report", err))
 	}
 
 	httpclient := &http.Client{Timeout: 2 * time.Second}
-	client := v1connect.NewReporterServiceClient(httpclient, endpoint)
+	client := v1connect.NewReporterServiceClient(httpclient, endpoint, connect_go.WithInterceptors(connect_go.UnaryInterceptorFunc(func(uf connect_go.UnaryFunc) connect_go.UnaryFunc {
+		return func(ctx context.Context, req connect_go.AnyRequest) (connect_go.AnyResponse, error) {
+			if token != "" {
+				req.Header().Set("Authorization", token)
+			}
+			return uf(ctx, req)
+		}
+	})))
 	return &Reporter{
 		sessionID: id.String(),
 		times:     make(map[string]time.Time),

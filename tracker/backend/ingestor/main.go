@@ -2,17 +2,19 @@ package main
 
 import (
 	"context"
-	"flag"
 	"log"
 	"net/http"
 	"os"
 	"time"
+
+	flag "github.com/spf13/pflag"
 
 	"github.com/InfluxCommunity/influxdb3-go/influx"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
+	"github.com/bufbuild/connect-go"
 	grpcreflect "github.com/bufbuild/connect-grpcreflect-go"
 	segment "github.com/segmentio/analytics-go/v3"
 	"github.com/sirupsen/logrus"
@@ -22,9 +24,12 @@ import (
 )
 
 var (
-	listen  = flag.String("listen", ":8080", "address to listen on when not running as lambda")
-	verbose = flag.Bool("verbose", false, "enable verbose logging")
-	sink    = flag.String("sink", "console", "where to write samples to. Valid values are: console, cloudwatch, influxdb, segment")
+	listen      = flag.String("listen", ":8080", "address to listen on when not running as lambda")
+	verbose     = flag.Bool("verbose", false, "enable verbose logging")
+	sink        = flag.String("sink", "console", "where to write samples to. Valid values are: console, cloudwatch, influxdb, segment")
+	idp         = flag.String("idp", "", "if set incoming requests must carry a valid ID token from this IDP in their Authorization header")
+	idpAudience = flag.String("idp-aud", "leeway.gitpod.io", "use in combination with --idp to control the audience the ID token must carry")
+	idpSub      = flag.StringArray("idp-sub", nil, "use in combination with --idp to control the subject the ID token must carry; if any subject matches the token is accepted")
 )
 
 func main() {
@@ -62,9 +67,18 @@ func main() {
 		client := segment.New(os.Getenv("SEGMENT_KEY"))
 		store = handler.WriteToSegment(client)
 	default:
-		logrus.Fatalf("unsupported --sample-sink: %s", *sink)
+		logrus.Fatalf("unsupported --sink: %s", *sink)
 	}
-	mux.Handle(v1connect.NewReporterServiceHandler(handler.NewBuildReportHandler(store)))
+
+	var interceptors []connect.Interceptor
+	if *idp != "" {
+		ic, err := handler.NewOIDCInterceptor(*idp, *idpAudience, *idpSub)
+		if err != nil {
+			logrus.Fatalf("cannot setup OIDC auth with %s: %v", err)
+		}
+		interceptors = append(interceptors, ic)
+	}
+	mux.Handle(v1connect.NewReporterServiceHandler(handler.NewBuildReportHandler(store), connect.WithInterceptors(interceptors...)))
 
 	reflector := grpcreflect.NewStaticReflector(
 		v1connect.ReporterServiceName,

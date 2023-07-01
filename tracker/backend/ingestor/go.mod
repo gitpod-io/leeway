@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/InfluxCommunity/influxdb3-go v0.1.0
+	github.com/MicahParks/keyfunc v1.9.0
 	github.com/aws/aws-lambda-go v1.41.0
 	github.com/aws/aws-sdk-go-v2 v1.18.1
 	github.com/aws/aws-sdk-go-v2/config v1.18.27
@@ -12,8 +13,11 @@ require (
 	github.com/bufbuild/connect-go v1.9.0
 	github.com/bufbuild/connect-grpcreflect-go v1.1.0
 	github.com/gitpod-io/leeway v0.0.0-00010101000000-000000000000
+	github.com/golang-jwt/jwt/v4 v4.4.2
 	github.com/segmentio/analytics-go/v3 v3.2.1
 	github.com/sirupsen/logrus v1.9.3
+	github.com/spf13/pflag v1.0.5
+	github.com/zitadel/oidc v1.13.4
 )
 
 require (
@@ -36,6 +40,8 @@ require (
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/flatbuffers v2.0.8+incompatible // indirect
 	github.com/google/uuid v1.3.0 // indirect
+	github.com/gorilla/schema v1.2.0 // indirect
+	github.com/gorilla/securecookie v1.1.1 // indirect
 	github.com/influxdata/line-protocol/v2 v2.2.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
@@ -46,16 +52,20 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/segmentio/backo-go v1.0.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
+	golang.org/x/crypto v0.7.0 // indirect
 	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1 // indirect
 	golang.org/x/mod v0.10.0 // indirect
 	golang.org/x/net v0.10.0 // indirect
+	golang.org/x/oauth2 v0.6.0 // indirect
 	golang.org/x/sys v0.8.0 // indirect
 	golang.org/x/text v0.9.0 // indirect
 	golang.org/x/tools v0.9.3 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
+	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230320184635-7606e756e683 // indirect
 	google.golang.org/grpc v1.55.0 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
+	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
 )
 
 replace github.com/gitpod-io/leeway => ../../.. // leeway
