@@ -183,20 +183,16 @@ func getRunPrefix(p *Package) string {
 
 // NewWerftReporter craetes a new werft compatible reporter
 func NewWerftReporter() *WerftReporter {
-	return &WerftReporter{
-		ConsoleReporter: NewConsoleReporter(),
-	}
+	return &WerftReporter{}
 }
 
 // WerftReporter works like the console reporter but adds werft output
 type WerftReporter struct {
-	*ConsoleReporter
+	NoopReporter
 }
 
 // BuildStarted is called when the build of a package is started by the user.
 func (r *WerftReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {
-	r.ConsoleReporter.BuildStarted(pkg, status)
-
 	for p, s := range status {
 		if s != PackageNotBuiltYet {
 			continue
@@ -211,8 +207,6 @@ func (r *WerftReporter) BuildStarted(pkg *Package, status map[*Package]PackageBu
 
 // PackageBuildFinished is called when the package build has finished.
 func (r *WerftReporter) PackageBuildFinished(pkg *Package, err error) {
-	r.ConsoleReporter.PackageBuildFinished(pkg, err)
-
 	if cfg, ok := pkg.Config.(DockerPkgConfig); ok && pkg.Type == DockerPackage {
 		for _, img := range cfg.Image {
 			fmt.Printf("[docker|RESULT] %s\n", img)
@@ -291,16 +285,14 @@ func (r *PackageReport) Error() string {
 }
 
 type HTMLReporter struct {
-	delegate    Reporter
 	filename    string
 	reports     map[string]*PackageReport
 	rootPackage *Package
 	mu          sync.RWMutex
 }
 
-func NewHTMLReporter(del Reporter, filename string) *HTMLReporter {
+func NewHTMLReporter(filename string) *HTMLReporter {
 	return &HTMLReporter{
-		delegate: del,
 		filename: filename,
 		reports:  make(map[string]*PackageReport),
 	}
@@ -331,16 +323,13 @@ func (r *HTMLReporter) getReport(pkg *Package) *PackageReport {
 
 func (r *HTMLReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {
 	r.rootPackage = pkg
-	r.delegate.BuildStarted(pkg, status)
 }
 
 func (r *HTMLReporter) BuildFinished(pkg *Package, err error) {
-	r.delegate.BuildFinished(pkg, err)
 	r.Report()
 }
 
 func (r *HTMLReporter) PackageBuildStarted(pkg *Package) {
-	r.delegate.PackageBuildStarted(pkg)
 	rep := r.getReport(pkg)
 	rep.start = time.Now()
 	rep.status = PackageBuilding
@@ -349,11 +338,9 @@ func (r *HTMLReporter) PackageBuildStarted(pkg *Package) {
 func (r *HTMLReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {
 	report := r.getReport(pkg)
 	report.logs.Write(buf)
-	r.delegate.PackageBuildLog(pkg, isErr, buf)
 }
 
 func (r *HTMLReporter) PackageBuildFinished(pkg *Package, err error) {
-	r.delegate.PackageBuildFinished(pkg, err)
 	rep := r.getReport(pkg)
 	rep.duration = time.Since(rep.start)
 	rep.status = PackageBuilt
@@ -432,3 +419,61 @@ func (r *HTMLReporter) Report() {
 		log.WithError(err).Fatal("Can't render template")
 	}
 }
+
+type CompositeReporter []Reporter
+
+// BuildFinished implements Reporter
+func (cr CompositeReporter) BuildFinished(pkg *Package, err error) {
+	for _, r := range cr {
+		r.BuildFinished(pkg, err)
+	}
+}
+
+// BuildStarted implements Reporter
+func (cr CompositeReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {
+	for _, r := range cr {
+		r.BuildStarted(pkg, status)
+	}
+}
+
+// PackageBuildFinished implements Reporter
+func (cr CompositeReporter) PackageBuildFinished(pkg *Package, err error) {
+	for _, r := range cr {
+		r.PackageBuildFinished(pkg, err)
+	}
+}
+
+// PackageBuildLog implements Reporter
+func (cr CompositeReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {
+	for _, r := range cr {
+		r.PackageBuildLog(pkg, isErr, buf)
+	}
+}
+
+// PackageBuildStarted implements Reporter
+func (cr CompositeReporter) PackageBuildStarted(pkg *Package) {
+	for _, r := range cr {
+		r.PackageBuildStarted(pkg)
+	}
+}
+
+var _ Reporter = CompositeReporter{}
+
+type NoopReporter struct{}
+
+// BuildFinished implements Reporter
+func (*NoopReporter) BuildFinished(pkg *Package, err error) {}
+
+// BuildStarted implements Reporter
+func (*NoopReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {}
+
+// PackageBuildFinished implements Reporter
+func (*NoopReporter) PackageBuildFinished(pkg *Package, err error) {}
+
+// PackageBuildLog implements Reporter
+func (*NoopReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {}
+
+// PackageBuildStarted implements Reporter
+func (*NoopReporter) PackageBuildStarted(pkg *Package) {}
+
+var _ Reporter = ((*NoopReporter)(nil))

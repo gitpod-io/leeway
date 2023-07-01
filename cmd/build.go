@@ -236,23 +236,18 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		}
 	}
 
-	werftlog, err := cmd.Flags().GetBool("werft")
-	if err != nil {
-		log.Fatal(err)
-	}
-	var reporter leeway.Reporter
-	if werftlog {
-		reporter = leeway.NewWerftReporter()
-	} else {
-		reporter = leeway.NewConsoleReporter()
-	}
+	var reporter leeway.CompositeReporter
+	reporter = append(reporter, leeway.NewConsoleReporter())
 
-	report, err := cmd.Flags().GetString("report")
-	if err != nil {
+	if werftlog, err := cmd.Flags().GetBool("werft"); err != nil {
 		log.Fatal(err)
+	} else if werftlog {
+		reporter = append(reporter, leeway.NewWerftReporter())
 	}
-	if report != "" {
-		reporter = leeway.NewHTMLReporter(reporter, report)
+	if report, err := cmd.Flags().GetString("report"); err != nil {
+		log.Fatal(err)
+	} else if report != "" {
+		reporter = append(reporter, leeway.NewHTMLReporter(report))
 	}
 
 	dontTest, err := cmd.Flags().GetBool("dont-test")
