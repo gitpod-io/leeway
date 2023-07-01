@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/InfluxCommunity/influxdb3-go/influx"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
@@ -44,6 +46,17 @@ func main() {
 		store = handler.PrintSample
 	case "cloudwatch":
 		store = handler.PutCloudwatchMetric(cloudwatch.NewFromConfig(cfg))
+	case "influxdb":
+		client, err := influx.New(influx.Configs{
+			HostURL:      os.Getenv("INFLUXDB_HOST"),
+			AuthToken:    os.Getenv("INFLUXDB_TOKEN"),
+			Organization: os.Getenv("INFLUXDB_ORG"),
+			HTTPClient:   &http.Client{Timeout: 5 * time.Second},
+		})
+		if err != nil {
+			log.Fatalf("cannot create InfluxDB client: %v", err)
+		}
+		store = handler.WriteToInfluxDB(client, os.Getenv("INFLUXDB_DATABASE"))
 	default:
 		logrus.Fatalf("unsupported --sample-sink: %s", *sampleSink)
 	}

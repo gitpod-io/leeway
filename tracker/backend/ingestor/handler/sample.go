@@ -59,3 +59,17 @@ func PutCloudwatchMetric(cw *cloudwatch.Client) SampleStorageFunc {
 		return err
 	}
 }
+
+func WriteToInfluxDB(client *influx.Client, database string) SampleStorageFunc {
+	return func(ctx context.Context, sample *v1.PackageBuildFinishedRequest) error {
+		return client.WritePoints(ctx, database, influx.NewPointWithMeasurement("package_build_duration").
+			AddTag("name", sample.Package.Name).
+			AddTag("type", sample.Package.Type.String()).
+			AddTag("success", strconv.FormatBool(sample.Error == "")).
+			AddTag("gitOrigin", sample.Package.Git.Origin).
+			AddField("gitCommit", sample.Package.Git.Commit).
+			AddField("gitDirty", sample.Package.Git.DirtyWorkingCopy).
+			AddField("durationSeconds", (time.Duration(sample.DurationMs)*time.Millisecond).Seconds()),
+		)
+	}
+}
