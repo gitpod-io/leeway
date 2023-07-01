@@ -10,7 +10,9 @@ packages:
   - name: app
     type: go
     srcs:
-      - "**/*.go"
+      - "*.go"
+      - "cmd/**/*.go"
+      - "pkg/**/*.go"
       - "**/*.html"
       - "**/*.js"
       - go.mod
