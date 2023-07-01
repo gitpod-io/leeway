@@ -2,21 +2,30 @@ package remotereporter
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	connect_go "github.com/bufbuild/connect-go"
 	"github.com/gitpod-io/leeway/pkg/leeway"
 	v1 "github.com/gitpod-io/leeway/pkg/remotereporter/api/gen/v1"
 	"github.com/gitpod-io/leeway/pkg/remotereporter/api/gen/v1/v1connect"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
 func NewReporter(endpoint string) *Reporter {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		panic(fmt.Sprintf("cannot create remote reporting sesison UUID: %v.\nTry running without --remote-report", err))
+	}
+
 	httpclient := &http.Client{Timeout: 2 * time.Second}
 	client := v1connect.NewReporterServiceClient(httpclient, endpoint)
 	return &Reporter{
-		sessionID: time.Now().Format(time.RFC3339Nano),
+		sessionID: id.String(),
+		times:     make(map[string]time.Time),
 		Client:    client,
 	}
 }
@@ -25,6 +34,9 @@ type Reporter struct {
 	Client v1connect.ReporterServiceClient
 
 	sessionID string
+
+	times map[string]time.Time
+	mu    sync.Mutex
 }
 
 var _ leeway.Reporter = ((*Reporter)(nil))
@@ -63,26 +75,42 @@ func (rep *Reporter) BuildStarted(pkg *leeway.Package, status map[*leeway.Packag
 		}
 		msgStatus[k.Name] = s
 	}
+
 	logError(rep.Client.BuildStarted(rep.context(), &connect_go.Request[v1.BuildStartedRequest]{
 		Msg: &v1.BuildStartedRequest{
 			SessionId: rep.session(),
 			Package:   toRemotePackage(pkg),
 			Status:    msgStatus,
+			Git: &v1.BuildStartedRequest_GitInfo{
+				Origin: pkg.C.W.Git.Origin,
+				Commit: pkg.C.W.Git.Commit,
+			},
 		},
 	}))
 }
 
 // PackageBuildFinished implements leeway.Reporter
 func (rep *Reporter) PackageBuildFinished(pkg *leeway.Package, err error) {
+	rep.mu.Lock()
+	t, ok := rep.times[pkg.FullName()]
+	delete(rep.times, pkg.FullName())
+	rep.mu.Unlock()
+
+	var dtMS int64 = -1
+	if ok {
+		dtMS = time.Since(t).Milliseconds()
+	}
 	var errMsg string
 	if err != nil {
 		errMsg = err.Error()
 	}
+
 	logError(rep.Client.PackageBuildFinished(rep.context(), &connect_go.Request[v1.PackageBuildFinishedRequest]{
 		Msg: &v1.PackageBuildFinishedRequest{
-			SessionId:   rep.session(),
-			PackageName: pkg.Name,
-			Error:       errMsg,
+			SessionId:  rep.session(),
+			Package:    toRemotePackage(pkg),
+			Error:      errMsg,
+			DurationMs: dtMS,
 		},
 	}))
 }
@@ -92,7 +120,7 @@ func (rep *Reporter) PackageBuildLog(pkg *leeway.Package, isErr bool, buf []byte
 	logError(rep.Client.PackageBuildLog(rep.context(), &connect_go.Request[v1.PackageBuildLogRequest]{
 		Msg: &v1.PackageBuildLogRequest{
 			SessionId:   rep.session(),
-			PackageName: pkg.Name,
+			PackageName: pkg.FullName(),
 			Message:     buf,
 			IsError:     isErr,
 		},
@@ -101,6 +129,10 @@ func (rep *Reporter) PackageBuildLog(pkg *leeway.Package, isErr bool, buf []byte
 
 // PackageBuildStarted implements leeway.Reporter
 func (rep *Reporter) PackageBuildStarted(pkg *leeway.Package) {
+	rep.mu.Lock()
+	rep.times[pkg.FullName()] = time.Now()
+	rep.mu.Unlock()
+
 	logError(rep.Client.PackageBuildStarted(rep.context(), &connect_go.Request[v1.PackageBuildStartedRequest]{
 		Msg: &v1.PackageBuildStartedRequest{
 			SessionId: rep.session(),
@@ -132,10 +164,11 @@ func toRemotePackage(pkg *leeway.Package) *v1.Package {
 	}
 
 	return &v1.Package{
-		Name:         pkg.Name,
-		Type:         pkgType,
-		Sources:      pkg.Sources,
-		Dependencies: pkg.Dependencies,
+		Name:             pkg.FullName(),
+		Type:             pkgType,
+		Sources:          pkg.Sources,
+		Dependencies:     pkg.Dependencies,
+		DirtyWorkingCopy: pkg.C.W.Git.DirtyFiles(pkg.Sources),
 	}
 }
 

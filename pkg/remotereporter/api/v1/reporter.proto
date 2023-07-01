@@ -31,9 +31,15 @@ service ReporterService {
 }
 
 message BuildStartedRequest {
+	message GitInfo {
+		string origin = 1;
+		string commit = 2;
+	}
+
 	string session_id = 1;
     Package package = 2;
     map<string, PackageBuildStatus> status = 3;
+	GitInfo git = 4;
 }
 
 message BuildFinishedRequest {
@@ -56,8 +62,9 @@ message PackageBuildLogRequest {
 
 message PackageBuildFinishedRequest {
 	string session_id = 1;
-    string package_name = 2;
+    Package package = 2;
     string error = 3;
+	int64 duration_ms = 4;
 }
 
 message EmptyResponse {}
@@ -68,6 +75,7 @@ message Package {
     repeated string sources = 3;
     repeated string dependencies = 4;
     PackageConfig config = 5;
+	bool dirty_working_copy = 6;
 }
 
 enum PackageType {
