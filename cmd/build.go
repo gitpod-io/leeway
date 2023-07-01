@@ -174,7 +174,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().String("coverage-output-path", "", "Output path where test coverage file will be copied after running tests")
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
-	cmd.Flags().String("remote-report", "", "Report the build progress to a remote endoint")
+	cmd.Flags().String("remote-report", os.Getenv("LEEWAY_REMOTE_REPORT"), "Report the build progress to a remote endoint. The LEEWAY_REMOTE_REPORT env var is used as default.")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemCache) {
