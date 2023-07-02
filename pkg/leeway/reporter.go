@@ -45,7 +45,44 @@ type Reporter interface {
 
 	// PackageBuildFinished is called when the package build has finished. If an error is passed in
 	// the package build was not succesfull.
-	PackageBuildFinished(pkg *Package, err error)
+	PackageBuildFinished(pkg *Package, rep *PackageBuildReport)
+}
+
+type PackageBuildReport struct {
+	phaseEnter map[PackageBuildPhase]time.Time
+	phaseDone  map[PackageBuildPhase]time.Time
+
+	Phases []PackageBuildPhase
+	Error  error
+}
+
+// PhaseDuration returns the time it took to execute the phases commands
+func (rep *PackageBuildReport) PhaseDuration(phase PackageBuildPhase) (dt time.Duration) {
+	enter, eok := rep.phaseEnter[phase]
+	done, dok := rep.phaseDone[phase]
+
+	if !eok {
+		return 0
+	}
+	if eok && !dok {
+		return -1
+	}
+	return done.Sub(enter)
+}
+
+// LastPhase returns the phase the package build last entered
+func (rep *PackageBuildReport) LastPhase() PackageBuildPhase {
+	if len(rep.Phases) == 0 {
+		return PackageBuildPhasePrep
+	}
+	return rep.Phases[len(rep.Phases)-1]
+}
+
+// TotalTime is the total time spent on building this package
+func (rep *PackageBuildReport) TotalTime() time.Duration {
+	enter := rep.phaseEnter[PackageBuildPhasePrep]
+	done := rep.phaseDone[rep.LastPhase()]
+	return done.Sub(enter)
 }
 
 // ConsoleReporter reports build progress by printing to stdout/stderr
@@ -163,7 +200,7 @@ func (r *ConsoleReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) 
 }
 
 // PackageBuildFinished is called when the package build has finished.
-func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, err error) {
+func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildReport) {
 	nme := pkg.FullName()
 	out := r.getWriter(pkg)
 
@@ -174,8 +211,8 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, err error) {
 	r.mu.Unlock()
 
 	msg := color.Sprintf("<green>package build succeded</> <gray>(%.2fs)</>\n", dur.Seconds())
-	if err != nil {
-		msg = color.Sprintf("<red>package build failed</>\n<white>Reason:</> %s\n", err)
+	if rep.Error != nil {
+		msg = color.Sprintf("<red>package build failed while %sing</>\n<white>Reason:</> %s\n", rep.LastPhase(), rep.Error)
 	}
 	//nolint:errcheck
 	io.WriteString(out, msg)
@@ -210,7 +247,7 @@ func (r *WerftReporter) BuildStarted(pkg *Package, status map[*Package]PackageBu
 }
 
 // PackageBuildFinished is called when the package build has finished.
-func (r *WerftReporter) PackageBuildFinished(pkg *Package, err error) {
+func (r *WerftReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildReport) {
 	if cfg, ok := pkg.Config.(DockerPkgConfig); ok && pkg.Type == DockerPackage {
 		for _, img := range cfg.Image {
 			fmt.Printf("[docker|RESULT] %s\n", img)
@@ -221,17 +258,17 @@ func (r *WerftReporter) PackageBuildFinished(pkg *Package, err error) {
 		status string
 		msg    string
 	)
-	if err == nil {
+	if rep.Error == nil {
 		status = "DONE"
 		msg = "build succeeded"
 	} else {
 		status = "FAIL"
-		msg = err.Error()
+		msg = rep.Error.Error()
 	}
 	fmt.Printf("[%s|%s] %s\n", pkg.FullName(), status, msg)
 }
 
-type PackageReport struct {
+type HTMLPackageReport struct {
 	logs     strings.Builder
 	start    time.Time
 	duration time.Duration
@@ -240,7 +277,7 @@ type PackageReport struct {
 	err      error
 }
 
-func (r *PackageReport) StatusIcon() string {
+func (r *HTMLPackageReport) StatusIcon() string {
 	if r.HasError() {
 		return "❌"
 	}
@@ -260,37 +297,37 @@ func (r *PackageReport) StatusIcon() string {
 	}
 }
 
-func (r *PackageReport) DurationInSeconds() string {
+func (r *HTMLPackageReport) DurationInSeconds() string {
 	return fmt.Sprintf("%.2fs", r.duration.Seconds())
 }
 
-func (r *PackageReport) HasLogs() bool {
+func (r *HTMLPackageReport) HasLogs() bool {
 	return r.logs.Len() > 0
 }
 
-func (r *PackageReport) Logs() string {
+func (r *HTMLPackageReport) Logs() string {
 	return strings.TrimSpace(r.logs.String())
 }
 
-func (r *PackageReport) HasResults() bool {
+func (r *HTMLPackageReport) HasResults() bool {
 	return len(r.results) > 0
 }
 
-func (r *PackageReport) Results() []string {
+func (r *HTMLPackageReport) Results() []string {
 	return r.results
 }
 
-func (r *PackageReport) HasError() bool {
+func (r *HTMLPackageReport) HasError() bool {
 	return r.err != nil
 }
 
-func (r *PackageReport) Error() string {
+func (r *HTMLPackageReport) Error() string {
 	return fmt.Sprintf("%s", r.err)
 }
 
 type HTMLReporter struct {
 	filename    string
-	reports     map[string]*PackageReport
+	reports     map[string]*HTMLPackageReport
 	rootPackage *Package
 	mu          sync.RWMutex
 }
@@ -298,11 +335,11 @@ type HTMLReporter struct {
 func NewHTMLReporter(filename string) *HTMLReporter {
 	return &HTMLReporter{
 		filename: filename,
-		reports:  make(map[string]*PackageReport),
+		reports:  make(map[string]*HTMLPackageReport),
 	}
 }
 
-func (r *HTMLReporter) getReport(pkg *Package) *PackageReport {
+func (r *HTMLReporter) getReport(pkg *Package) *HTMLPackageReport {
 	name := pkg.FullName()
 
 	r.mu.RLock()
@@ -317,7 +354,7 @@ func (r *HTMLReporter) getReport(pkg *Package) *PackageReport {
 			return rep
 		}
 
-		rep = &PackageReport{status: PackageNotBuiltYet}
+		rep = &HTMLPackageReport{status: PackageNotBuiltYet}
 		r.reports[name] = rep
 		r.mu.Unlock()
 	}
@@ -344,14 +381,14 @@ func (r *HTMLReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {
 	report.logs.Write(buf)
 }
 
-func (r *HTMLReporter) PackageBuildFinished(pkg *Package, err error) {
-	rep := r.getReport(pkg)
-	rep.duration = time.Since(rep.start)
-	rep.status = PackageBuilt
-	rep.err = err
+func (r *HTMLReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildReport) {
+	hrep := r.getReport(pkg)
+	hrep.duration = time.Since(hrep.start)
+	hrep.status = PackageBuilt
+	hrep.err = rep.Error
 
 	if cfg, ok := pkg.Config.(DockerPkgConfig); ok && pkg.Type == DockerPackage {
-		rep.results = cfg.Image
+		hrep.results = cfg.Image
 	}
 }
 
@@ -441,9 +478,9 @@ func (cr CompositeReporter) BuildStarted(pkg *Package, status map[*Package]Packa
 }
 
 // PackageBuildFinished implements Reporter
-func (cr CompositeReporter) PackageBuildFinished(pkg *Package, err error) {
+func (cr CompositeReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildReport) {
 	for _, r := range cr {
-		r.PackageBuildFinished(pkg, err)
+		r.PackageBuildFinished(pkg, rep)
 	}
 }
 
@@ -472,7 +509,7 @@ func (*NoopReporter) BuildFinished(pkg *Package, err error) {}
 func (*NoopReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {}
 
 // PackageBuildFinished implements Reporter
-func (*NoopReporter) PackageBuildFinished(pkg *Package, err error) {}
+func (*NoopReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildReport) {}
 
 // PackageBuildLog implements Reporter
 func (*NoopReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {}
@@ -490,7 +527,6 @@ func NewSegmentReporter(key string) *SegmentReporter {
 	return &SegmentReporter{
 		AnonymousId: id.String(),
 		key:         key,
-		times:       make(map[string]time.Time),
 	}
 }
 
@@ -501,7 +537,6 @@ type SegmentReporter struct {
 	key         string
 
 	client segment.Client
-	times  map[string]time.Time
 	mu     sync.Mutex
 }
 
@@ -521,28 +556,17 @@ func (sr *SegmentReporter) BuildFinished(pkg *Package, err error) {
 	sr.client = nil
 }
 
-func (sr *SegmentReporter) PackageBuildStarted(pkg *Package) {
-	sr.mu.Lock()
-	defer sr.mu.Unlock()
-
-	sr.times[pkg.FullName()] = time.Now()
-}
-
-func (sr *SegmentReporter) PackageBuildFinished(pkg *Package, perr error) {
+func (sr *SegmentReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildReport) {
 	props := segment.Properties{
 		"name":             pkg.FullName(),
 		"repo":             pkg.C.W.Git.Origin,
 		"dirtyWorkingCopy": pkg.C.W.Git.DirtyFiles(pkg.Sources),
 		"commit":           pkg.C.W.Git.Commit,
-		"success":          perr == nil,
+		"success":          rep.Error == nil,
+		"lastPhase":        rep.LastPhase(),
 	}
 
-	sr.mu.Lock()
-	t0, ok := sr.times[pkg.FullName()]
-	sr.mu.Unlock()
-	if ok {
-		props["durationMS"] = time.Since(t0).Milliseconds()
-	}
+	props["durationMS"] = rep.TotalTime().Milliseconds()
 	evt := segment.Track{
 		AnonymousId: sr.AnonymousId,
 		Event:       "package_build_finished",
