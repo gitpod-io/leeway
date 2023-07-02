@@ -1,9 +1,11 @@
 package leeway
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -11,9 +13,11 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/gookit/color"
+	segment "github.com/segmentio/analytics-go/v3"
 	"github.com/segmentio/textio"
 )
 
@@ -477,3 +481,86 @@ func (*NoopReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {}
 func (*NoopReporter) PackageBuildStarted(pkg *Package) {}
 
 var _ Reporter = ((*NoopReporter)(nil))
+
+func NewSegmentReporter(key string) *SegmentReporter {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		panic(fmt.Errorf("cannot produce segment reporter anonymous ID: %w", err))
+	}
+	return &SegmentReporter{
+		AnonymousId: id.String(),
+		key:         key,
+		times:       make(map[string]time.Time),
+	}
+}
+
+type SegmentReporter struct {
+	NoopReporter
+
+	AnonymousId string
+	key         string
+
+	client segment.Client
+	times  map[string]time.Time
+	mu     sync.Mutex
+}
+
+// BuildStarted implements Reporter
+func (sr *SegmentReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+
+	sr.client = segment.New(sr.key)
+}
+
+func (sr *SegmentReporter) BuildFinished(pkg *Package, err error) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+
+	sr.client.Close()
+	sr.client = nil
+}
+
+func (sr *SegmentReporter) PackageBuildStarted(pkg *Package) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+
+	sr.times[pkg.FullName()] = time.Now()
+}
+
+func (sr *SegmentReporter) PackageBuildFinished(pkg *Package, perr error) {
+	props := segment.Properties{
+		"name":             pkg.FullName(),
+		"repo":             pkg.C.W.Git.Origin,
+		"dirtyWorkingCopy": pkg.C.W.Git.DirtyFiles(pkg.Sources),
+		"commit":           pkg.C.W.Git.Commit,
+		"success":          perr == nil,
+	}
+
+	sr.mu.Lock()
+	t0, ok := sr.times[pkg.FullName()]
+	sr.mu.Unlock()
+	if ok {
+		props["durationMS"] = time.Since(t0).Milliseconds()
+	}
+	evt := segment.Track{
+		AnonymousId: sr.AnonymousId,
+		Event:       "package_build_finished",
+		Timestamp:   time.Now(),
+		Context: &segment.Context{
+			App: segment.AppInfo{Name: "leeway", Version: Version},
+			OS:  segment.OSInfo{Name: runtime.GOOS},
+		},
+		Properties: props,
+	}
+
+	err := sr.client.Enqueue(evt)
+	if err != nil {
+		log.WithError(err).Warn("cannot report build progress to segment")
+	}
+
+	if log.IsLevelEnabled(log.DebugLevel) {
+		fc, _ := json.Marshal(evt)
+		log.WithField("evt", string(fc)).Debug("reported segment event")
+	}
+}
