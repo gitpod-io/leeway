@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/gitpod-io/leeway/pkg/remotereporter/api/gen/v1";
+
+service ReporterService {
+    // BuildStarted is called when the build of a package is started by the user.
+	// This is not the same as a dependency beeing built (see PackageBuildStarted for that).
+	// The root package will also be passed into PackageBuildStarted once all its depepdencies
+	// have been built.
+	rpc BuildStarted (BuildStartedRequest) returns (EmptyResponse) {};
+
+	// BuildFinished is called when the build of a package which was started by the user has finished.
+	// This is not the same as a dependency build finished (see PackageBuildFinished for that).
+	// The root package will also be passed into PackageBuildFinished once it's been built.
+	rpc BuildFinished (BuildFinishedRequest) returns (EmptyResponse) {};
+
+	// PackageBuildStarted is called when a package build actually gets underway. At this point
+	// all transitive dependencies of the package have been built.
+	rpc PackageBuildStarted (PackageBuildStartedRequest) returns (EmptyResponse) {};
+
+	// PackageBuildLog is called during a package build whenever a build command produced some output.
+	rpc PackageBuildLog (PackageBuildLogRequest) returns (EmptyResponse) {};
+
+	// PackageBuildFinished is called when the package build has finished. If an error is passed in
+	// the package build was not succesfull.
+	rpc PackageBuildFinished (PackageBuildFinishedRequest) returns (EmptyResponse) {};
+}
+
+message BuildStartedRequest {
+	string session_id = 1;
+    Package package = 2;
+    map<string, PackageBuildStatus> status = 3;
+}
+
+message BuildFinishedRequest {
+	string session_id = 1;
+    Package package = 2;
+    string error = 3;
+}
+
+message PackageBuildStartedRequest {
+	string session_id = 1;
+    Package package = 2;
+}
+
+message PackageBuildLogRequest {
+	string session_id = 1;
+    string package_name = 2;
+    bytes message = 3;
+    bool is_error = 4;
+}
+
+message PackageBuildFinishedRequest {
+	string session_id = 1;
+    Package package = 2;
+    string error = 3;
+	int64 duration_ms = 4;
+}
+
+message EmptyResponse {}
+
+message Package {
+    string name = 1;
+    PackageType type = 2;
+    repeated string sources = 3;
+    repeated string dependencies = 4;
+    PackageConfig config = 5;
+	GitInfo git = 6;
+	
+	message GitInfo {
+		string origin = 1;
+		string commit = 2;
+		bool dirty_working_copy = 3;
+	}
+}
+
+enum PackageType {
+    PACKAGE_TYPE_UNSPECIFIED = 0;
+    PACKAGE_TYPE_YARN = 1;
+    PACKAGE_TYPE_GO = 2;
+    PACKAGE_TYPE_DOCKER = 3;
+    PACKAGE_TYPE_GENERIC = 4;
+}
+
+message PackageConfig {}
+
+enum PackageBuildStatus {
+    PACKAGE_BUILD_STATUS_UNSPECIFIED = 0;
+
+    // PackageNotBuiltYet means that the package has not been built yet
+	PACKAGE_BUILD_STATUS_NOT_BUILT_YET = 1;
+	// PackageBuilding means we're building this package at the moment
+	PACKAGE_BUILD_STATUS_BUILDING = 2;
+	// PackageBuilt means the package has been built and exists in the local cache already
+	PACKAGE_BUILD_STATUS_BUILT = 3;
+	// PackageDownloaded means the package was downloaded from the remote cache as part of this build
+	PACKAGE_BUILD_STATUS_DOWNLOADED = 4;
+	// PackageInRemoteCache means the package has been built but currently only exists in the remote cache
+	PACKAGE_BUILD_STATUS_IN_REMOTE_CACHE = 5;
+}

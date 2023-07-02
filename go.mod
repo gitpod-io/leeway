@@ -30,8 +30,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.11.47
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.30.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.18.0
+	github.com/bufbuild/connect-go v1.9.0
 	github.com/dop251/goja v0.0.0-20221106173738-3b8a68ca89b4
 	github.com/stretchr/testify v1.8.0
+	google.golang.org/protobuf v1.31.0
 )
 
 require (
@@ -55,6 +57,7 @@ require (
 	github.com/dlclark/regexp2 v1.7.0 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/google/uuid v1.3.0 // indirect
 	github.com/inconshreveable/mousetrap v1.0.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/moby/sys/mountinfo v0.6.2 // indirect
