@@ -607,9 +607,17 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		return err
 	}
 
+	pkgRep := &PackageBuildReport{
+		phaseEnter: make(map[PackageBuildPhase]time.Time),
+		phaseDone:  make(map[PackageBuildPhase]time.Time),
+	}
+	pkgRep.phaseEnter[PackageBuildPhasePrep] = time.Now()
+	pkgRep.Phases = append(pkgRep.Phases, PackageBuildPhasePrep)
+
 	buildctx.Reporter.PackageBuildStarted(p)
 	defer func(err *error) {
-		buildctx.Reporter.PackageBuildFinished(p, *err)
+		pkgRep.Error = *err
+		buildctx.Reporter.PackageBuildFinished(p, pkgRep)
 	}(&err)
 
 	pkgdir := p.FilesystemSafeName() + "." + version
@@ -688,9 +696,27 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
-	err = executeCommandsForPackage(buildctx, p, builddir, bld.BuildCommands)
-	if err != nil {
-		return err
+	for _, phase := range []PackageBuildPhase{
+		PackageBuildPhasePrep,
+		PackageBuildPhasePull,
+		PackageBuildPhaseLint,
+		PackageBuildPhaseTest,
+		PackageBuildPhaseBuild,
+	} {
+		cmds := bld.Commands[phase]
+		if len(cmds) == 0 {
+			continue
+		}
+		if phase != PackageBuildPhasePrep {
+			pkgRep.phaseEnter[phase] = time.Now()
+			pkgRep.Phases = append(pkgRep.Phases, phase)
+		}
+		log.WithField("phase", phase).WithField("package", p.FullName()).WithField("commands", bld.Commands[phase]).Debug("running commands")
+		err = executeCommandsForPackage(buildctx, p, builddir, cmds)
+		pkgRep.phaseDone[phase] = time.Now()
+		if err != nil {
+			return err
+		}
 	}
 
 	if p.C.W.Provenance.Enabled {
@@ -725,7 +751,7 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
-	err = executeCommandsForPackage(buildctx, p, builddir, bld.PackageCommands)
+	err = executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage])
 	if err != nil {
 		return err
 	}
@@ -786,9 +812,19 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	}
 }
 
+type PackageBuildPhase string
+
+const (
+	PackageBuildPhasePrep    PackageBuildPhase = "prep"
+	PackageBuildPhasePull    PackageBuildPhase = "pull"
+	PackageBuildPhaseLint    PackageBuildPhase = "lint"
+	PackageBuildPhaseTest    PackageBuildPhase = "test"
+	PackageBuildPhaseBuild   PackageBuildPhase = "build"
+	PackageBuildPhasePackage PackageBuildPhase = "package"
+)
+
 type packageBuild struct {
-	BuildCommands   [][]string
-	PackageCommands [][]string
+	Commands map[PackageBuildPhase][][]string
 
 	// If PostBuild is not nil but Subjects is, PostBuild is used
 	// to compute the post build fileset for provenance subject computation.
@@ -850,14 +886,14 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		return nil, err
 	}
 
-	var commands [][]string
+	var commands = make(map[PackageBuildPhase][][]string)
 	if cfg.Packaging == YarnOfflineMirror {
 		err := os.Mkdir(filepath.Join(wd, "_mirror"), 0755)
 		if err != nil {
 			return nil, err
 		}
 
-		commands = append(commands, [][]string{
+		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 			{"sh", "-c", "echo yarn-offline-mirror \"./_mirror\" > .yarnrc"},
 		}...)
 	}
@@ -886,7 +922,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		tgt := p.BuildLayoutLocation(deppkg)
 		if cfg.Packaging == YarnOfflineMirror {
 			fn := fmt.Sprintf("%s.tar.gz", tgt)
-			commands = append(commands, []string{"cp", builtpkg, filepath.Join("_mirror", fn)})
+			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"cp", builtpkg, filepath.Join("_mirror", fn)})
 			builtpkg = filepath.Join(wd, "_mirror", fn)
 		}
 
@@ -899,9 +935,9 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		}
 		if isTSLibrary {
 			// make previously built package availabe through yarn lock
-			commands = append(commands, []string{"sh", "-c", fmt.Sprintf("tar Ozfx %s package/%s | sed '/resolved /c\\  resolved \"file://%s\"' >> yarn.lock", builtpkg, pkgYarnLock, builtpkg)})
+			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"sh", "-c", fmt.Sprintf("tar Ozfx %s package/%s | sed '/resolved /c\\  resolved \"file://%s\"' >> yarn.lock", builtpkg, pkgYarnLock, builtpkg)})
 		} else {
-			commands = append(commands, [][]string{
+			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
 				{"tar", "xfz", builtpkg, "--no-same-owner", "-C", tgt},
 			}...)
@@ -967,7 +1003,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 
 	// At this point we have all dependencies in place, a the correct package.json,
 	// and we're just short of running yarn install. Good point to do other prep work.
-	commands = append(commands, p.PreparationCommands...)
+	commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], p.PreparationCommands...)
 
 	// The yarn cache cannot handly conccurency proplery and needs to be looked.
 	// Make sure that all our yarn install calls lock the yarn cache.
@@ -978,25 +1014,25 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 	}
 	yarnCache := filepath.Join(buildctx.BuildDir(), fmt.Sprintf("yarn-cache-%s", buildctx.buildID))
 	if len(cfg.Commands.Install) == 0 {
-		commands = append(commands, []string{"yarn", "install", "--mutex", yarnMutex, "--cache-folder", yarnCache})
+		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], []string{"yarn", "install", "--mutex", yarnMutex, "--cache-folder", yarnCache})
 	} else {
-		commands = append(commands, cfg.Commands.Install)
+		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], cfg.Commands.Install)
 	}
 	if len(cfg.Commands.Build) == 0 {
-		commands = append(commands, []string{"yarn", "build"})
+		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], []string{"yarn", "build"})
 	} else {
-		commands = append(commands, cfg.Commands.Build)
+		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], cfg.Commands.Build)
 	}
 	if !cfg.DontTest && !buildctx.DontTest {
 		if len(cfg.Commands.Test) == 0 {
-			commands = append(commands, []string{"yarn", "test"})
+			commands[PackageBuildPhaseTest] = append(commands[PackageBuildPhaseTest], []string{"yarn", "test"})
 		} else {
-			commands = append(commands, cfg.Commands.Test)
+			commands[PackageBuildPhaseTest] = append(commands[PackageBuildPhaseTest], cfg.Commands.Test)
 		}
 	}
 
 	res := &packageBuild{
-		BuildCommands: commands,
+		Commands: commands,
 	}
 
 	// let's prepare for packaging
@@ -1054,7 +1090,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 	} else {
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
 	}
-	res.PackageCommands = pkgCommands
+	res.Commands[PackageBuildPhasePackage] = pkgCommands
 	res.PostBuild = func(sources fileset) (subjects []in_toto.Subject, absResultDir string, err error) {
 		ignoreNodeModules := func(fn string) bool { return strings.Contains(fn, "node_modules/") }
 		fn := filepath.Join(wd, resultDir)
@@ -1083,7 +1119,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	}
 
 	var (
-		commands      [][]string
+		commands      = make(map[PackageBuildPhase][][]string)
 		isGoWorkspace bool
 		workFile      *modfile.WorkFile
 	)
@@ -1117,7 +1153,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	var goCommand = "go"
 	if cfg.GoVersion != "" {
 		goCommand = cfg.GoVersion
-		commands = append(commands, [][]string{
+		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 			{"sh", "-c", "GO111MODULE=off go get golang.org/dl/" + cfg.GoVersion},
 			{goCommand, "download"},
 		}...)
@@ -1135,7 +1171,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 
 	transdep := p.GetTransitiveDependencies()
 	if len(transdep) > 0 {
-		commands = append(commands, []string{"mkdir", "_deps"})
+		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"mkdir", "_deps"})
 
 		for _, dep := range transdep {
 			if dep.Ephemeral {
@@ -1148,7 +1184,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			}
 
 			tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
-			commands = append(commands, [][]string{
+			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
 				{"tar", "xfz", builtpkg, "--no-same-owner", "-C", tgt},
 			}...)
@@ -1158,32 +1194,32 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			}
 
 			if isGoWorkspace {
-				commands = append(commands, []string{"go", "work", "use", tgt})
+				commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"go", "work", "use", tgt})
 			} else {
-				commands = append(commands, []string{"sh", "-c", fmt.Sprintf("%s mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2 | head -n1)=./%s", goCommand, tgt, tgt)})
+				commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"sh", "-c", fmt.Sprintf("%s mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2 | head -n1)=./%s", goCommand, tgt, tgt)})
 			}
 		}
 	}
 
-	commands = append(commands, p.PreparationCommands...)
+	commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], p.PreparationCommands...)
 	if cfg.Generate {
-		commands = append(commands, []string{goCommand, "generate", "-v", "./..."})
+		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{goCommand, "generate", "-v", "./..."})
 	}
 
 	dlcmd := []string{goCommand, "mod", "download"}
 	if log.IsLevelEnabled(log.DebugLevel) {
 		dlcmd = append(dlcmd, "-x")
 	}
-	commands = append(commands, dlcmd)
+	commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], dlcmd)
 
 	if !cfg.DontCheckGoFmt {
-		commands = append(commands, []string{"sh", "-c", `if [ ! $(go fmt ./... | wc -l) -eq 0 ]; then echo; echo; echo please gofmt your code; echo; echo; exit 1; fi`})
+		commands[PackageBuildPhaseLint] = append(commands[PackageBuildPhaseLint], []string{"sh", "-c", `if [ ! $(go fmt ./... | wc -l) -eq 0 ]; then echo; echo; echo please gofmt your code; echo; echo; exit 1; fi`})
 	}
 	if !cfg.DontLint {
 		if len(cfg.LintCommand) == 0 {
-			commands = append(commands, []string{"golangci-lint", "run"})
+			commands[PackageBuildPhaseLint] = append(commands[PackageBuildPhaseLint], []string{"golangci-lint", "run"})
 		} else {
-			commands = append(commands, cfg.LintCommand)
+			commands[PackageBuildPhaseLint] = append(commands[PackageBuildPhaseLint], cfg.LintCommand)
 		}
 	}
 	if !cfg.DontTest && !buildctx.DontTest {
@@ -1193,7 +1229,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		}
 		testCommand = append(testCommand, "./...")
 
-		commands = append(commands, testCommand)
+		commands[PackageBuildPhaseTest] = append(commands[PackageBuildPhaseTest], testCommand)
 	}
 
 	var buildCmd []string
@@ -1205,22 +1241,21 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		buildCmd = append(buildCmd, ".")
 	}
 	if len(buildCmd) > 0 && cfg.Packaging != GoLibrary {
-		commands = append(commands, buildCmd)
+		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], buildCmd)
 	}
-	commands = append(commands, []string{"rm", "-rf", "_deps"})
+	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], []string{"rm", "-rf", "_deps"})
 
-	pkgCommands := [][]string{
-		{"tar", "cfz", result, "."},
-	}
+	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{
+		"tar", "cfz", result, ".",
+	})
 	if !cfg.DontTest && !buildctx.DontTest {
-		pkgCommands = append(pkgCommands, [][]string{
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], [][]string{
 			{"sh", "-c", fmt.Sprintf(`if [ -f "%v" ]; then cp -f %v %v; fi`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.buildOptions.CoverageOutputPath)},
 		}...)
 	}
 
 	return &packageBuild{
-		BuildCommands:   commands,
-		PackageCommands: pkgCommands,
+		Commands: commands,
 	}, nil
 }
 
@@ -1242,10 +1277,10 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	}
 
 	var (
-		buildCommands     [][]string
+		commands          = make(map[PackageBuildPhase][][]string)
 		imageDependencies = make(map[string]string)
 	)
-	buildCommands = append(buildCommands, []string{"cp", dockerfile, "Dockerfile"})
+	commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"cp", dockerfile, "Dockerfile"})
 	for _, dep := range p.GetDependencies() {
 		fn, exists := buildctx.LocalCache.Location(dep)
 		if !exists {
@@ -1253,7 +1288,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		}
 
 		tgt := p.BuildLayoutLocation(dep)
-		buildCommands = append(buildCommands, [][]string{
+		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 			{"mkdir", tgt},
 			{"tar", "xfz", fn, "--no-same-owner", "-C", tgt},
 		}...)
@@ -1268,7 +1303,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		imageDependencies[strings.ToUpper(strings.ReplaceAll(dep.FilesystemSafeName(), "-", "_"))] = depimg
 	}
 
-	buildCommands = append(buildCommands, p.PreparationCommands...)
+	commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], p.PreparationCommands...)
 
 	version, err := p.Version()
 	if err != nil {
@@ -1292,18 +1327,18 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		}
 	}
 	buildcmd = append(buildcmd, ".")
-	buildCommands = append(buildCommands, buildcmd)
+	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], buildcmd)
 
 	if len(cfg.Image) == 0 {
 		// we don't push the image, let's export it
 		ef := strings.TrimSuffix(result, ".gz")
-		buildCommands = append(buildCommands, [][]string{
+		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], [][]string{
 			{"docker", "save", "-o", ef, version},
 		}...)
 	}
 
 	res = &packageBuild{
-		BuildCommands: buildCommands,
+		Commands: commands,
 	}
 
 	var pkgCommands [][]string
@@ -1318,7 +1353,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			pkgcmds = append(pkgcmds, []string{"tar", "fr", ef, "./" + provenanceBundleFilename})
 		}
 		pkgcmds = append(pkgcmds, []string{"gzip", ef})
-		res.PackageCommands = pkgcmds
+		commands[PackageBuildPhasePackage] = pkgcmds
 	} else if len(cfg.Image) > 0 {
 		for _, img := range cfg.Image {
 			pkgCommands = append(pkgCommands, [][]string{
@@ -1350,7 +1385,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		}
 		pkgCommands = append(pkgCommands, archiveCmd)
 
-		res.PackageCommands = pkgCommands
+		commands[PackageBuildPhasePackage] = pkgCommands
 		res.Subjects = func() (res []in_toto.Subject, err error) {
 			defer func() {
 				if err != nil {
@@ -1501,12 +1536,16 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		// if provenance is enabled, we have to make sure we capture the bundle
 		if p.C.W.Provenance.Enabled {
 			return &packageBuild{
-				PackageCommands: [][]string{{"tar", "cfz", result, "./" + provenanceBundleFilename}},
+				Commands: map[PackageBuildPhase][][]string{
+					PackageBuildPhasePackage: [][]string{{"tar", "cfz", result, "./" + provenanceBundleFilename}},
+				},
 			}, nil
 		}
 
 		return &packageBuild{
-			PackageCommands: [][]string{{"tar", "cfz", result, "--files-from", "/dev/null"}},
+			Commands: map[PackageBuildPhase][][]string{
+				PackageBuildPhasePackage: [][]string{{"tar", "cfz", result, "--files-from", "/dev/null"}},
+			},
 		}, nil
 	}
 
@@ -1531,12 +1570,17 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	}
 
 	return &packageBuild{
-		BuildCommands:   commands,
-		PackageCommands: [][]string{{"tar", "cfz", result, "."}},
+		Commands: map[PackageBuildPhase][][]string{
+			PackageBuildPhaseBuild:   commands,
+			PackageBuildPhasePackage: {{"tar", "cfz", result, "."}},
+		},
 	}, nil
 }
 
 func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, commands [][]string) error {
+	if len(commands) == 0 {
+		return nil
+	}
 	if buildctx.JailedExecution {
 		return executeCommandsForPackageSafe(buildctx, p, wd, commands)
 	}
@@ -1680,7 +1724,7 @@ func executeCommandsForPackageSafe(buildctx *buildContext, p *Package, wd string
 }
 
 func run(rep Reporter, p *Package, env []string, cwd, name string, args ...string) error {
-	log.WithField("command", strings.Join(append([]string{name}, args...), " ")).Debug("running")
+	log.WithField("package", p.FullName()).WithField("command", strings.Join(append([]string{name}, args...), " ")).Debug("running")
 
 	cmd := exec.Command(name, args...)
 	cmd.Stdout = &reporterStream{R: rep, P: p, IsErr: false}
