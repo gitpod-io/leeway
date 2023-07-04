@@ -213,15 +213,14 @@ func executeCommandInLocations(execCmd []string, locs []commandExecLocation, par
 		go io.Copy(ptmx, os.Stdin)
 		if parallel {
 			wg.Add(1)
-			loc := loc
-			go func() {
+			go func(loc commandExecLocation) {
 				defer wg.Done()
 
 				err = cmd.Wait()
 				if err != nil {
 					log.Errorf("execution failed in %s (%s): %v", loc.Name, loc.Dir, err)
 				}
-			}()
+			}(loc)
 		} else {
 			err = cmd.Wait()
 			if err != nil {
