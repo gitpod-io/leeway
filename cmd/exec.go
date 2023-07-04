@@ -213,6 +213,7 @@ func executeCommandInLocations(execCmd []string, locs []commandExecLocation, par
 		go io.Copy(ptmx, os.Stdin)
 		if parallel {
 			wg.Add(1)
+			loc := loc
 			go func() {
 				defer wg.Done()
 
