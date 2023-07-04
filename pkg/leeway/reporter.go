@@ -543,14 +543,23 @@ type SegmentReporter struct {
 // BuildStarted implements Reporter
 func (sr *SegmentReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {
 	sr.mu.Lock()
-	defer sr.mu.Unlock()
-
 	sr.client = segment.New(sr.key)
+	sr.mu.Unlock()
+
+	props := make(segment.Properties)
+	addPackageToSegmentEventProps(props, pkg)
+	sr.track("build_started", props)
 }
 
 func (sr *SegmentReporter) BuildFinished(pkg *Package, err error) {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
+
+	props := segment.Properties{
+		"success": err == nil,
+	}
+	addPackageToSegmentEventProps(props, pkg)
+	sr.track("build_finished", props)
 
 	sr.client.Close()
 	sr.client = nil
@@ -558,18 +567,25 @@ func (sr *SegmentReporter) BuildFinished(pkg *Package, err error) {
 
 func (sr *SegmentReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildReport) {
 	props := segment.Properties{
-		"name":             pkg.FullName(),
-		"repo":             pkg.C.W.Git.Origin,
-		"dirtyWorkingCopy": pkg.C.W.Git.DirtyFiles(pkg.Sources),
-		"commit":           pkg.C.W.Git.Commit,
-		"success":          rep.Error == nil,
-		"lastPhase":        rep.LastPhase(),
+		"success":    rep.Error == nil,
+		"lastPhase":  rep.LastPhase(),
+		"durationMS": rep.TotalTime().Milliseconds(),
 	}
+	addPackageToSegmentEventProps(props, pkg)
+	sr.track("package_build_finished", props)
+}
 
-	props["durationMS"] = rep.TotalTime().Milliseconds()
+func addPackageToSegmentEventProps(props segment.Properties, pkg *Package) {
+	props["name"] = pkg.FullName()
+	props["repo"] = pkg.C.W.Git.Origin
+	props["dirtyWorkingCopy"] = pkg.C.W.Git.DirtyFiles(pkg.Sources)
+	props["commit"] = pkg.C.W.Git.Commit
+}
+
+func (sr *SegmentReporter) track(event string, props segment.Properties) {
 	evt := segment.Track{
 		AnonymousId: sr.AnonymousId,
-		Event:       "package_build_finished",
+		Event:       event,
 		Timestamp:   time.Now(),
 		Context: &segment.Context{
 			App: segment.AppInfo{Name: "leeway", Version: Version},
@@ -582,7 +598,6 @@ func (sr *SegmentReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildR
 	if err != nil {
 		log.WithError(err).Warn("cannot report build progress to segment")
 	}
-
 	if log.IsLevelEnabled(log.DebugLevel) {
 		fc, _ := json.Marshal(evt)
 		log.WithField("evt", string(fc)).Debug("reported segment event")
