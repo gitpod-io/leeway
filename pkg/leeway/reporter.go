@@ -593,6 +593,10 @@ func (sr *SegmentReporter) track(event string, props segment.Properties) {
 		},
 		Properties: props,
 	}
+	if sr.client == nil {
+		log.WithField("event", evt).Warn("tried to report progress segment, but did not have a client")
+		return
+	}
 
 	err := sr.client.Enqueue(evt)
 	if err != nil {
