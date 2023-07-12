@@ -30,6 +30,11 @@ var buildCmd = &cobra.Command{
 			log.Fatal("build needs a package")
 		}
 
+		// mutex contention
+		runtime.SetMutexProfileFraction(5)
+		// blocking profile
+		runtime.SetBlockProfileRate(1)
+
 		go func() {
 			log.Println(http.ListenAndServe("localhost:0", nil))
 		}()
