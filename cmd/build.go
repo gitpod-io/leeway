@@ -5,16 +5,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
 
-	"github.com/gitpod-io/leeway/pkg/leeway"
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+
+	"github.com/gitpod-io/leeway/pkg/leeway"
 )
 
 // buildCmd represents the build command
@@ -27,6 +29,11 @@ var buildCmd = &cobra.Command{
 		if pkg == nil {
 			log.Fatal("build needs a package")
 		}
+
+		go func() {
+			log.Println(http.ListenAndServe("localhost:0", nil))
+		}()
+
 		opts, localCache := getBuildOpts(cmd)
 
 		var (
