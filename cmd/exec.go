@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +36,9 @@ Example use:
   # run go get in all Go packages
   leeway exec --filter-type go -- go get -v ./...
 
+  # list all Go packages in the workspace
+  leeway exec --filter-type go --raw-output -- echo {}
+
   # execute go build in all direct Go dependencies when any of the relevant source files changes:
   leeway exec --package some/other:package --dependencies --filter-type go --parallel --watch -- go build
 
@@ -53,6 +57,7 @@ Example use:
 			filterType, _             = cmd.Flags().GetStringArray("filter-type")
 			watch, _                  = cmd.Flags().GetBool("watch")
 			parallel, _               = cmd.Flags().GetBool("parallel")
+			rawOutput, _              = cmd.Flags().GetBool("raw-output")
 		)
 
 		ws, err := getWorkspace()
@@ -156,7 +161,7 @@ Example use:
 		}
 
 		if watch {
-			err := executeCommandInLocations(args, locs, parallel)
+			err := executeCommandInLocations(args, locs, parallel, rawOutput)
 			if err != nil {
 				log.Error(err)
 			}
@@ -165,7 +170,7 @@ Example use:
 			for {
 				select {
 				case <-evt:
-					err := executeCommandInLocations(args, locs, parallel)
+					err := executeCommandInLocations(args, locs, parallel, rawOutput)
 					if err != nil {
 						log.Error(err)
 					}
@@ -174,7 +179,7 @@ Example use:
 				}
 			}
 		}
-		err = executeCommandInLocations(args, locs, parallel)
+		err = executeCommandInLocations(args, locs, parallel, rawOutput)
 		if err != nil {
 			log.WithError(err).Fatal("cannot execut command")
 		}
@@ -188,15 +193,27 @@ type commandExecLocation struct {
 	Name      string
 }
 
-func executeCommandInLocations(execCmd []string, locs []commandExecLocation, parallel bool) error {
+func executeCommandInLocations(rawExecCmd []string, locs []commandExecLocation, parallel, rawOutput bool) error {
 	var wg sync.WaitGroup
 	for _, loc := range locs {
+		execCmd := make([]string, len(rawExecCmd))
+		for i, c := range rawExecCmd {
+			if loc.Package == nil {
+				execCmd[i] = strings.ReplaceAll(c, "{}", loc.Component.Name)
+			} else {
+				execCmd[i] = strings.ReplaceAll(c, "{}", loc.Package.FullName())
+			}
+		}
+
 		if loc.Package != nil {
 			log.WithField("dir", loc.Dir).WithField("pkg", loc.Package.FullName()).Debugf("running %q", execCmd)
 		} else {
 			log.WithField("dir", loc.Dir).Debugf("running %q", execCmd)
 		}
 		prefix := color.Gray.Render(fmt.Sprintf("[%s] ", loc.Name))
+		if rawOutput {
+			prefix = ""
+		}
 
 		cmd := exec.Command(execCmd[0], execCmd[1:]...)
 		cmd.Dir = loc.Dir
@@ -247,5 +264,6 @@ func init() {
 	execCmd.Flags().StringArray("filter-type", nil, "only select packages of this type")
 	execCmd.Flags().Bool("watch", false, "Watch source files and re-execute on change")
 	execCmd.Flags().Bool("parallel", false, "Start all executions in parallel independent of their order")
+	execCmd.Flags().Bool("raw-output", false, "Produce output without package prefix")
 	execCmd.Flags().SetInterspersed(true)
 }
