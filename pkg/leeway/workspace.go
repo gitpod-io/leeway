@@ -531,6 +531,7 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 	for k, v := range compconst.Constants {
 		// constants overwrite args
 		compargs[k] = v
+		log.WithField("comp", path).WithField("const", k).Debug("using const as arg")
 	}
 
 	// replace build args
@@ -660,7 +661,10 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 
 		// re-set the version relevant arguments to <name>: <value>
 		for i, argdep := range pkg.ArgumentDependencies {
-			val, ok := args[argdep]
+			val, ok := pkg.C.Constants[argdep]
+			if !ok {
+				val, ok = args[argdep]
+			}
 			if !ok {
 				val = "<not-set>"
 			}
