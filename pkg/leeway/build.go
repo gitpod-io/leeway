@@ -1352,7 +1352,14 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		if p.C.W.Provenance.Enabled {
 			pkgcmds = append(pkgcmds, []string{"tar", "fr", ef, "./" + provenanceBundleFilename})
 		}
-		pkgcmds = append(pkgcmds, []string{"gzip", ef})
+
+		compressor := "gzip"
+		pigz, err := exec.LookPath("pigz")
+		if err == nil {
+			compressor = pigz
+		}
+
+		pkgcmds = append(pkgcmds, []string{compressor, ef})
 		commands[PackageBuildPhasePackage] = pkgcmds
 	} else if len(cfg.Image) > 0 {
 		for _, img := range cfg.Image {
