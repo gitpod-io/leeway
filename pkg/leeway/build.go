@@ -90,6 +90,17 @@ const (
 	dockerMetadataFile = "metadata.yaml"
 )
 
+var (
+	compressor = "gzip"
+)
+
+func init() {
+	pigz, err := exec.LookPath("pigz")
+	if err == nil {
+		compressor = pigz
+	}
+}
+
 // buildProcessVersions contain the current version of the respective build processes.
 // Increment this value if you change any of the build procedures.
 var buildProcessVersions = map[PackageType]int{
@@ -1058,7 +1069,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://./%s > _mirror/content_yarn.lock", dst)},
 			{"sh", "-c", "cat yarn.lock >> _mirror/content_yarn.lock"},
 			{"yarn", "pack", "--filename", dst},
-			{"tar", "cfz", result, "-C", "_mirror", "."},
+			{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_mirror", "."},
 		}...)
 		resultDir = "_mirror"
 	} else if cfg.Packaging == YarnLibrary {
@@ -1082,11 +1093,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			{"yarn", "pack", "--filename", pkg},
 			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
 			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
-			{"tar", "cfz", result, "-C", "_pkg", "."},
+			{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_pkg", "."},
 		}...)
 		resultDir = "_pkg"
 	} else if cfg.Packaging == YarnArchive {
-		pkgCommands = append(pkgCommands, []string{"tar", "cfz", result, "."})
+		pkgCommands = append(pkgCommands, []string{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "."})
 	} else {
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
 	}
@@ -1246,7 +1257,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], []string{"rm", "-rf", "_deps"})
 
 	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{
-		"tar", "cfz", result, ".",
+		"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".",
 	})
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], [][]string{
@@ -1353,12 +1364,6 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			pkgcmds = append(pkgcmds, []string{"tar", "fr", ef, "./" + provenanceBundleFilename})
 		}
 
-		compressor := "gzip"
-		pigz, err := exec.LookPath("pigz")
-		if err == nil {
-			compressor = pigz
-		}
-
 		pkgcmds = append(pkgcmds, []string{compressor, ef})
 		commands[PackageBuildPhasePackage] = pkgcmds
 	} else if len(cfg.Image) > 0 {
@@ -1386,7 +1391,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		}
 		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", base64.StdEncoding.EncodeToString(consts), dockerMetadataFile)})
 
-		archiveCmd := []string{"tar", "cfz", result, "./" + dockerImageNamesFiles, "./" + dockerMetadataFile}
+		archiveCmd := []string{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./" + dockerImageNamesFiles, "./" + dockerMetadataFile}
 		if p.C.W.Provenance.Enabled {
 			archiveCmd = append(archiveCmd, "./"+provenanceBundleFilename)
 		}
@@ -1544,14 +1549,14 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		if p.C.W.Provenance.Enabled {
 			return &packageBuild{
 				Commands: map[PackageBuildPhase][][]string{
-					PackageBuildPhasePackage: [][]string{{"tar", "cfz", result, "./" + provenanceBundleFilename}},
+					PackageBuildPhasePackage: [][]string{{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./" + provenanceBundleFilename}},
 				},
 			}, nil
 		}
 
 		return &packageBuild{
 			Commands: map[PackageBuildPhase][][]string{
-				PackageBuildPhasePackage: [][]string{{"tar", "cfz", result, "--files-from", "/dev/null"}},
+				PackageBuildPhasePackage: [][]string{{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "--files-from", "/dev/null"}},
 			},
 		}, nil
 	}
@@ -1579,7 +1584,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	return &packageBuild{
 		Commands: map[PackageBuildPhase][][]string{
 			PackageBuildPhaseBuild:   commands,
-			PackageBuildPhasePackage: {{"tar", "cfz", result, "."}},
+			PackageBuildPhasePackage: {{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "."}},
 		},
 	}, nil
 }
