@@ -950,7 +950,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		} else {
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				{"tar", "xfz", builtpkg, "--no-same-owner", "-C", tgt},
+				{"tar", "xf", builtpkg, "--no-same-owner", fmt.Sprintf("--use-compress-program=%v", compressor), "-C", tgt},
 			}...)
 		}
 	}
@@ -1197,7 +1197,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				{"tar", "xfz", builtpkg, "--no-same-owner", "-C", tgt},
+				{"tar", "xf", builtpkg, "--no-same-owner", fmt.Sprintf("--use-compress-program=%v", compressor), "-C", tgt},
 			}...)
 
 			if dep.Type != GoPackage {
@@ -1301,7 +1301,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		tgt := p.BuildLayoutLocation(dep)
 		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 			{"mkdir", tgt},
-			{"tar", "xfz", fn, "--no-same-owner", "-C", tgt},
+			{"tar", "xf", fn, "--no-same-owner", fmt.Sprintf("--use-compress-program=%v", compressor), "-C", tgt},
 		}...)
 
 		if dep.Type != DockerPackage {
@@ -1571,7 +1571,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		tgt := p.BuildLayoutLocation(dep)
 		commands = append(commands, [][]string{
 			{"mkdir", tgt},
-			{"tar", "xfz", fn, "--no-same-owner", "-C", tgt},
+			{"tar", "xf", fn, "--no-same-owner", fmt.Sprintf("--use-compress-program=%v", compressor), "-C", tgt},
 		}...)
 	}
 
