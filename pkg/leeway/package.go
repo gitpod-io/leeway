@@ -772,12 +772,15 @@ func (p *Package) FullName() string {
 
 // FilesystemSafeName returns a string that is safe to use in a Unix filesystem as directory or filename
 func (p *Package) FilesystemSafeName() string {
-	pkgdir := p.FullName()
-	pkgdir = strings.Replace(pkgdir, "/", "-", -1)
-	pkgdir = strings.Replace(pkgdir, ":", "--", -1)
+	return FilesystemSafeName(p.FullName())
+}
+
+func FilesystemSafeName(fn string) string {
+	res := strings.Replace(fn, "/", "-", -1)
+	res = strings.Replace(res, ":", "--", -1)
 	// components in the workspace root would otherwise start with - which breaks a lot of shell commands
-	pkgdir = strings.TrimLeft(pkgdir, "-")
-	return pkgdir
+	res = strings.TrimLeft(res, "-")
+	return res
 }
 
 func (p *Package) resolveBuiltinVariables() error {

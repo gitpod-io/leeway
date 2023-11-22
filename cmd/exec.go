@@ -243,7 +243,7 @@ func executeCommandInLocations(rawExecCmd []string, locs []commandExecLocation, 
 	}
 
 	for _, loc := range locs {
-		if ok, _ := cache.NeedsExecution(context.Background(), loc.Package); !ok {
+		if ok, _ := cache.NeedsExecution(context.Background(), loc); !ok {
 			continue
 		}
 
@@ -284,7 +284,7 @@ func executeCommandInLocations(rawExecCmd []string, locs []commandExecLocation, 
 			eg.Go(func() error {
 				err := cmd.Wait()
 				if err == nil {
-					err = cache.MarkExecuted(context.Background(), loc.Package)
+					err = cache.MarkExecuted(context.Background(), loc)
 					if err != nil {
 						log.WithError(err).Warn("cannot mark package as executed")
 					}
@@ -296,7 +296,7 @@ func executeCommandInLocations(rawExecCmd []string, locs []commandExecLocation, 
 		} else {
 			err = cmd.Wait()
 			if err == nil {
-				err = cache.MarkExecuted(context.Background(), loc.Package)
+				err = cache.MarkExecuted(context.Background(), loc)
 				if err != nil {
 					log.WithError(err).Warn("cannot mark package as executed")
 				}
@@ -332,25 +332,25 @@ func init() {
 }
 
 type execCache interface {
-	NeedsExecution(ctx context.Context, pkg *leeway.Package) (bool, error)
-	MarkExecuted(ctx context.Context, pkg *leeway.Package) error
+	NeedsExecution(ctx context.Context, loc commandExecLocation) (bool, error)
+	MarkExecuted(ctx context.Context, loc commandExecLocation) error
 }
 
 type noExecCache struct{}
 
-func (noExecCache) MarkExecuted(ctx context.Context, pkg *leeway.Package) error { return nil }
-func (noExecCache) NeedsExecution(ctx context.Context, pkg *leeway.Package) (bool, error) {
+func (noExecCache) MarkExecuted(ctx context.Context, loc commandExecLocation) error { return nil }
+func (noExecCache) NeedsExecution(ctx context.Context, loc commandExecLocation) (bool, error) {
 	return true, nil
 }
 
 type filesystemExecCache string
 
-func (c filesystemExecCache) MarkExecuted(ctx context.Context, pkg *leeway.Package) error {
+func (c filesystemExecCache) MarkExecuted(ctx context.Context, loc commandExecLocation) error {
 	err := os.MkdirAll(string(c), 0755)
 	if err != nil {
 		return err
 	}
-	fn, err := c.filename(pkg)
+	fn, err := c.filename(loc)
 	if err != nil {
 		return err
 	}
@@ -359,20 +359,31 @@ func (c filesystemExecCache) MarkExecuted(ctx context.Context, pkg *leeway.Packa
 		return err
 	}
 	f.Close()
-	log.WithField("name", pkg.FullName()).Debug("marked package as executed")
+	log.WithField("name", fn).Debug("marked executed")
 	return nil
 }
 
-func (c filesystemExecCache) filename(pkg *leeway.Package) (string, error) {
-	v, err := pkg.Version()
-	if err != nil {
-		return "", err
+func (c filesystemExecCache) filename(loc commandExecLocation) (string, error) {
+	var id string
+	if loc.Package != nil {
+		v, err := loc.Package.Version()
+		if err != nil {
+			return "", err
+		}
+		id = v
+	} else if loc.Component != nil {
+		id = leeway.FilesystemSafeName(loc.Component.Name)
+	} else if loc.Dir != "" {
+		id = leeway.FilesystemSafeName(loc.Dir)
+	} else if loc.Name != "" {
+		id = loc.Name
 	}
-	return filepath.Join(string(c), fmt.Sprintf("%s.executed", v)), nil
+
+	return filepath.Join(string(c), fmt.Sprintf("%s.executed", id)), nil
 }
 
-func (c filesystemExecCache) NeedsExecution(ctx context.Context, pkg *leeway.Package) (bool, error) {
-	fn, err := c.filename(pkg)
+func (c filesystemExecCache) NeedsExecution(ctx context.Context, loc commandExecLocation) (bool, error) {
+	fn, err := c.filename(loc)
 	if err != nil {
 		return false, err
 	}
