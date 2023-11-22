@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,7 @@ Example use:
 			watch, _                  = cmd.Flags().GetBool("watch")
 			parallel, _               = cmd.Flags().GetBool("parallel")
 			rawOutput, _              = cmd.Flags().GetBool("raw-output")
+			cacheKey, _               = cmd.Flags().GetString("cache-key")
 		)
 
 		ws, err := getWorkspace()
@@ -161,7 +163,7 @@ Example use:
 		}
 
 		if watch {
-			err := executeCommandInLocations(args, locs, parallel, rawOutput)
+			err := executeCommandInLocations(args, locs, noExecCache{}, parallel, rawOutput)
 			if err != nil {
 				log.Error(err)
 			}
@@ -170,7 +172,7 @@ Example use:
 			for {
 				select {
 				case <-evt:
-					err := executeCommandInLocations(args, locs, parallel, rawOutput)
+					err := executeCommandInLocations(args, locs, noExecCache{}, parallel, rawOutput)
 					if err != nil {
 						log.Error(err)
 					}
@@ -179,7 +181,20 @@ Example use:
 				}
 			}
 		}
-		err = executeCommandInLocations(args, locs, parallel, rawOutput)
+
+		var cache execCache = noExecCache{}
+		if cacheKey != "" {
+			localCacheLoc := os.Getenv(leeway.EnvvarCacheDir)
+			if localCacheLoc == "" {
+				localCacheLoc = filepath.Join(os.TempDir(), "cache")
+			}
+			loc := filepath.Join(localCacheLoc, cacheKey)
+			log.WithField("loc", loc).Debug("using filesystem exec cache")
+
+			cache = filesystemExecCache(loc)
+		}
+
+		err = executeCommandInLocations(args, locs, cache, parallel, rawOutput)
 		if err != nil {
 			log.WithError(err).Fatal("cannot execut command")
 		}
@@ -193,9 +208,13 @@ type commandExecLocation struct {
 	Name      string
 }
 
-func executeCommandInLocations(rawExecCmd []string, locs []commandExecLocation, parallel, rawOutput bool) error {
+func executeCommandInLocations(rawExecCmd []string, locs []commandExecLocation, cache execCache, parallel, rawOutput bool) error {
 	var wg sync.WaitGroup
 	for _, loc := range locs {
+		if ok, _ := cache.NeedsExecution(context.Background(), loc.Package); !ok {
+			continue
+		}
+
 		execCmd := make([]string, len(rawExecCmd))
 		for i, c := range rawExecCmd {
 			if loc.Package == nil {
@@ -233,14 +252,24 @@ func executeCommandInLocations(rawExecCmd []string, locs []commandExecLocation, 
 			go func(loc commandExecLocation) {
 				defer wg.Done()
 
-				err = cmd.Wait()
-				if err != nil {
+				err := cmd.Wait()
+				if err == nil {
+					err = cache.MarkExecuted(context.Background(), loc.Package)
+					if err != nil {
+						log.WithError(err).Warn("cannot mark package as executed")
+					}
+				} else {
 					log.Errorf("execution failed in %s (%s): %v", loc.Name, loc.Dir, err)
 				}
 			}(loc)
 		} else {
 			err = cmd.Wait()
-			if err != nil {
+			if err == nil {
+				err = cache.MarkExecuted(context.Background(), loc.Package)
+				if err != nil {
+					log.WithError(err).Warn("cannot mark package as executed")
+				}
+			} else {
 				return fmt.Errorf("execution failed in %s (%s): %v", loc.Name, loc.Dir, err)
 			}
 		}
@@ -265,5 +294,58 @@ func init() {
 	execCmd.Flags().Bool("watch", false, "Watch source files and re-execute on change")
 	execCmd.Flags().Bool("parallel", false, "Start all executions in parallel independent of their order")
 	execCmd.Flags().Bool("raw-output", false, "Produce output without package prefix")
+	execCmd.Flags().String("cache-key", "", "Specify a cache key to provide package-cache like execution behaviour")
 	execCmd.Flags().SetInterspersed(true)
+}
+
+type execCache interface {
+	NeedsExecution(ctx context.Context, pkg *leeway.Package) (bool, error)
+	MarkExecuted(ctx context.Context, pkg *leeway.Package) error
+}
+
+type noExecCache struct{}
+
+func (noExecCache) MarkExecuted(ctx context.Context, pkg *leeway.Package) error { return nil }
+func (noExecCache) NeedsExecution(ctx context.Context, pkg *leeway.Package) (bool, error) {
+	return true, nil
+}
+
+type filesystemExecCache string
+
+func (c filesystemExecCache) MarkExecuted(ctx context.Context, pkg *leeway.Package) error {
+	err := os.MkdirAll(string(c), 0755)
+	if err != nil {
+		return err
+	}
+	fn, err := c.filename(pkg)
+	if err != nil {
+		return err
+	}
+	f, err := os.Create(string(fn))
+	if err != nil {
+		return err
+	}
+	f.Close()
+	log.WithField("name", pkg.FullName()).Debug("marked package as executed")
+	return nil
+}
+
+func (c filesystemExecCache) filename(pkg *leeway.Package) (string, error) {
+	v, err := pkg.Version()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(string(c), fmt.Sprintf("%s.executed", v)), nil
+}
+
+func (c filesystemExecCache) NeedsExecution(ctx context.Context, pkg *leeway.Package) (bool, error) {
+	fn, err := c.filename(pkg)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(fn)
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	return false, err
 }
