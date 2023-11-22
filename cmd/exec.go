@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -56,6 +57,7 @@ Example use:
 			includeTransDependants, _ = cmd.Flags().GetBool("transitive-dependants")
 			components, _             = cmd.Flags().GetBool("components")
 			filterType, _             = cmd.Flags().GetStringArray("filter-type")
+			filterName, _             = cmd.Flags().GetString("filter-name")
 			watch, _                  = cmd.Flags().GetBool("watch")
 			parallel, _               = cmd.Flags().GetBool("parallel")
 			rawOutput, _              = cmd.Flags().GetBool("raw-output")
@@ -127,6 +129,21 @@ Example use:
 					continue
 				}
 
+				delete(pkgs, pkg)
+			}
+		}
+
+		if filterName != "" {
+			filterExpr, err := regexp.Compile(filterName)
+			if err != nil {
+				log.WithError(err).Fatal("invalid filter-name expression")
+			}
+			for pkg := range pkgs {
+				if filterExpr.MatchString(pkg.FullName()) {
+					continue
+				}
+
+				log.WithField("package", pkg.FullName()).Debug("filtering out due to filter-name")
 				delete(pkgs, pkg)
 			}
 		}
@@ -305,6 +322,7 @@ func init() {
 	execCmd.Flags().Bool("transitive-dependants", false, "select transitive package dependants")
 	execCmd.Flags().Bool("components", false, "select the package's components (e.g. instead of selecting three packages from the same component, execute just once in the component origin)")
 	execCmd.Flags().StringArray("filter-type", nil, "only select packages of this type")
+	execCmd.Flags().String("filter-name", "", "only select packages matching this name regular expression")
 	execCmd.Flags().Bool("watch", false, "Watch source files and re-execute on change")
 	execCmd.Flags().Bool("parallel", false, "Start all executions in parallel independent of their order")
 	execCmd.Flags().Bool("raw-output", false, "Produce output without package prefix")
