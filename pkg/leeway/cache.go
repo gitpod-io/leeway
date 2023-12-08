@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/peak/s5cmd/v2/command"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 )
@@ -339,8 +340,8 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 func (rs *S3RemoteCache) Download(dst Cache, pkgs []*Package) error {
 	fmt.Printf("☁️  downloading %d cached build artifacts from s3 remote cache\n", len(pkgs))
 	var (
-		files []string
-		dest  string
+		commands []string
+		dest     string
 	)
 
 	for _, pkg := range pkgs {
@@ -355,35 +356,32 @@ func (rs *S3RemoteCache) Download(dst Cache, pkgs []*Package) error {
 			return xerrors.Errorf("s3 cache only supports one target folder, not %s and %s", dest, filepath.Dir(fn))
 		}
 
-		files = append(files, fmt.Sprintf("%s/%s", rs.BucketName, strings.TrimLeft(fn, "/")))
+		file := strings.TrimLeft(fn, "/")
+		s3Key := filepath.Base(file)
+		s3Uri := fmt.Sprintf("s3://%s/%s", rs.BucketName, s3Key)
+		commands = append(commands, fmt.Sprintf("cp %s %s", s3Uri, dest))
 	}
-
-	wg := sync.WaitGroup{}
 
 	ctx := context.TODO()
-	for _, file := range files {
-		wg.Add(1)
 
-		go func(file string) {
-			defer wg.Done()
-
-			key := filepath.Base(file)
-			fields := log.Fields{
-				"key":    key,
-				"bucket": rs.BucketName,
-				"region": rs.s3Config.Region,
-			}
-			log.WithFields(fields).Debug("downloading object from s3")
-			len, err := rs.getObject(ctx, key, fmt.Sprintf("%s/%s", dest, key))
-			if err != nil {
-				log.WithFields(fields).Warnf("failed to download and store object %s from s3: %s", key, err)
-			} else {
-				log.WithFields(fields).Debugf("downloaded %d byte object from s3 to %s", len, file)
-			}
-
-		}(file)
+	cmdsf, err := os.CreateTemp("", "s5cmd-commands-*")
+	if err != nil {
+		return xerrors.Errorf("failed to create temporary file for s5cmd commands: %s", err)
 	}
-	wg.Wait()
+
+	defer cmdsf.Close()
+	defer os.Remove(cmdsf.Name())
+
+	commands = append(commands, "") // to add newline
+	_, err = cmdsf.WriteString(strings.Join(commands, "\n"))
+	if err != nil {
+		return xerrors.Errorf("failed to write to temporary file: %s", err)
+	}
+
+	err = command.Main(ctx, []string{"", "run", cmdsf.Name()})
+	if err != nil {
+		return xerrors.Errorf("failed to when running s5cmd: %s", err)
+	}
 
 	return nil
 }
