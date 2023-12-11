@@ -494,8 +494,13 @@ func (rs *S3RemoteCache) getObject(ctx context.Context, key string, path string)
 	downloader := manager.NewDownloader(rs.s3Client, func(d *manager.Downloader) {
 		d.PartSize = S3_PART_SIZE
 	})
-	buffer := manager.NewWriteAtBuffer([]byte{})
-	res, err := downloader.Download(context.TODO(), buffer, &s3.GetObjectInput{
+
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return 0, xerrors.Errorf("failed to write s3 download to %s: %s", path, err)
+	}
+	defer file.Close()
+	res, err := downloader.Download(context.TODO(), file, &s3.GetObjectInput{
 		Bucket: aws.String(rs.BucketName),
 		Key:    aws.String(key),
 	})
@@ -503,10 +508,6 @@ func (rs *S3RemoteCache) getObject(ctx context.Context, key string, path string)
 		return res, err
 	}
 
-	err = os.WriteFile(path, buffer.Bytes(), 0644)
-	if err != nil {
-		return 0, xerrors.Errorf("failed to write s3 download to %s: %s", path, err)
-	}
 	return res, nil
 }
 
