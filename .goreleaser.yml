@@ -6,8 +6,6 @@ builds:
   - CGO_ENABLED=0
   ldflags:
   - -s -w -X github.com/gitpod-io/leeway/pkg/leeway.Version={{.Version}}-{{.ShortCommit}}
-  ignore:
-  - goos: darwin
 
 archives:
 - replacements:
