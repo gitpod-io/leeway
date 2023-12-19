@@ -441,6 +441,12 @@ leeway collect components -l someConstant
 LEEWAY_EXPERIMENTAL=true leeway export --strict /some/destination
 ```
 
+### macOS: leeway fails with "cp --parents" not being a valid command
+The way depends on GNU utilities. Install them and make sure they're in your path.
+```
+brew install coreutils
+```
+
 # Contributing
 
 ## Creating a new release
