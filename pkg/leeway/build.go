@@ -396,6 +396,11 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return err
 	}
 
+	err = checkForCpCompatibility()
+	if err != nil {
+		return err
+	}
+
 	requirements := pkg.GetTransitiveDependencies()
 	allpkg := append(requirements, pkg)
 

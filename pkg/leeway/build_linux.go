@@ -14,6 +14,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+func checkForCpCompatibility() error {
+	// we're on linux - just assume it's GNU cp
+	return nil
+}
+
 func executeCommandsForPackageSafe(buildctx *buildContext, p *Package, wd string, commands [][]string) error {
 	tmpdir, err := os.MkdirTemp("", "leeway-*")
 	if err != nil {
