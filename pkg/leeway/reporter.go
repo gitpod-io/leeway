@@ -54,6 +54,11 @@ type PackageBuildReport struct {
 
 	Phases []PackageBuildPhase
 	Error  error
+
+	TestCoverageAvailable  bool
+	TestCoveragePercentage int
+	FunctionsWithoutTest   int
+	FunctionsWithTest      int
 }
 
 // PhaseDuration returns the time it took to execute the phases commands
@@ -210,7 +215,11 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRe
 	delete(r.times, nme)
 	r.mu.Unlock()
 
-	msg := color.Sprintf("<green>package build succeded</> <gray>(%.2fs)</>\n", dur.Seconds())
+	var coverage string
+	if rep.TestCoverageAvailable {
+		coverage = color.Sprintf("<fg=yellow>test coverage: %d%%</> <gray>(%d of %d functions have tests)</>\n", rep.TestCoveragePercentage, rep.FunctionsWithTest, rep.FunctionsWithTest+rep.FunctionsWithoutTest)
+	}
+	msg := color.Sprintf("%s<green>package build succeded</> <gray>(%.2fs)</>\n", coverage, dur.Seconds())
 	if rep.Error != nil {
 		msg = color.Sprintf("<red>package build failed while %sing</>\n<white>Reason:</> %s\n", rep.LastPhase(), rep.Error)
 	}
@@ -570,6 +579,11 @@ func (sr *SegmentReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildR
 		"success":    rep.Error == nil,
 		"lastPhase":  rep.LastPhase(),
 		"durationMS": rep.TotalTime().Milliseconds(),
+	}
+	if rep.TestCoverageAvailable {
+		props["testCoverage"] = rep.TestCoveragePercentage
+		props["functionsWithoutTest"] = rep.FunctionsWithoutTest
+		props["functionsWithTest"] = rep.FunctionsWithTest
 	}
 	addPackageToSegmentEventProps(props, pkg)
 	sr.track("package_build_finished", props)

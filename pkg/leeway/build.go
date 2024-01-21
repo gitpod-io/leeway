@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -765,6 +766,18 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
+	if bld.TestCoverage != nil {
+		coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
+		if err != nil {
+			return err
+		}
+
+		pkgRep.TestCoverageAvailable = true
+		pkgRep.TestCoveragePercentage = coverage
+		pkgRep.FunctionsWithoutTest = funcsWithoutTest
+		pkgRep.FunctionsWithTest = funcsWithTest
+	}
+
 	err = executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage])
 	if err != nil {
 		return err
@@ -846,7 +859,16 @@ type packageBuild struct {
 	// If Subjects is not nil it's used to compute the provenance subjects of the
 	// package build. This field takes precedence over PostBuild
 	Subjects func() ([]in_toto.Subject, error)
+
+	// If TestCoverage is not nil it's used to compute the test coverage of the package build.
+	// This function is expected to return a value between 0 and 100.
+	// If the package build does not have any tests, this function must return 0.
+	// If the package build has tests but the test coverage cannot be computed, this function must return an error.
+	// This function is guaranteed to be called after the test phase has finished.
+	TestCoverage testCoverageFunc
 }
+
+type testCoverageFunc func() (coverage, funcsWithoutTest, funcsWithTest int, err error)
 
 const (
 	getYarnLockScript = `#!/bin/bash
@@ -1236,10 +1258,14 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			commands[PackageBuildPhaseLint] = append(commands[PackageBuildPhaseLint], cfg.LintCommand)
 		}
 	}
+	var reportCoverage testCoverageFunc
 	if !cfg.DontTest && !buildctx.DontTest {
 		testCommand := []string{goCommand, "test", "-v"}
 		if buildctx.buildOptions.CoverageOutputPath != "" {
 			testCommand = append(testCommand, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
+		} else {
+			testCommand = append(testCommand, "-coverprofile=testcoverage.out")
+			reportCoverage = collectGoTestCoverage(filepath.Join(wd, "testcoverage.out"), p.FullName())
 		}
 		testCommand = append(testCommand, "./...")
 
@@ -1269,8 +1295,59 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	}
 
 	return &packageBuild{
-		Commands: commands,
+		Commands:     commands,
+		TestCoverage: reportCoverage,
 	}, nil
+}
+
+func collectGoTestCoverage(covfile, fullName string) testCoverageFunc {
+	return func() (coverage, funcsWithoutTest, funcsWithTest int, err error) {
+		// We need to collect the coverage for all packages in the module.
+		// To that end we load the coverage file.
+		// The coverage file contains the coverage for all packages in the module.
+
+		cmd := exec.Command("go", "tool", "cover", "-func", covfile)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			err = xerrors.Errorf("cannot collect test coverage: %w: %s", err, string(out))
+			return
+		}
+
+		coverage, funcsWithoutTest, funcsWithTest, err = parseGoCoverOutput(string(out))
+		return
+	}
+}
+
+func parseGoCoverOutput(input string) (coverage, funcsWithoutTest, funcsWithTest int, err error) {
+	// The output of the coverage tool looks like this:
+	// github.com/gitpod-io/gitpod/content_ws/pkg/contentws/contentws.go:33:	New		100.0%
+	lines := strings.Split(input, "\n")
+
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		perc := strings.Trim(strings.TrimSpace(fields[2]), "%")
+		percF, err := strconv.ParseFloat(perc, 32)
+		if err != nil {
+			log.Warnf("cannot parse coverage percentage for line %s: %v", line, err)
+			continue
+		}
+		intCov := int(percF)
+		coverage += intCov
+		if intCov == 0 {
+			funcsWithoutTest++
+		} else {
+			funcsWithTest++
+		}
+	}
+
+	total := (funcsWithoutTest + funcsWithTest)
+	if total != 0 {
+		coverage = coverage / total
+	}
+	return
 }
 
 // buildDocker implements the build process for Docker packages.
