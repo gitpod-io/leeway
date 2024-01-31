@@ -19,7 +19,7 @@ require (
 	github.com/in-toto/in-toto-golang v0.3.3
 	github.com/karrick/godirwalk v1.17.0
 	github.com/minio/highwayhash v1.0.2
-	github.com/opencontainers/runc v1.1.9
+	github.com/opencontainers/runc v1.1.12
 	github.com/opencontainers/runtime-spec v1.1.0
 	github.com/segmentio/analytics-go/v3 v3.2.1
 	github.com/segmentio/textio v1.2.0
@@ -50,7 +50,7 @@ require (
 	github.com/aws/smithy-go v1.15.0 // indirect
 	github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
-	github.com/cyphar/filepath-securejoin v0.2.3 // indirect
+	github.com/cyphar/filepath-securejoin v0.2.4 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dlclark/regexp2 v1.7.0 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
