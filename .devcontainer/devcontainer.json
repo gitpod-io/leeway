@@ -1,0 +1,6 @@
+{
+	"name": "leeway",
+	"image": "mcr.microsoft.com/devcontainers/go:1.21",
+	// Features to add to the dev container. More info: https://containers.dev/features.
+	"features": {}
+}
