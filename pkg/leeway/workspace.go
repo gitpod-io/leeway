@@ -58,6 +58,26 @@ type WorkspaceProvenance struct {
 	key     *in_toto.Key `yaml:"-"`
 }
 
+func DiscoverWorkspaceRoot() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(filepath.Join(wd, "WORKSPACE.yaml")); err == nil {
+			return wd, nil
+		}
+
+		wd = filepath.Dir(wd)
+		if wd == "/" || wd == "" {
+			break
+		}
+	}
+
+	return "", xerrors.Errorf("cannot find workspace root")
+}
+
 // EnvironmentManifest is a collection of environment manifest entries
 type EnvironmentManifest []EnvironmentManifestEntry
 
