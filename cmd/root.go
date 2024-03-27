@@ -131,7 +131,14 @@ func Execute() {
 func init() {
 	workspaceRoot := os.Getenv(EnvvarWorkspaceRoot)
 	if workspaceRoot == "" {
-		workspaceRoot = "."
+		var err error
+		workspaceRoot, err = leeway.DiscoverWorkspaceRoot()
+		if err != nil {
+			log.WithError(err).Debug("cannot determine workspace root - defaulting to .")
+			workspaceRoot = "."
+		} else {
+			log.WithField("workspace", workspaceRoot).Debug("found workspace root")
+		}
 	}
 
 	rootCmd.PersistentFlags().StringVarP(&workspace, "workspace", "w", workspaceRoot, "Workspace root")
