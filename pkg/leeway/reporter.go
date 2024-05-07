@@ -621,3 +621,35 @@ func (sr *SegmentReporter) track(event string, props segment.Properties) {
 		log.WithField("evt", string(fc)).Debug("reported segment event")
 	}
 }
+
+func NewGitHubReporter() *GitHubActionReporter {
+	return &GitHubActionReporter{}
+}
+
+type GitHubActionReporter struct {
+	NoopReporter
+
+	mu sync.Mutex
+}
+
+func (sr *GitHubActionReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildReport) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+
+	fn, ok := os.LookupEnv("GITHUB_OUTPUT")
+	if !ok || fn == "" {
+		return
+	}
+	f, err := os.OpenFile(fn, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.WithField("fn", fn).WithError(err).Warn("cannot open GITHUB_OUTPUT file")
+		return
+	}
+	defer f.Close()
+
+	var success bool
+	if rep.Error == nil {
+		success = true
+	}
+	fmt.Fprintf(f, "%s=%v\n", pkg.FilesystemSafeName(), success)
+}
