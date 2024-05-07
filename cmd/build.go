@@ -174,6 +174,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
 	cmd.Flags().String("report-segment", os.Getenv("LEEWAY_SEGMENT_KEY"), "Report build events to segment using the segment key (defaults to $LEEWAY_SEGMENT_KEY)")
+	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemCache) {
@@ -254,6 +255,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		log.Fatal(err)
 	} else if segmentkey != "" {
 		reporter = append(reporter, leeway.NewSegmentReporter(segmentkey))
+	}
+	if github, err := cmd.Flags().GetBool("report-github"); err != nil {
+		log.Fatal(err)
+	} else if github {
+		reporter = append(reporter, leeway.NewGitHubReporter())
 	}
 
 	dontTest, err := cmd.Flags().GetBool("dont-test")
