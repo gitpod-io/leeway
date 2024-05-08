@@ -1307,6 +1307,8 @@ func collectGoTestCoverage(covfile, fullName string) testCoverageFunc {
 		// The coverage file contains the coverage for all packages in the module.
 
 		cmd := exec.Command("go", "tool", "cover", "-func", covfile)
+		log.WithField("pwd", filepath.Dir(covfile)).WithField("covfile", covfile).Debug("collecting test coverage")
+		cmd.Dir = filepath.Dir(covfile)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			err = xerrors.Errorf("cannot collect test coverage: %w: %s", err, string(out))
