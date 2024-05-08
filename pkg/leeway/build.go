@@ -1265,7 +1265,6 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			testCommand = append(testCommand, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
 		} else {
 			testCommand = append(testCommand, "-coverprofile=testcoverage.out")
-			testCommand = append(testCommand, "-coverprofile=testcoverage.out")
 			reportCoverage = collectGoTestCoverage(filepath.Join(wd, "testcoverage.out"), p.FullName())
 		}
 		testCommand = append(testCommand, "./...")
