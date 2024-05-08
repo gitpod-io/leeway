@@ -1265,7 +1265,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			testCommand = append(testCommand, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
 		} else {
 			testCommand = append(testCommand, "-coverprofile=testcoverage.out")
-			reportCoverage = collectGoTestCoverage(filepath.Join(wd, "testcoverage.out"), p.FullName())
+			reportCoverage = collectGoTestCoverage(filepath.Join(wd, "testcoverage.out"), p.FullName(), buildctx.buildDir)
 		}
 		testCommand = append(testCommand, "./...")
 
@@ -1300,13 +1300,14 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	}, nil
 }
 
-func collectGoTestCoverage(covfile, fullName string) testCoverageFunc {
+func collectGoTestCoverage(covfile, fullName, cwd string) testCoverageFunc {
 	return func() (coverage, funcsWithoutTest, funcsWithTest int, err error) {
 		// We need to collect the coverage for all packages in the module.
 		// To that end we load the coverage file.
 		// The coverage file contains the coverage for all packages in the module.
 
 		cmd := exec.Command("go", "tool", "cover", "-func", covfile)
+		cmd.Dir = cwd
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			err = xerrors.Errorf("cannot collect test coverage: %w: %s", err, string(out))
