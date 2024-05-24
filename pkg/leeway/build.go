@@ -1283,8 +1283,8 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	if len(buildCmd) > 0 && cfg.Packaging != GoLibrary {
 		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], buildCmd)
 	}
-	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], []string{"rm", "-rf", "_deps"})
 
+	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"rm", "-rf", "_deps"})
 	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{
 		"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".",
 	})
