@@ -278,6 +278,7 @@ func (r *WerftReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRepo
 }
 
 type HTMLPackageReport struct {
+	ID       string
 	logs     strings.Builder
 	start    time.Time
 	duration time.Duration
@@ -363,7 +364,10 @@ func (r *HTMLReporter) getReport(pkg *Package) *HTMLPackageReport {
 			return rep
 		}
 
-		rep = &HTMLPackageReport{status: PackageNotBuiltYet}
+		rep = &HTMLPackageReport{
+			ID:     pkg.FilesystemSafeName(),
+			status: PackageNotBuiltYet,
+		}
 		r.reports[name] = rep
 		r.mu.Unlock()
 	}
@@ -425,14 +429,14 @@ func (r *HTMLReporter) Report() {
 			<td>{{ $report.StatusIcon }}</td>
 			<td>{{ $pkg }}</td>
 			<td>{{ $report.DurationInSeconds -}}</td>
-			<td><a href="#{{ $pkg }}">See below</td>
+			<td><a href="#{{ $report.ID }}">See below</td>
 		</tr>
 		{{- end }}
 	</tbody>
 <table>
-<p>For details around each package, see below<p>
+<p>For details about each package, see below<p>
 {{- range $pkg, $report := .Packages }}
-<h2 id="{{ $pkg }}">{{ $pkg }}</h2>
+<h2 id="{{ $report.ID }}">{{ $report.StatusIcon }} {{ $pkg }}</h2>
 {{ if $report.HasError -}}
 <details open> 
 	<summary>Error message</summary>
