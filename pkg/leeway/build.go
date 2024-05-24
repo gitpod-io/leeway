@@ -1265,7 +1265,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			testCommand = append(testCommand, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
 		} else {
 			testCommand = append(testCommand, "-coverprofile=testcoverage.out")
-			reportCoverage = collectGoTestCoverage(filepath.Join(wd, "testcoverage.out"), p.FullName())
+			reportCoverage = collectGoTestCoverage(filepath.Join(wd, "testcoverage.out"))
 		}
 		testCommand = append(testCommand, "./...")
 
@@ -1300,7 +1300,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	}, nil
 }
 
-func collectGoTestCoverage(covfile, fullName string) testCoverageFunc {
+func collectGoTestCoverage(covfile string) testCoverageFunc {
 	return func() (coverage, funcsWithoutTest, funcsWithTest int, err error) {
 		// We need to collect the coverage for all packages in the module.
 		// To that end we load the coverage file.
@@ -1680,6 +1680,7 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 	}
 
 	env := append(os.Environ(), p.Environment...)
+	env = append(env, fmt.Sprintf("LEEWAY_WORKSPACE_ROOT=%s", p.C.W.Origin))
 	for _, cmd := range commands {
 		err := run(buildctx.Reporter, p, env, wd, cmd[0], cmd[1:]...)
 		if err != nil {
