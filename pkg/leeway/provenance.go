@@ -456,12 +456,18 @@ func (a *AttestationBundle) Add(env *provenance.Envelope) error {
 // This function ensures entries are unique.
 // This function is not synchronised.
 func (a *AttestationBundle) AddFromBundle(other io.Reader) error {
-	// TOOD(cw): use something other than a scanner. We've seen "Token Too Long" in first trials already.
-	scan := bufio.NewScanner(other)
-	scan.Buffer(make([]byte, maxBundleEntrySize), maxBundleEntrySize)
-	for scan.Scan() {
+	reader := bufio.NewReader(other)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
 		hash := sha256.New()
-		_, err := hash.Write(scan.Bytes())
+		_, err = hash.Write(line)
 		if err != nil {
 			return err
 		}
@@ -471,19 +477,11 @@ func (a *AttestationBundle) AddFromBundle(other io.Reader) error {
 			continue
 		}
 
-		_, err = a.out.Write(scan.Bytes())
-		if err != nil {
-			return err
-		}
-		_, err = a.out.Write([]byte{'\n'})
+		_, err = a.out.Write(line)
 		if err != nil {
 			return err
 		}
 		a.keys[key] = struct{}{}
-	}
-
-	if scan.Err() != nil {
-		return scan.Err()
 	}
 	return nil
 }
