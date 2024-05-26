@@ -13,7 +13,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -40,22 +39,6 @@ const (
 
 	// ProvenanceBuilderID is the prefix we use as Builder ID when issuing provenance
 	ProvenanceBuilderID = "github.com/gitpod-io/leeway"
-)
-
-var (
-	// maxBundleEntrySize is the maximum size in bytes an attestation bundle entry may have.
-	// If we encounter a bundle entry lager than this size, the build will fail.
-	// Note: we'll allocate multiple buffers if this size, i.e. this size directly impacts
-	//       the amount of memory required during a build (parralellBuildCount * maxBundleEntrySize).
-	maxBundleEntrySize = func() int {
-		env := os.Getenv("LEEWAY_MAX_PROVENANCE_BUNDLE_SIZE")
-		res, err := strconv.ParseInt(env, 10, 64)
-		if err != nil {
-			return 2 * 1024 * 1024
-		}
-
-		return int(res)
-	}()
 )
 
 // writeProvenance produces a provenanceWriter which ought to be used during package builds
