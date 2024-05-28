@@ -1260,7 +1260,11 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	}
 	var reportCoverage testCoverageFunc
 	if !cfg.DontTest && !buildctx.DontTest {
-		testCommand := []string{goCommand, "test", "-v"}
+		testCommand := []string{goCommand, "test"}
+		if log.IsLevelEnabled(log.DebugLevel) {
+			testCommand = append(testCommand, "-v")
+		}
+
 		if buildctx.buildOptions.CoverageOutputPath != "" {
 			testCommand = append(testCommand, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
 		} else {
