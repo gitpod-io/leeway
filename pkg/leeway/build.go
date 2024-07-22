@@ -421,7 +421,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToCheckRemoteCache = append(pkgsToCheckRemoteCache, p)
 	}
 
-	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(pkgsToCheckRemoteCache)
+	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(context.Background(), pkgsToCheckRemoteCache)
 	if err != nil {
 		return err
 	}
@@ -471,7 +471,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToDownload = append(pkgsToDownload, p)
 	}
 
-	err = ctx.RemoteCache.Download(ctx.LocalCache, pkgsToDownload)
+	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, pkgsToDownload)
 	if err != nil {
 		return err
 	}
@@ -504,7 +504,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	buildErr := pkg.build(ctx)
-	cacheErr := ctx.RemoteCache.Upload(ctx.LocalCache, ctx.GetNewPackagesForCache())
+	cacheErr := ctx.RemoteCache.Upload(context.Background(), ctx.LocalCache, ctx.GetNewPackagesForCache())
 
 	if buildErr != nil {
 		// We deliberately swallow the target pacakge build error as that will have already been reported using the reporter.
