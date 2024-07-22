@@ -306,30 +306,30 @@ type pushOnlyRemoteCache struct {
 	C leeway.RemoteCache
 }
 
-func (c *pushOnlyRemoteCache) ExistingPackages(pkgs []*leeway.Package) (map[*leeway.Package]struct{}, error) {
-	return c.C.ExistingPackages(pkgs)
+func (c *pushOnlyRemoteCache) ExistingPackages(ctx context.Context, pkgs []*leeway.Package) (map[*leeway.Package]struct{}, error) {
+	return c.C.ExistingPackages(ctx, pkgs)
 }
 
-func (c *pushOnlyRemoteCache) Download(dst leeway.Cache, pkgs []*leeway.Package) error {
+func (c *pushOnlyRemoteCache) Download(ctx context.Context, dst leeway.Cache, pkgs []*leeway.Package) error {
 	return nil
 }
 
-func (c *pushOnlyRemoteCache) Upload(src leeway.Cache, pkgs []*leeway.Package) error {
-	return c.C.Upload(src, pkgs)
+func (c *pushOnlyRemoteCache) Upload(ctx context.Context, src leeway.Cache, pkgs []*leeway.Package) error {
+	return c.C.Upload(ctx, src, pkgs)
 }
 
 type pullOnlyRemoteCache struct {
 	C leeway.RemoteCache
 }
 
-func (c *pullOnlyRemoteCache) ExistingPackages(pkgs []*leeway.Package) (map[*leeway.Package]struct{}, error) {
-	return c.C.ExistingPackages(pkgs)
+func (c *pullOnlyRemoteCache) ExistingPackages(ctx context.Context, pkgs []*leeway.Package) (map[*leeway.Package]struct{}, error) {
+	return c.C.ExistingPackages(ctx, pkgs)
 }
 
-func (c *pullOnlyRemoteCache) Download(dst leeway.Cache, pkgs []*leeway.Package) error {
-	return c.C.Download(dst, pkgs)
+func (c *pullOnlyRemoteCache) Download(ctx context.Context, dst leeway.Cache, pkgs []*leeway.Package) error {
+	return c.C.Download(ctx, dst, pkgs)
 }
 
-func (c *pullOnlyRemoteCache) Upload(src leeway.Cache, pkgs []*leeway.Package) error {
+func (c *pullOnlyRemoteCache) Upload(ctx context.Context, src leeway.Cache, pkgs []*leeway.Package) error {
 	return nil
 }

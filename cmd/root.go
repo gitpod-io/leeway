@@ -7,6 +7,9 @@ import (
 	"runtime/trace"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -183,7 +186,16 @@ func getRemoteCache() leeway.RemoteCache {
 				BucketName: remoteCacheBucket,
 			}
 		case "AWS":
-			rc, err := leeway.NewS3RemoteCache(remoteCacheBucket, nil)
+			ctx := context.Background()
+			cfg, err := config.LoadDefaultConfig(ctx)
+			if err != nil {
+				log.Fatalf("cannot load AWS config: %v", err)
+			}
+
+			s3Client := s3.NewFromConfig(cfg)
+			stsClient := sts.NewFromConfig(cfg)
+
+			rc, err := leeway.NewS3RemoteCache(ctx, remoteCacheBucket, s3Client, stsClient)
 			if err != nil {
 				log.Fatalf("cannot access remote S3 cache: %v", err)
 			}
@@ -194,7 +206,6 @@ func getRemoteCache() leeway.RemoteCache {
 				BucketName: remoteCacheBucket,
 			}
 		}
-
 	}
 
 	return leeway.NoRemoteCache{}
