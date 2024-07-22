@@ -16,6 +16,8 @@ import (
 	"golang.org/x/xerrors"
 
 	"github.com/gitpod-io/leeway/pkg/leeway"
+
+	_ "github.com/GeertJohan/go.rice"
 )
 
 const (
