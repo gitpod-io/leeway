@@ -211,6 +211,7 @@ func getRemoteCache() leeway.RemoteCache {
 	return leeway.NoRemoteCache{}
 }
 
+// nolint: unused
 func addExperimentalCommand(parent, child *cobra.Command) {
 	if os.Getenv("LEEWAY_EXPERIMENTAL") != "true" {
 		return

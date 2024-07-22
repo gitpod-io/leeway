@@ -2,7 +2,6 @@ package leeway
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,23 +86,6 @@ func (rs *S3RemoteCache) ExistingPackages(ctx context.Context, pkgs []*Package) 
 	}
 
 	return existingPkgs, nil
-}
-
-func (rs *S3RemoteCache) objectExists(ctx context.Context, key string) (bool, error) {
-	_, err := rs.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(rs.config.BucketName),
-		Key:    aws.String(key),
-	})
-
-	if err != nil {
-		var nsk *types.NoSuchKey
-		if errors.As(err, &nsk) {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to check object existence: %w", err)
-	}
-
-	return true, nil
 }
 
 // Download makes a best-effort attempt at downloading previously cached build artifacts
