@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
+
 	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -45,7 +47,7 @@ func (e *ECRAdapter) Create(image string) error {
 		RepositoryName: aws.String(imageName),
 	})
 	if err == nil {
-		fmt.Printf("Image %s already exists\n", imageName)
+		log.Infof("image %s already exists\n", imageName)
 		return nil
 	}
 
@@ -60,7 +62,7 @@ func (e *ECRAdapter) Create(image string) error {
 		return fmt.Errorf("failed to create ECR image: %w", err)
 	}
 
-	fmt.Printf("Image %s created successfully\n", imageName)
+	log.Infof("image %s created successfully\n", imageName)
 	return nil
 }
 
@@ -72,7 +74,7 @@ func (e *ECRAdapter) Sign(imageName, profileARN string) error {
 		return fmt.Errorf("failed to sign the image: %v, output: %s", err, string(output))
 	}
 
-	fmt.Printf("Image %s signed successfully\n", imageName)
+	log.Infof("image %s signed successfully\n", imageName)
 	return nil
 }
 
