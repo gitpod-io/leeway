@@ -19,7 +19,7 @@ require (
 	github.com/in-toto/in-toto-golang v0.3.3
 	github.com/karrick/godirwalk v1.17.0
 	github.com/minio/highwayhash v1.0.2
-	github.com/opencontainers/runc v1.1.9
+	github.com/opencontainers/runc v1.1.14
 	github.com/opencontainers/runtime-spec v1.1.0
 	github.com/segmentio/analytics-go/v3 v3.2.1
 	github.com/segmentio/textio v1.2.0
@@ -50,7 +50,7 @@ require (
 	github.com/aws/smithy-go v1.15.0 // indirect
 	github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
-	github.com/cyphar/filepath-securejoin v0.2.3 // indirect
+	github.com/cyphar/filepath-securejoin v0.2.4 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dlclark/regexp2 v1.7.0 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
@@ -66,8 +66,8 @@ require (
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
-	golang.org/x/net v0.8.0 // indirect
-	golang.org/x/sys v0.10.0 // indirect
-	golang.org/x/text v0.8.0 // indirect
+	golang.org/x/net v0.24.0 // indirect
+	golang.org/x/sys v0.19.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
 	sigs.k8s.io/release-utils v0.7.4-0.20230327115955-2b998c68e4b6 // indirect
 )
