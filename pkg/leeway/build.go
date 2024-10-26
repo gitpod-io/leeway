@@ -259,6 +259,7 @@ type buildOptions struct {
 	Reporter               Reporter
 	DryRun                 bool
 	BuildPlan              io.Writer
+	DontCompress           bool
 	DontTest               bool
 	MaxConcurrentTasks     int64
 	CoverageOutputPath     string
@@ -354,6 +355,13 @@ func WithDockerBuildOptions(dockerBuildOpts *DockerBuildOptions) BuildOption {
 func WithJailedExecution(jailedExecution bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.JailedExecution = jailedExecution
+		return nil
+	}
+}
+
+func WithCompressionDisabled(dontCompress bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DontCompress = dontCompress
 		return nil
 	}
 }
@@ -1619,8 +1627,15 @@ func extractImageNameFromCache(pkgName, cacheBundleFN string) (imgname string, e
 	return "", nil
 }
 
-// buildGeneric implements the build process for generic packages.
-// If you change anything in this process that's not backwards compatible, make sure you increment BuildGenericProccessVersion.
+// Helper function to get compression arg based on DontCompress setting
+func getCompressionArg(ctx *buildContext) string {
+	if ctx.DontCompress {
+		return ""
+	}
+	return fmt.Sprintf("--use-compress-program=%v", compressor)
+}
+
+// Update buildGeneric to use compression arg helper
 func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
 	cfg, ok := p.Config.(GenericPkgConfig)
 	if !ok {
@@ -1631,18 +1646,26 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	if len(cfg.Commands) == 0 && len(cfg.Test) == 0 {
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
 
+		compressArg := getCompressionArg(buildctx)
+		tarArgs := []string{"cf", result}
+		if compressArg != "" {
+			tarArgs = append(tarArgs, compressArg)
+		}
+
 		// if provenance is enabled, we have to make sure we capture the bundle
 		if p.C.W.Provenance.Enabled {
+			tarArgs = append(tarArgs, "./"+provenanceBundleFilename)
 			return &packageBuild{
 				Commands: map[PackageBuildPhase][][]string{
-					PackageBuildPhasePackage: [][]string{{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./" + provenanceBundleFilename}},
+					PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
 				},
 			}, nil
 		}
 
+		tarArgs = append(tarArgs, "--files-from", "/dev/null")
 		return &packageBuild{
 			Commands: map[PackageBuildPhase][][]string{
-				PackageBuildPhasePackage: [][]string{{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "--files-from", "/dev/null"}},
+				PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
 			},
 		}, nil
 	}
@@ -1667,10 +1690,17 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		commands = append(commands, cfg.Test...)
 	}
 
+	compressArg := getCompressionArg(buildctx)
+	tarArgs := []string{"cf", result}
+	if compressArg != "" {
+		tarArgs = append(tarArgs, compressArg)
+	}
+	tarArgs = append(tarArgs, ".")
+
 	return &packageBuild{
 		Commands: map[PackageBuildPhase][][]string{
 			PackageBuildPhaseBuild:   commands,
-			PackageBuildPhasePackage: {{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "."}},
+			PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
 		},
 	}, nil
 }
