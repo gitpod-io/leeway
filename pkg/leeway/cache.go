@@ -349,9 +349,8 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 	}
 	log.Debugf("Checking if %d packages exist in the remote cache using s3", len(packagesToKeys))
 
-	ch := make(chan *Package, len(packagesToKeys))
 	existingPackages := make(map[*Package]struct{})
-	var mu sync.Mutex // Mutex for safe concurrent map access
+	var mu sync.Mutex
 	wg := sync.WaitGroup{}
 
 	ctx := context.TODO()
