@@ -126,7 +126,15 @@ type GSUtilRemoteCache struct {
 func (rs GSUtilRemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{}, error) {
 	fmt.Printf("☁️  checking remote cache for past build artifacts for %d packages\n", len(pkgs))
 
-	packageToURLMap := make(map[*Package]string)
+	// Map to store both .tar.gz and .tar URLs for each package
+	type urlPair struct {
+		gzURL  string
+		tarURL string
+	}
+	packageToURLMap := make(map[*Package]urlPair)
+
+	// Create a list of all possible URLs
+	var urls []string
 	for _, p := range pkgs {
 		version, err := p.Version()
 		if err != nil {
@@ -134,13 +142,12 @@ func (rs GSUtilRemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]stru
 			continue
 		}
 
-		url := fmt.Sprintf("gs://%s/%s", rs.BucketName, fmt.Sprintf("%s.tar.gz", version))
-		packageToURLMap[p] = url
-	}
-
-	urls := make([]string, 0, len(packageToURLMap))
-	for _, url := range packageToURLMap {
-		urls = append(urls, url)
+		pair := urlPair{
+			gzURL:  fmt.Sprintf("gs://%s/%s.tar.gz", rs.BucketName, version),
+			tarURL: fmt.Sprintf("gs://%s/%s.tar", rs.BucketName, version),
+		}
+		packageToURLMap[p] = pair
+		urls = append(urls, pair.gzURL, pair.tarURL)
 	}
 
 	if len(urls) == 0 {
@@ -163,14 +170,27 @@ func (rs GSUtilRemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]stru
 
 	existingURLs := parseGSUtilStatOutput(bytes.NewReader(stdoutBuffer.Bytes()))
 	existingPackages := make(map[*Package]struct{})
+
 	for _, p := range pkgs {
-		url := packageToURLMap[p]
-		if _, exists := existingURLs[url]; exists {
+		urls := packageToURLMap[p]
+		if _, exists := existingURLs[urls.gzURL]; exists {
+			existingPackages[p] = struct{}{}
+			continue
+		}
+		if _, exists := existingURLs[urls.tarURL]; exists {
 			existingPackages[p] = struct{}{}
 		}
 	}
 
 	return existingPackages, nil
+}
+
+// Helper function to get all possible artifact URLs for a package
+func getPackageArtifactURLs(bucketName, version string) []string {
+	return []string{
+		fmt.Sprintf("gs://%s/%s.tar.gz", bucketName, version),
+		fmt.Sprintf("gs://%s/%s.tar", bucketName, version),
+	}
 }
 
 // Download makes a best-effort attempt at downloading previously cached build artifacts
@@ -305,7 +325,12 @@ func NewS3RemoteCache(bucketName string, cfg *aws.Config) (*S3RemoteCache, error
 
 // ExistingPackages returns existing cached build artifacts in the remote cache
 func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{}, error) {
-	packagesToKeys := make(map[*Package]string)
+	type keyPair struct {
+		gzKey  string
+		tarKey string
+	}
+
+	packagesToKeys := make(map[*Package]keyPair)
 	for _, p := range pkgs {
 		version, err := p.Version()
 		if err != nil {
@@ -313,7 +338,10 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 			continue
 		}
 
-		packagesToKeys[p] = filepath.Base(fmt.Sprintf("%s.tar.gz", version))
+		packagesToKeys[p] = keyPair{
+			gzKey:  filepath.Base(fmt.Sprintf("%s.tar.gz", version)),
+			tarKey: filepath.Base(fmt.Sprintf("%s.tar", version)),
+		}
 	}
 
 	if len(packagesToKeys) == 0 {
@@ -322,34 +350,55 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 	log.Debugf("Checking if %d packages exist in the remote cache using s3", len(packagesToKeys))
 
 	ch := make(chan *Package, len(packagesToKeys))
-
 	existingPackages := make(map[*Package]struct{})
+	var mu sync.Mutex // Mutex for safe concurrent map access
 	wg := sync.WaitGroup{}
 
 	ctx := context.TODO()
-	for pkg, key := range packagesToKeys {
+	for pkg, keys := range packagesToKeys {
 		wg.Add(1)
-		go func(pkg *Package, key string) {
+		go func(pkg *Package, keys keyPair) {
 			defer wg.Done()
 
-			stat, err := rs.hasObject(ctx, key)
-			if err != nil {
-				log.WithField("bucket", rs.BucketName).WithField("key", key).Debugf("Failed to check for remote cached object: %s", err)
+			// Check for .tar.gz first
+			if stat, err := rs.hasObject(ctx, keys.gzKey); err != nil {
+				log.WithField("bucket", rs.BucketName).WithField("key", keys.gzKey).
+					Debugf("Failed to check for remote cached object: %s", err)
+			} else if stat {
+				mu.Lock()
+				existingPackages[pkg] = struct{}{}
+				mu.Unlock()
+				return
 			}
-			if stat {
-				ch <- pkg
+
+			// If .tar.gz doesn't exist, check for .tar
+			if stat, err := rs.hasObject(ctx, keys.tarKey); err != nil {
+				log.WithField("bucket", rs.BucketName).WithField("key", keys.tarKey).
+					Debugf("Failed to check for remote cached object: %s", err)
+			} else if stat {
+				mu.Lock()
+				existingPackages[pkg] = struct{}{}
+				mu.Unlock()
 			}
-		}(pkg, key)
+		}(pkg, keys)
 	}
 	wg.Wait()
-	close(ch)
 
-	for p := range ch {
-		existingPackages[p] = struct{}{}
-	}
-	log.WithField("bucket", rs.BucketName).Debugf("%d/%d packages found in remote cache", len(existingPackages), len(packagesToKeys))
+	log.WithField("bucket", rs.BucketName).
+		Debugf("%d/%d packages found in remote cache", len(existingPackages), len(packagesToKeys))
 
 	return existingPackages, nil
+}
+
+// Helper method to consolidate object existence check logic
+func (rs *S3RemoteCache) checkObjectExists(ctx context.Context, key string) bool {
+	stat, err := rs.hasObject(ctx, key)
+	if err != nil {
+		log.WithField("bucket", rs.BucketName).WithField("key", key).
+			Debugf("Failed to check for remote cached object: %s", err)
+		return false
+	}
+	return stat
 }
 
 // Download makes a best-effort attempt at downloading previously cached build artifacts for the given packages
