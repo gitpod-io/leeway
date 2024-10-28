@@ -185,14 +185,6 @@ func (rs GSUtilRemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]stru
 	return existingPackages, nil
 }
 
-// Helper function to get all possible artifact URLs for a package
-func getPackageArtifactURLs(bucketName, version string) []string {
-	return []string{
-		fmt.Sprintf("gs://%s/%s.tar.gz", bucketName, version),
-		fmt.Sprintf("gs://%s/%s.tar", bucketName, version),
-	}
-}
-
 // Download makes a best-effort attempt at downloading previously cached build artifacts
 func (rs GSUtilRemoteCache) Download(dst Cache, pkgs []*Package) error {
 	fmt.Printf("☁️  downloading %d cached build artifacts\n", len(pkgs))
@@ -360,10 +352,7 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 			defer wg.Done()
 
 			// Check for .tar.gz first
-			if stat, err := rs.hasObject(ctx, keys.gzKey); err != nil {
-				log.WithField("bucket", rs.BucketName).WithField("key", keys.gzKey).
-					Debugf("Failed to check for remote cached object: %s", err)
-			} else if stat {
+			if rs.checkObjectExists(ctx, keys.gzKey) {
 				mu.Lock()
 				existingPackages[pkg] = struct{}{}
 				mu.Unlock()
@@ -371,16 +360,14 @@ func (rs *S3RemoteCache) ExistingPackages(pkgs []*Package) (map[*Package]struct{
 			}
 
 			// If .tar.gz doesn't exist, check for .tar
-			if stat, err := rs.hasObject(ctx, keys.tarKey); err != nil {
-				log.WithField("bucket", rs.BucketName).WithField("key", keys.tarKey).
-					Debugf("Failed to check for remote cached object: %s", err)
-			} else if stat {
+			if rs.checkObjectExists(ctx, keys.tarKey) {
 				mu.Lock()
 				existingPackages[pkg] = struct{}{}
 				mu.Unlock()
 			}
 		}(pkg, keys)
 	}
+
 	wg.Wait()
 
 	log.WithField("bucket", rs.BucketName).
