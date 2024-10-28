@@ -57,12 +57,31 @@ func (fsc *FilesystemCache) Location(pkg *Package) (path string, exists bool) {
 		return "", false
 	}
 
-	fn := filepath.Join(fsc.Origin, fmt.Sprintf("%s.tar.gz", version))
-	if _, err := os.Stat(fn); os.IsNotExist(err) {
-		return fn, false
+	// Check for .tar.gz file first
+	gzPath := filepath.Join(fsc.Origin, fmt.Sprintf("%s.tar.gz", version))
+	if fileExists(gzPath) {
+		return gzPath, true
 	}
 
-	return fn, true
+	// Fall back to .tar file
+	tarPath := filepath.Join(fsc.Origin, fmt.Sprintf("%s.tar", version))
+	exists = fileExists(tarPath)
+
+	return tarPath, exists
+}
+
+// fileExists checks if a file exists and is not a directory
+func fileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+
+		return false
+	}
+
+	return !info.IsDir()
 }
 
 // RemoteCache can download and upload build artifacts into a local cache
