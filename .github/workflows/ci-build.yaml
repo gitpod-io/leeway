@@ -8,6 +8,9 @@ on:
     branches:
       - 'main'
 
+env:
+  GO_VERSION: '1.23'
+
 jobs:
   check-go:
     name: Check Go code
@@ -18,10 +21,8 @@ jobs:
       - name: Setup Golang
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.4'
-      - name: Download all Go modules
-        run: |
-          go mod download
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
       - name: Check for tidyness of go.mod and go.sum
         run: |
           go mod tidy
@@ -34,17 +35,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Setup Golang
-        uses: actions/setup-go@v1
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
-      - name: Restore go build cache
-        uses: actions/cache@v1
-        with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-go-build-v1-${{ github.run_id }}
-      - name: Download all Go modules
-        run: |
-          go mod download
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
   lint-go:
     name: Lint Go code
@@ -53,7 +47,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v3
+        uses: golangci/golangci-lint-action@v4
         with:
           args: --timeout 5m
 
@@ -66,27 +60,18 @@ jobs:
       - name: Create checkout directory
         run: mkdir -p ~/go/src/github.com/gitpod-io
       - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 10
+        uses: actions/checkout@v5
       - name: Create symlink in GOPATH
         run: ln -s $(pwd) ~/go/src/github.com/gitpod-io/leeway
       - name: Setup Golang
-        uses: actions/setup-go@v1
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
-      - name: Restore go build cache
-        uses: actions/cache@v1
-        with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-go-build-v1-${{ github.run_id }}
-      - name: Download and vendor all required packages
-        run: |
-          go mod download
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
       - name: Run all unit tests
         run: go test -v -coverprofile=coverage.out $(go list ./...)
       - name: Generate code coverage artifacts
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: code-coverage
           path: coverage.out
@@ -101,22 +86,13 @@ jobs:
         run: mkdir -p ~/go/src/github.com/gitpod-io
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 10
       - name: Create symlink in GOPATH
         run: ln -s $(pwd) ~/go/src/github.com/gitpod-io/leeway
       - name: Setup Golang
-        uses: actions/setup-go@v1
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
-      - name: Restore go build cache
-        uses: actions/cache@v1
-        with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-go-build-v1-${{ github.run_id }}
-      - name: Download and vendor all required packages
-        run: |
-          go mod download
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
       - name: Run all unit tests
         run: go test -race -v $(go list ./...)
 
@@ -134,10 +110,10 @@ jobs:
         run: |
           mkdir -p test-results
       - name: Get code coverage artifiact
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v4
         with:
           name: code-coverage
       - name: Upload code coverage information to codecov.io
-        uses: codecov/codecov-action@v1
+        uses: codecov/codecov-action@v4
         with:
           file: coverage.out
