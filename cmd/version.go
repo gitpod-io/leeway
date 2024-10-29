@@ -12,7 +12,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Prints the version of this leeway build",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf(leeway.Version)
+		fmt.Println(leeway.Version)
 	},
 }
 
