@@ -1434,6 +1434,11 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	buildcmd = append(buildcmd, ".")
 	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], buildcmd)
 
+	err = cfg.EnsureRegistryExists()
+	if err != nil {
+		log.Warnf("failed to create the registries: %v", err)
+	}
+
 	if len(cfg.Image) == 0 {
 		// we don't push the image, let's export it
 		ef := strings.TrimSuffix(result, ".gz")

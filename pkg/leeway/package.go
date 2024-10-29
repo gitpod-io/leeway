@@ -551,6 +551,36 @@ func (cfg DockerPkgConfig) AdditionalSources(workspaceOrigin string) []string {
 	return []string{cfg.Dockerfile}
 }
 
+// CreateAndSign processes the Docker image: creates and signs it using the appropriate adapter
+func (cfg *DockerPkgConfig) EnsureRegistryExists() error {
+	for _, image := range cfg.Image {
+		var adapter ImageAdapter
+		var err error
+
+		if isECRImage(image) {
+			adapter, err = NewECRAdapter()
+			if err != nil {
+				return fmt.Errorf("failed to create ECR adapter: %w", err)
+			}
+		} else {
+			log.Debugf("no supported adapter for image registry for image: %s", image)
+			return nil
+		}
+
+		if err := adapter.Create(image); err != nil {
+			return fmt.Errorf("failed to create image %s: %w", image, err)
+		}
+	}
+
+	return nil
+}
+
+// isECRImage checks if the image is hosted on AWS ECR
+func isECRImage(image string) bool {
+	// AWS ECR images typically start with account-id.dkr.ecr.region.amazonaws.com
+	return strings.Contains(image, ".dkr.ecr.")
+}
+
 // GenericPkgConfig configures a generic package
 type GenericPkgConfig struct {
 	Commands [][]string `yaml:"commands"`
