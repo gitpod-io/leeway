@@ -19,8 +19,8 @@ require (
 	github.com/in-toto/in-toto-golang v0.3.3
 	github.com/karrick/godirwalk v1.17.0
 	github.com/minio/highwayhash v1.0.2
-	github.com/opencontainers/runc v1.2.0
-	github.com/opencontainers/runtime-spec v1.2.0
+	github.com/opencontainers/runc v1.1.10
+	github.com/opencontainers/runtime-spec v1.1.0
 	github.com/segmentio/analytics-go/v3 v3.3.0
 	github.com/segmentio/textio v1.2.0
 	github.com/sirupsen/logrus v1.9.3
@@ -59,7 +59,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/moby/sys/mountinfo v0.7.1 // indirect
-	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rogpeppe/go-internal v1.11.0 // indirect

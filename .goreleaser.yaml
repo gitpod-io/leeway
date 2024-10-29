@@ -12,7 +12,10 @@ builds:
       - darwin
     ldflags:
       - -s -w -X github.com/gitpod-io/leeway/pkg/leeway.Version={{.Version}}-{{.ShortCommit}}
-
+    goarch:
+      - amd64
+      - arm64
+ 
 archives:
   - format: tar.gz
     name_template: >-
