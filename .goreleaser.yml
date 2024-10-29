@@ -2,24 +2,23 @@ before:
   hooks:
     - go generate ./...
 builds:
-- env:
-  - CGO_ENABLED=0
-  ldflags:
-  - -s -w -X github.com/gitpod-io/leeway/pkg/leeway.Version={{.Version}}-{{.ShortCommit}}
+  - env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/gitpod-io/leeway/pkg/leeway.Version={{.Version}}-{{.ShortCommit}}
 
 archives:
-- replacements:
-    darwin: Darwin
-    linux: Linux
-    386: i386
-    amd64: x86_64
+  - replacements:
+      darwin: Darwin
+      linux: Linux
+      amd64: x86_64
 checksum:
-  name_template: 'checksums.txt'
+  name_template: "checksums.txt"
 snapshot:
   name_template: "{{ .Tag }}-next"
 changelog:
   sort: asc
   filters:
     exclude:
-    - '^docs:'
-    - '^test:'
+      - "^docs:"
+      - "^test:"
