@@ -687,7 +687,9 @@ func (v *PackageVariant) ResolveSources(workspace *Workspace, loc string) (incl 
 }
 
 func resolveSources(workspace *Workspace, loc string, globs []string, includeDirs bool) (res []string, err error) {
+	log.WithField("globs", globs).WithField("includeDirs", includeDirs).WithField("loc", loc).Debug("resolving globs")
 	for _, glb := range globs {
+		log.WithField("includeDirs", includeDirs).WithField("loc", loc).WithField("glob", glb).Debug("resolving glob")
 		srcs, err := doublestar.Glob(loc, glb, workspace.ShouldIgnoreSource)
 		if err != nil {
 			return nil, err

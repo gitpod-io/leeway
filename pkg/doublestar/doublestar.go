@@ -40,14 +40,27 @@ func Glob(base, pattern string, ignore IgnoreFunc) ([]string, error) {
 				return nil
 			}
 
+			if osPathname == base {
+				// skip the base directory itself
+				return nil
+			}
+
 			path := strings.TrimPrefix(osPathname, base+"/")
-			m, err := Match(pattern, path)
+			m, skipSubDirs, err := Match(pattern, path)
 			if err != nil {
 				return err
 			}
 			if m {
 				res = append(res, osPathname)
 			}
+
+			if skipSubDirs {
+				if directoryEntry.IsDir() {
+					// log.WithField("path", path).WithField("ospath", osPathname).WithField("base", base).WithField("pattern", pattern).Info("skipping subdirectory")
+					return filepath.SkipDir
+				}
+			}
+
 			return nil
 		},
 		FollowSymbolicLinks: true,
@@ -65,9 +78,9 @@ func Glob(base, pattern string, ignore IgnoreFunc) ([]string, error) {
 
 // Match matches the same patterns as filepath.Match except it can also match
 // an arbitrary number of path segments using **
-func Match(pattern, path string) (matches bool, err error) {
+func Match(pattern, path string) (matches bool, skipSubDirs bool, err error) {
 	if path == pattern {
-		return true, nil
+		return true, false, nil
 	}
 
 	var (
@@ -77,14 +90,15 @@ func Match(pattern, path string) (matches bool, err error) {
 	return match(patterns, paths)
 }
 
-func match(patterns, paths []string) (matches bool, err error) {
+func match(patterns, paths []string) (matches bool, skipSubDirs bool, err error) {
 	var pathIndex int
 	for patternIndex := 0; patternIndex < len(patterns); patternIndex++ {
 		pattern := patterns[patternIndex]
 		if patternIndex >= len(paths) {
 			// pattern is longer than path - path can't match
 			// TODO: what if the last pattern segment is **
-			return false, nil
+			// Subdirectories could still match, so we should not skip them.
+			return false, false, nil
 		}
 
 		path := paths[pathIndex]
@@ -97,7 +111,7 @@ func match(patterns, paths []string) (matches bool, err error) {
 		if pattern == "**" {
 			if patternIndex == len(patterns)-1 {
 				// this is the last pattern segment, hence we consume the remainder of the path.
-				return true, nil
+				return true, false, nil
 			}
 
 			// this segment consumes all path segments until the next pattern segment
@@ -111,21 +125,21 @@ func match(patterns, paths []string) (matches bool, err error) {
 			// we consume one path segment after the other and check if the remainder of the pattern
 			// matches the remainder of the path
 			for pi := pathIndex; pi < len(paths); pi++ {
-				m, err := match(patterns[patternIndex+1:], paths[pi:])
+				m, _, err := match(patterns[patternIndex+1:], paths[pi:])
 				if err != nil {
-					return false, err
+					return false, false, err
 				}
 				if m {
-					return true, nil
+					return true, false, nil
 				}
 			}
 			// none of the remainder matched
-			return false, nil
+			return false, false, nil
 		}
 
 		match, err := filepath.Match(pattern, path)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if match {
 			pathIndex++
@@ -133,9 +147,10 @@ func match(patterns, paths []string) (matches bool, err error) {
 		}
 
 		// did not find a match - we're done here
-		return false, nil
+		// can also skip subdirectories, as pattern and path diverge here
+		return false, true, nil
 	}
 
 	// we made it through the whole pattern, which means it matches alright
-	return true, nil
+	return true, false, nil
 }

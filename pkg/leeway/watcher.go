@@ -147,7 +147,7 @@ func (pm *pathMatcher) Matches(path string) (matches bool) {
 		return false
 	}
 	for _, p := range pm.Patterns {
-		matches, _ := doublestar.Match(p, strings.TrimPrefix(strings.TrimPrefix(path, pm.Base), "/"))
+		matches, _, _ := doublestar.Match(p, strings.TrimPrefix(strings.TrimPrefix(path, pm.Base), "/"))
 		if matches {
 			return true
 		}

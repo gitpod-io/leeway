@@ -232,7 +232,10 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		}
 		ignores = strings.Split(string(fc), "\n")
 	}
-	otherWS, err := doublestar.Glob(workspace.Origin, "**/WORKSPACE.yaml", workspace.ShouldIgnoreSource)
+	// todo ignore node_modules?
+	otherWS, err := doublestar.Glob(workspace.Origin, "**/WORKSPACE.yaml", func(path string) bool {
+		return workspace.ShouldIgnoreSource(path) || strings.Contains(path, "node_modules") || strings.Contains(path, ".git")
+	})
 	if err != nil {
 		return Workspace{}, err
 	}
@@ -444,7 +447,9 @@ func discoverComponents(ctx context.Context, workspace *Workspace, args Argument
 	defer trace.StartRegion(context.Background(), "discoverComponents").End()
 
 	path := workspace.Origin
-	pths, err := doublestar.Glob(path, "**/BUILD.yaml", workspace.ShouldIgnoreSource)
+	pths, err := doublestar.Glob(path, "**/BUILD.yaml", func(path string) bool {
+		return workspace.ShouldIgnoreSource(path) || strings.Contains(path, "node_modules") || strings.Contains(path, ".git")
+	})
 	if err != nil {
 		return nil, err
 	}
