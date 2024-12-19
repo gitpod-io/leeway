@@ -605,15 +605,6 @@ func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
 }
 
 func (p *Package) build(buildctx *buildContext) (err error) {
-	_, alreadyBuilt := buildctx.LocalCache.Location(p)
-
-	if p.Ephemeral {
-		// ephemeral packages always require a rebuild
-	} else if alreadyBuilt {
-		log.WithField("package", p.FullName()).Debug("already built")
-		return nil
-	}
-
 	doBuild := buildctx.ObtainBuildLock(p)
 	if !doBuild {
 		return nil
@@ -628,6 +619,16 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	err = p.buildDependencies(buildctx)
 	if err != nil {
 		return err
+	}
+
+	// Do this after building dependencies, to ensure all transitive dependencies are built
+	// even if the package itself is already built.
+	_, alreadyBuilt := buildctx.LocalCache.Location(p)
+	if p.Ephemeral {
+		// ephemeral packages always require a rebuild
+	} else if alreadyBuilt {
+		log.WithField("package", p.FullName()).Debug("already built")
+		return nil
 	}
 
 	pkgRep := &PackageBuildReport{
