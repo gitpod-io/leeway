@@ -621,8 +621,8 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		return err
 	}
 
-	// Do this after building dependencies, to ensure all transitive dependencies are built
-	// even if the package itself is already built.
+	// Return early if the package is already built. We're explicitly performing this check after having built all the dependencies.
+	//  Previously we had it before, but that resulted in failed builds as there's no guarantee that the cache will contain transitive dependencies; in our case they were sometimes evicted from the cache due to S3 lifecycle rules
 	_, alreadyBuilt := buildctx.LocalCache.Location(p)
 	if p.Ephemeral {
 		// ephemeral packages always require a rebuild
