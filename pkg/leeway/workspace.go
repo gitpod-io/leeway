@@ -230,7 +230,13 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		if err != nil {
 			return Workspace{}, err
 		}
-		ignores = strings.Split(string(fc), "\n")
+		split := strings.Split(string(fc), "\n")
+		for _, s := range split {
+			if s == "" {
+				continue
+			}
+			ignores = append(ignores, s)
+		}
 	}
 	otherWS, err := doublestar.Glob(workspace.Origin, "**/WORKSPACE.yaml", workspace.ShouldIgnoreSource)
 	if err != nil {

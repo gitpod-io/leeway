@@ -605,15 +605,6 @@ func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
 }
 
 func (p *Package) build(buildctx *buildContext) (err error) {
-	_, alreadyBuilt := buildctx.LocalCache.Location(p)
-
-	if p.Ephemeral {
-		// ephemeral packages always require a rebuild
-	} else if alreadyBuilt {
-		log.WithField("package", p.FullName()).Debug("already built")
-		return nil
-	}
-
 	doBuild := buildctx.ObtainBuildLock(p)
 	if !doBuild {
 		return nil
@@ -628,6 +619,16 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	err = p.buildDependencies(buildctx)
 	if err != nil {
 		return err
+	}
+
+	// Return early if the package is already built. We're explicitly performing this check after having built all the dependencies.
+	//  Previously we had it before, but that resulted in failed builds as there's no guarantee that the cache will contain transitive dependencies; in our case they were sometimes evicted from the cache due to S3 lifecycle rules
+	_, alreadyBuilt := buildctx.LocalCache.Location(p)
+	if p.Ephemeral {
+		// ephemeral packages always require a rebuild
+	} else if alreadyBuilt {
+		log.WithField("package", p.FullName()).Debug("already built")
+		return nil
 	}
 
 	pkgRep := &PackageBuildReport{
