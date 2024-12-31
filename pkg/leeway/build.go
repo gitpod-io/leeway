@@ -1648,7 +1648,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
 
 		compressArg := getCompressionArg(buildctx)
-		tarArgs := []string{"cf", result}
+		tarArgs := []string{"--sparce", "-cf", result}
 		if compressArg != "" {
 			tarArgs = append(tarArgs, compressArg)
 		}
@@ -1692,7 +1692,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	}
 
 	compressArg := getCompressionArg(buildctx)
-	tarArgs := []string{"cf", result}
+	tarArgs := []string{"--sparce", "-cf", result}
 	if compressArg != "" {
 		tarArgs = append(tarArgs, compressArg)
 	}
