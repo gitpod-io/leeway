@@ -984,7 +984,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		} else {
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				{"tar", "xfz", builtpkg, "--no-same-owner", "-C", tgt},
+				{"tar", "--sparse", "-xzf", builtpkg, "--no-same-owner", "-C", tgt},
 			}...)
 		}
 	}
@@ -1103,7 +1103,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://./%s > _mirror/content_yarn.lock", dst)},
 			{"sh", "-c", "cat yarn.lock >> _mirror/content_yarn.lock"},
 			{"yarn", "pack", "--filename", dst},
-			{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_mirror", "."},
+			{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_mirror", "."},
 		}...)
 		resultDir = "_mirror"
 	} else if cfg.Packaging == YarnLibrary {
@@ -1127,11 +1127,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			{"yarn", "pack", "--filename", pkg},
 			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
 			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
-			{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_pkg", "."},
+			{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_pkg", "."},
 		}...)
 		resultDir = "_pkg"
 	} else if cfg.Packaging == YarnArchive {
-		pkgCommands = append(pkgCommands, []string{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "."})
+		pkgCommands = append(pkgCommands, []string{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "."})
 	} else {
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
 	}
@@ -1299,7 +1299,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 
 	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"rm", "-rf", "_deps"})
 	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{
-		"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".",
+		"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".",
 	})
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], [][]string{
@@ -1396,7 +1396,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		tgt := p.BuildLayoutLocation(dep)
 		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 			{"mkdir", tgt},
-			{"tar", "xfz", fn, "--no-same-owner", "-C", tgt},
+			{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
 		}...)
 
 		if dep.Type != DockerPackage {
@@ -1486,7 +1486,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		}
 		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", base64.StdEncoding.EncodeToString(consts), dockerMetadataFile)})
 
-		archiveCmd := []string{"tar", "cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./" + dockerImageNamesFiles, "./" + dockerMetadataFile}
+		archiveCmd := []string{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./" + dockerImageNamesFiles, "./" + dockerMetadataFile}
 		if p.C.W.Provenance.Enabled {
 			archiveCmd = append(archiveCmd, "./"+provenanceBundleFilename)
 		}
@@ -1681,7 +1681,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		tgt := p.BuildLayoutLocation(dep)
 		commands = append(commands, [][]string{
 			{"mkdir", tgt},
-			{"tar", "xfz", fn, "--no-same-owner", "-C", tgt},
+			{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
 		}...)
 	}
 
