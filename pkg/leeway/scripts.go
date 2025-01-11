@@ -210,7 +210,7 @@ func (p *Script) synthesizePackagesWorkdir(buildCtx *buildContext) (path string,
 		}
 
 		var out []byte
-		cmd := exec.Command("tar", "xzf", br)
+		cmd := exec.Command("tar", "--sparse", "-xzf", br)
 		cmd.Dir = loc
 		out, err = cmd.CombinedOutput()
 		if err != nil {
