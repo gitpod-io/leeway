@@ -24,6 +24,7 @@ import (
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
 	"github.com/in-toto/in-toto-golang/in_toto"
+	"github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/common"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/sync/semaphore"
@@ -1519,7 +1520,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			if len(segs) != 2 {
 				return nil, xerrors.Errorf("docker inspect returned invalid digest: %s", inspectRes[0].ID)
 			}
-			digest := in_toto.DigestSet{
+
+			digest := common.DigestSet{
 				segs[0]: segs[1],
 			}
 
@@ -1568,7 +1570,7 @@ func dockerExportPostBuild(builddir, result string) func(sources fileset) (subj 
 
 			subj = append(subj, in_toto.Subject{
 				Name:   hdr.Name,
-				Digest: in_toto.DigestSet{"sha256": hex.EncodeToString(hash.Sum(nil))},
+				Digest: common.DigestSet{"sha256": hex.EncodeToString(hash.Sum(nil))},
 			})
 		}
 
