@@ -13,6 +13,8 @@ import (
 	"golang.org/x/xerrors"
 
 	"github.com/gitpod-io/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
 )
 
 const (
@@ -173,31 +175,32 @@ func getBuildArgs() (leeway.Arguments, error) {
 	return res, nil
 }
 
-func getRemoteCache() leeway.RemoteCache {
+func getRemoteCache() cache.RemoteCache {
 	remoteCacheBucket := os.Getenv(EnvvarRemoteCacheBucket)
 	remoteStorage := os.Getenv(EnvvarRemoteCacheStorage)
 	if remoteCacheBucket != "" {
+		cfg := &cache.RemoteConfig{
+			BucketName: remoteCacheBucket,
+		}
+
 		switch remoteStorage {
-		case "GCP":
-			return leeway.GSUtilRemoteCache{
-				BucketName: remoteCacheBucket,
-			}
 		case "AWS":
-			rc, err := leeway.NewS3RemoteCache(remoteCacheBucket, nil)
+			rc, err := remote.NewS3Cache(cfg)
 			if err != nil {
 				log.Fatalf("cannot access remote S3 cache: %v", err)
 			}
-
 			return rc
-		default:
-			return leeway.GSUtilRemoteCache{
+		case "GCP", "":
+			return &remote.GSUtilCache{
 				BucketName: remoteCacheBucket,
 			}
+		default:
+			log.Fatalf("unknown remote storage provider: %s", remoteStorage)
+			return nil
 		}
-
 	}
 
-	return leeway.NoRemoteCache{}
+	return remote.NewNoRemoteCache()
 }
 
 func addExperimentalCommand(parent, child *cobra.Command) {

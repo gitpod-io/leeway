@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
 	"github.com/in-toto/in-toto-golang/in_toto"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/mod/modfile"
@@ -253,9 +255,9 @@ func (c *buildContext) GetNewPackagesForCache() []*Package {
 }
 
 type buildOptions struct {
-	LocalCache             Cache
-	RemoteCache            RemoteCache
-	AdditionalRemoteCaches []RemoteCache
+	LocalCache             cache.LocalCache
+	RemoteCache            cache.RemoteCache
+	AdditionalRemoteCaches []cache.RemoteCache
 	Reporter               Reporter
 	DryRun                 bool
 	BuildPlan              io.Writer
@@ -276,7 +278,7 @@ type DockerBuildOptions map[string]string
 type BuildOption func(*buildOptions) error
 
 // WithLocalCache configures the local cache
-func WithLocalCache(cache Cache) BuildOption {
+func WithLocalCache(cache cache.LocalCache) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.LocalCache = cache
 		return nil
@@ -284,7 +286,7 @@ func WithLocalCache(cache Cache) BuildOption {
 }
 
 // WithRemoteCache configures the remote cache
-func WithRemoteCache(cache RemoteCache) BuildOption {
+func WithRemoteCache(cache cache.RemoteCache) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.RemoteCache = cache
 		return nil
@@ -377,7 +379,7 @@ func withBuildContext(ctx *buildContext) BuildOption {
 func applyBuildOpts(opts []BuildOption) (buildOptions, error) {
 	options := buildOptions{
 		Reporter:    NewConsoleReporter(),
-		RemoteCache: &NoRemoteCache{},
+		RemoteCache: remote.NewNoRemoteCache(),
 		DryRun:      false,
 	}
 	for _, opt := range opts {
@@ -429,13 +431,13 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToCheckRemoteCache = append(pkgsToCheckRemoteCache, p)
 	}
 
-	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(pkgsToCheckRemoteCache)
+	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(context.Background(), toPackageInterface(pkgsToCheckRemoteCache))
 	if err != nil {
 		return err
 	}
 
 	pkgsWillBeDownloaded := make(map[*Package]struct{})
-	pkg.packagesToDownload(pkgsInLocalCache, pkgsInRemoteCache, pkgsWillBeDownloaded)
+	pkg.packagesToDownload(pkgsInLocalCache, toPackageMap(pkgsInRemoteCache), pkgsWillBeDownloaded)
 
 	pkgstatus := make(map[*Package]PackageBuildStatus)
 	unresolvedArgs := make(map[string][]string)
@@ -479,7 +481,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToDownload = append(pkgsToDownload, p)
 	}
 
-	err = ctx.RemoteCache.Download(ctx.LocalCache, pkgsToDownload)
+	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, toPackageInterface(pkgsToDownload))
 	if err != nil {
 		return err
 	}
@@ -512,10 +514,10 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	buildErr := pkg.build(ctx)
-	cacheErr := ctx.RemoteCache.Upload(ctx.LocalCache, ctx.GetNewPackagesForCache())
+	cacheErr := ctx.RemoteCache.Upload(context.Background(), ctx.LocalCache, toPackageInterface(ctx.GetNewPackagesForCache()))
 
 	if buildErr != nil {
-		// We deliberately swallow the target pacakge build error as that will have already been reported using the reporter.
+		// We deliberately swallowed the target pacakge build error as that will have already been reported using the reporter.
 		return xerrors.Errorf("build failed")
 	}
 	if cacheErr != nil {
@@ -1757,4 +1759,24 @@ func codecovComponentName(name string) string {
 	reg, _ := regexp.Compile("[^a-zA-Z0-9]+")
 	component := reg.ReplaceAllString(name, "-")
 	return strings.ToLower(component + "-coverage.out")
+}
+
+// Convert *Package slice to cache.Package slice
+func toPackageInterface(pkgs []*Package) []cache.Package {
+	result := make([]cache.Package, len(pkgs))
+	for i, p := range pkgs {
+		result[i] = p
+	}
+	return result
+}
+
+// Convert map[cache.Package]struct{} to map[*Package]struct{}
+func toPackageMap(in map[cache.Package]struct{}) map[*Package]struct{} {
+	result := make(map[*Package]struct{})
+	for p := range in {
+		if pkg, ok := p.(*Package); ok {
+			result[pkg] = struct{}{}
+		}
+	}
+	return result
 }

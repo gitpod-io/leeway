@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/gitpod-io/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache/local"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -84,7 +87,7 @@ var buildCmd = &cobra.Command{
 	},
 }
 
-func serveBuildResult(ctx context.Context, addr string, localCache *leeway.FilesystemCache, pkg *leeway.Package) {
+func serveBuildResult(ctx context.Context, addr string, localCache cache.LocalCache, pkg *leeway.Package) {
 	br, exists := localCache.Location(pkg)
 	if !exists {
 		log.Fatal("build result is not in local cache despite just being built. Something's wrong with the cache.")
@@ -121,7 +124,7 @@ func serveBuildResult(ctx context.Context, addr string, localCache *leeway.Files
 	}
 }
 
-func saveBuildResult(ctx context.Context, loc string, localCache *leeway.FilesystemCache, pkg *leeway.Package) {
+func saveBuildResult(ctx context.Context, loc string, localCache cache.LocalCache, pkg *leeway.Package) {
 	br, exists := localCache.Location(pkg)
 	if !exists {
 		log.Fatal("build result is not in local cache despite just being built. Something's wrong with the cache.")
@@ -178,20 +181,21 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
 }
 
-func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemCache) {
+func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 	cm, _ := cmd.Flags().GetString("cache")
 	log.WithField("cacheMode", cm).Debug("configuring caches")
 	cacheLevel := leeway.CacheLevel(cm)
 
-	remoteCache := getRemoteCache()
+	var remoteCache cache.RemoteCache
 	switch cacheLevel {
 	case leeway.CacheNone, leeway.CacheLocal:
-		remoteCache = leeway.NoRemoteCache{}
+		remoteCache = remote.NewNoRemoteCache()
 	case leeway.CacheRemotePull:
-		remoteCache = &pullOnlyRemoteCache{C: remoteCache}
+		remoteCache = &pullOnlyRemoteCache{C: remote.NewNoRemoteCache()}
 	case leeway.CacheRemotePush:
-		remoteCache = &pushOnlyRemoteCache{C: remoteCache}
+		remoteCache = &pushOnlyRemoteCache{C: remote.NewNoRemoteCache()}
 	case leeway.CacheRemote:
+		remoteCache = remote.NewNoRemoteCache()
 	default:
 		log.Fatalf("invalid cache level: %s", cacheLevel)
 	}
@@ -212,7 +216,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 		}
 	}
 	log.WithField("location", localCacheLoc).Debug("set up local cache")
-	localCache, err := leeway.NewFilesystemCache(localCacheLoc)
+	localCache, err := local.NewFilesystemCache(localCacheLoc)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -310,33 +314,33 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, *leeway.FilesystemC
 }
 
 type pushOnlyRemoteCache struct {
-	C leeway.RemoteCache
+	C cache.RemoteCache
 }
 
-func (c *pushOnlyRemoteCache) ExistingPackages(pkgs []*leeway.Package) (map[*leeway.Package]struct{}, error) {
-	return c.C.ExistingPackages(pkgs)
+func (c *pushOnlyRemoteCache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (map[cache.Package]struct{}, error) {
+	return c.C.ExistingPackages(ctx, pkgs)
 }
 
-func (c *pushOnlyRemoteCache) Download(dst leeway.Cache, pkgs []*leeway.Package) error {
+func (c *pushOnlyRemoteCache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) error {
 	return nil
 }
 
-func (c *pushOnlyRemoteCache) Upload(src leeway.Cache, pkgs []*leeway.Package) error {
-	return c.C.Upload(src, pkgs)
+func (c *pushOnlyRemoteCache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
+	return c.C.Upload(ctx, src, pkgs)
 }
 
 type pullOnlyRemoteCache struct {
-	C leeway.RemoteCache
+	C cache.RemoteCache
 }
 
-func (c *pullOnlyRemoteCache) ExistingPackages(pkgs []*leeway.Package) (map[*leeway.Package]struct{}, error) {
-	return c.C.ExistingPackages(pkgs)
+func (c *pullOnlyRemoteCache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (map[cache.Package]struct{}, error) {
+	return c.C.ExistingPackages(ctx, pkgs)
 }
 
-func (c *pullOnlyRemoteCache) Download(dst leeway.Cache, pkgs []*leeway.Package) error {
-	return c.C.Download(dst, pkgs)
+func (c *pullOnlyRemoteCache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) error {
+	return c.C.Download(ctx, dst, pkgs)
 }
 
-func (c *pullOnlyRemoteCache) Upload(src leeway.Cache, pkgs []*leeway.Package) error {
+func (c *pullOnlyRemoteCache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
 	return nil
 }
