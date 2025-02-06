@@ -821,31 +821,10 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	if existsInRemoteCache {
 		// If the package is in the remote cache then we want to download it
 		toDownload[p] = struct{}{}
-
-		// For Generic and Docker packages we can short-circuit here.
-		// For Yarn and Go we can not, see comment below for details.
-		switch p.Type {
-		case GenericPackage, DockerPackage:
-			return
-		}
 	}
 
-	var deps []*Package
-	switch p.Type {
-	// For Go and Yarn packages we need all transitive dependencies of a component to be available on disk
-	// to perform a build.
-	//
-	// Example: components/ee/agent-smith:app depends on components/gitpod-protocol/go:lib
-	// 			components/gitpod-protocol/go:lib depends on components/gitpod-protocol:gitpod-schema
-	// 			To build components/ee/agent-smith:app it is not enough to just download components/gitpod-protocol/go:lib
-	// 			as we also need components/gitpod-protocol:gitpod-schema to be available on disk to perform the build.
-	case YarnPackage, GoPackage:
-		deps = p.GetTransitiveDependencies()
-	// For Generic and Docker packages it is sufficient to have the direct dependencies.
-	case GenericPackage, DockerPackage:
-		deps = p.GetDependencies()
-	}
-
+	// Always use transitive dependencies for all package types to ensure complete caching
+	deps := p.GetTransitiveDependencies()
 	for _, p := range deps {
 		p.packagesToDownload(inLocalCache, inRemoteCache, toDownload)
 	}
