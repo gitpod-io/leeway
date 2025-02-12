@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -966,7 +967,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		} else {
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				{"tar", "--sparse", "-xzf", builtpkg, "--no-same-owner", "-C", tgt},
+				append([]string{"tar"}, getTarArgs("-xzf", builtpkg, "--no-same-owner", "-C", tgt)...),
 			}...)
 		}
 	}
@@ -1109,11 +1110,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			{"yarn", "pack", "--filename", pkg},
 			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
 			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
-			{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_pkg", "."},
+			append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_pkg", ".")...),
 		}...)
 		resultDir = "_pkg"
 	} else if cfg.Packaging == YarnArchive {
-		pkgCommands = append(pkgCommands, []string{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "."})
+		pkgCommands = append(pkgCommands, append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".")...))
 	} else {
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
 	}
@@ -1213,7 +1214,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				{"tar", "xfz", builtpkg, "--no-same-owner", "-C", tgt},
+				append([]string{"tar"}, getTarArgs("-xzf", builtpkg, "--no-same-owner", "-C", tgt)...),
 			}...)
 
 			if dep.Type != GoPackage {
@@ -1280,9 +1281,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	}
 
 	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"rm", "-rf", "_deps"})
-	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{
-		"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".",
-	})
+	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".")...))
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], [][]string{
 			{"sh", "-c", fmt.Sprintf(`if [ -f "%v" ]; then cp -f %v %v; fi`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.buildOptions.CoverageOutputPath)},
@@ -1378,7 +1377,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		tgt := p.BuildLayoutLocation(dep)
 		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 			{"mkdir", tgt},
-			{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
+			append([]string{"tar"}, getTarArgs("-xzf", fn, "--no-same-owner", "-C", tgt)...),
 		}...)
 
 		if dep.Type != DockerPackage {
@@ -1437,11 +1436,12 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		res.PostBuild = dockerExportPostBuild(wd, ef)
 
 		var pkgcmds [][]string
+		pkgcmds = append(pkgcmds, []string{"mkdir", "-p", "_mirror"})
 		if p.C.W.Provenance.Enabled {
 			pkgcmds = append(pkgcmds, []string{"tar", "fr", ef, "./" + provenanceBundleFilename})
 		}
 
-		pkgcmds = append(pkgcmds, []string{compressor, ef})
+		pkgcmds = append(pkgcmds, append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_mirror", ".")...))
 		commands[PackageBuildPhasePackage] = pkgcmds
 	} else if len(cfg.Image) > 0 {
 		for _, img := range cfg.Image {
@@ -1454,6 +1454,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// We pushed the image which means we won't export it. We still need to place a marker the build cache.
 		// The proper thing would be to export the image, but that's rather expensive. We'll place a tar file which
 		// contains the names of the image we just pushed instead.
+		pkgCommands = append(pkgCommands, []string{"mkdir", "-p", "_mirror"})
 		for _, img := range cfg.Image {
 			pkgCommands = append(pkgCommands,
 				[]string{"sh", "-c", fmt.Sprintf("echo %s >> %s", img, dockerImageNamesFiles)},
@@ -1468,7 +1469,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		}
 		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", base64.StdEncoding.EncodeToString(consts), dockerMetadataFile)})
 
-		archiveCmd := []string{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./" + dockerImageNamesFiles, "./" + dockerMetadataFile}
+		archiveCmd := append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./"+dockerImageNamesFiles, "./"+dockerMetadataFile)...)
 		if p.C.W.Provenance.Enabled {
 			archiveCmd = append(archiveCmd, "./"+provenanceBundleFilename)
 		}
@@ -1631,7 +1632,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
 
 		compressArg := getCompressionArg(buildctx)
-		tarArgs := []string{"--sparse", "-cf", result}
+		tarArgs := getTarArgs("-cf", result)
 		if compressArg != "" {
 			tarArgs = append(tarArgs, compressArg)
 		}
@@ -1664,7 +1665,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		tgt := p.BuildLayoutLocation(dep)
 		commands = append(commands, [][]string{
 			{"mkdir", tgt},
-			{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
+			append([]string{"tar"}, getTarArgs("-xzf", fn, "--no-same-owner", "-C", tgt)...),
 		}...)
 	}
 
@@ -1675,7 +1676,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	}
 
 	compressArg := getCompressionArg(buildctx)
-	tarArgs := []string{"--sparse", "-cf", result}
+	tarArgs := getTarArgs("-cf", result)
 	if compressArg != "" {
 		tarArgs = append(tarArgs, compressArg)
 	}
@@ -1760,4 +1761,14 @@ func toPackageMap(in map[cache.Package]struct{}) map[*Package]struct{} {
 		}
 	}
 	return result
+}
+
+// getTarArgs returns the appropriate tar arguments based on the platform.
+// On Linux, it includes the --sparse option for better handling of sparse files.
+// On other platforms (like macOS), it omits the --sparse option.
+func getTarArgs(args ...string) []string {
+	if runtime.GOOS == "linux" {
+		return append([]string{"--sparse"}, args...)
+	}
+	return args
 }
