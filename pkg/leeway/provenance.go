@@ -273,10 +273,6 @@ func (p *Package) produceSLSAEnvelope(buildctx *buildContext, subjects []in_toto
 	}, nil
 }
 
-type provenanceEnvironment struct {
-	Manifest EnvironmentManifest `json:"manifest"`
-}
-
 func (p *Package) inTotoMaterials() ([]common.ProvenanceMaterial, error) {
 	res := make([]common.ProvenanceMaterial, 0, len(p.Sources))
 	for _, src := range p.Sources {
