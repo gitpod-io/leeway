@@ -16,12 +16,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
 	"github.com/in-toto/in-toto-golang/in_toto"
+	"github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/common"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/sync/semaphore"
@@ -253,9 +257,9 @@ func (c *buildContext) GetNewPackagesForCache() []*Package {
 }
 
 type buildOptions struct {
-	LocalCache             Cache
-	RemoteCache            RemoteCache
-	AdditionalRemoteCaches []RemoteCache
+	LocalCache             cache.LocalCache
+	RemoteCache            cache.RemoteCache
+	AdditionalRemoteCaches []cache.RemoteCache
 	Reporter               Reporter
 	DryRun                 bool
 	BuildPlan              io.Writer
@@ -276,7 +280,7 @@ type DockerBuildOptions map[string]string
 type BuildOption func(*buildOptions) error
 
 // WithLocalCache configures the local cache
-func WithLocalCache(cache Cache) BuildOption {
+func WithLocalCache(cache cache.LocalCache) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.LocalCache = cache
 		return nil
@@ -284,7 +288,7 @@ func WithLocalCache(cache Cache) BuildOption {
 }
 
 // WithRemoteCache configures the remote cache
-func WithRemoteCache(cache RemoteCache) BuildOption {
+func WithRemoteCache(cache cache.RemoteCache) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.RemoteCache = cache
 		return nil
@@ -377,7 +381,7 @@ func withBuildContext(ctx *buildContext) BuildOption {
 func applyBuildOpts(opts []BuildOption) (buildOptions, error) {
 	options := buildOptions{
 		Reporter:    NewConsoleReporter(),
-		RemoteCache: &NoRemoteCache{},
+		RemoteCache: remote.NewNoRemoteCache(),
 		DryRun:      false,
 	}
 	for _, opt := range opts {
@@ -429,13 +433,13 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToCheckRemoteCache = append(pkgsToCheckRemoteCache, p)
 	}
 
-	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(pkgsToCheckRemoteCache)
+	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(context.Background(), toPackageInterface(pkgsToCheckRemoteCache))
 	if err != nil {
 		return err
 	}
 
 	pkgsWillBeDownloaded := make(map[*Package]struct{})
-	pkg.packagesToDownload(pkgsInLocalCache, pkgsInRemoteCache, pkgsWillBeDownloaded)
+	pkg.packagesToDownload(pkgsInLocalCache, toPackageMap(pkgsInRemoteCache), pkgsWillBeDownloaded)
 
 	pkgstatus := make(map[*Package]PackageBuildStatus)
 	unresolvedArgs := make(map[string][]string)
@@ -479,7 +483,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToDownload = append(pkgsToDownload, p)
 	}
 
-	err = ctx.RemoteCache.Download(ctx.LocalCache, pkgsToDownload)
+	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, toPackageInterface(pkgsToDownload))
 	if err != nil {
 		return err
 	}
@@ -512,10 +516,10 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	buildErr := pkg.build(ctx)
-	cacheErr := ctx.RemoteCache.Upload(ctx.LocalCache, ctx.GetNewPackagesForCache())
+	cacheErr := ctx.RemoteCache.Upload(context.Background(), ctx.LocalCache, toPackageInterface(ctx.GetNewPackagesForCache()))
 
 	if buildErr != nil {
-		// We deliberately swallow the target pacakge build error as that will have already been reported using the reporter.
+		// We deliberately swallowed the target pacakge build error as that will have already been reported using the reporter.
 		return xerrors.Errorf("build failed")
 	}
 	if cacheErr != nil {
@@ -818,31 +822,10 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	if existsInRemoteCache {
 		// If the package is in the remote cache then we want to download it
 		toDownload[p] = struct{}{}
-
-		// For Generic and Docker packages we can short-circuit here.
-		// For Yarn and Go we can not, see comment below for details.
-		switch p.Type {
-		case GenericPackage, DockerPackage:
-			return
-		}
 	}
 
-	var deps []*Package
-	switch p.Type {
-	// For Go and Yarn packages we need all transitive dependencies of a component to be available on disk
-	// to perform a build.
-	//
-	// Example: components/ee/agent-smith:app depends on components/gitpod-protocol/go:lib
-	// 			components/gitpod-protocol/go:lib depends on components/gitpod-protocol:gitpod-schema
-	// 			To build components/ee/agent-smith:app it is not enough to just download components/gitpod-protocol/go:lib
-	// 			as we also need components/gitpod-protocol:gitpod-schema to be available on disk to perform the build.
-	case YarnPackage, GoPackage:
-		deps = p.GetTransitiveDependencies()
-	// For Generic and Docker packages it is sufficient to have the direct dependencies.
-	case GenericPackage, DockerPackage:
-		deps = p.GetDependencies()
-	}
-
+	// Always use transitive dependencies for all package types to ensure complete caching
+	deps := p.GetTransitiveDependencies()
 	for _, p := range deps {
 		p.packagesToDownload(inLocalCache, inRemoteCache, toDownload)
 	}
@@ -984,7 +967,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		} else {
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				{"tar", "--sparse", "-xzf", builtpkg, "--no-same-owner", "-C", tgt},
+				append([]string{"tar"}, getTarArgs("-xzf", builtpkg, "--no-same-owner", "-C", tgt)...),
 			}...)
 		}
 	}
@@ -1127,11 +1110,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			{"yarn", "pack", "--filename", pkg},
 			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
 			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
-			{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_pkg", "."},
+			append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_pkg", ".")...),
 		}...)
 		resultDir = "_pkg"
 	} else if cfg.Packaging == YarnArchive {
-		pkgCommands = append(pkgCommands, []string{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "."})
+		pkgCommands = append(pkgCommands, append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".")...))
 	} else {
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
 	}
@@ -1231,7 +1214,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				{"tar", "xfz", builtpkg, "--no-same-owner", "-C", tgt},
+				append([]string{"tar"}, getTarArgs("-xzf", builtpkg, "--no-same-owner", "-C", tgt)...),
 			}...)
 
 			if dep.Type != GoPackage {
@@ -1298,9 +1281,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	}
 
 	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"rm", "-rf", "_deps"})
-	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{
-		"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".",
-	})
+	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".")...))
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], [][]string{
 			{"sh", "-c", fmt.Sprintf(`if [ -f "%v" ]; then cp -f %v %v; fi`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.buildOptions.CoverageOutputPath)},
@@ -1396,7 +1377,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		tgt := p.BuildLayoutLocation(dep)
 		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 			{"mkdir", tgt},
-			{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
+			append([]string{"tar"}, getTarArgs("-xzf", fn, "--no-same-owner", "-C", tgt)...),
 		}...)
 
 		if dep.Type != DockerPackage {
@@ -1455,11 +1436,12 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		res.PostBuild = dockerExportPostBuild(wd, ef)
 
 		var pkgcmds [][]string
+		pkgcmds = append(pkgcmds, []string{"mkdir", "-p", "_mirror"})
 		if p.C.W.Provenance.Enabled {
 			pkgcmds = append(pkgcmds, []string{"tar", "fr", ef, "./" + provenanceBundleFilename})
 		}
 
-		pkgcmds = append(pkgcmds, []string{compressor, ef})
+		pkgcmds = append(pkgcmds, append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_mirror", ".")...))
 		commands[PackageBuildPhasePackage] = pkgcmds
 	} else if len(cfg.Image) > 0 {
 		for _, img := range cfg.Image {
@@ -1472,6 +1454,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// We pushed the image which means we won't export it. We still need to place a marker the build cache.
 		// The proper thing would be to export the image, but that's rather expensive. We'll place a tar file which
 		// contains the names of the image we just pushed instead.
+		pkgCommands = append(pkgCommands, []string{"mkdir", "-p", "_mirror"})
 		for _, img := range cfg.Image {
 			pkgCommands = append(pkgCommands,
 				[]string{"sh", "-c", fmt.Sprintf("echo %s >> %s", img, dockerImageNamesFiles)},
@@ -1486,7 +1469,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		}
 		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", base64.StdEncoding.EncodeToString(consts), dockerMetadataFile)})
 
-		archiveCmd := []string{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./" + dockerImageNamesFiles, "./" + dockerMetadataFile}
+		archiveCmd := append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./"+dockerImageNamesFiles, "./"+dockerMetadataFile)...)
 		if p.C.W.Provenance.Enabled {
 			archiveCmd = append(archiveCmd, "./"+provenanceBundleFilename)
 		}
@@ -1517,7 +1500,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			if len(segs) != 2 {
 				return nil, xerrors.Errorf("docker inspect returned invalid digest: %s", inspectRes[0].ID)
 			}
-			digest := in_toto.DigestSet{
+
+			digest := common.DigestSet{
 				segs[0]: segs[1],
 			}
 
@@ -1566,7 +1550,7 @@ func dockerExportPostBuild(builddir, result string) func(sources fileset) (subj 
 
 			subj = append(subj, in_toto.Subject{
 				Name:   hdr.Name,
-				Digest: in_toto.DigestSet{"sha256": hex.EncodeToString(hash.Sum(nil))},
+				Digest: common.DigestSet{"sha256": hex.EncodeToString(hash.Sum(nil))},
 			})
 		}
 
@@ -1648,7 +1632,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
 
 		compressArg := getCompressionArg(buildctx)
-		tarArgs := []string{"--sparse", "-cf", result}
+		tarArgs := getTarArgs("-cf", result)
 		if compressArg != "" {
 			tarArgs = append(tarArgs, compressArg)
 		}
@@ -1681,7 +1665,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		tgt := p.BuildLayoutLocation(dep)
 		commands = append(commands, [][]string{
 			{"mkdir", tgt},
-			{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
+			append([]string{"tar"}, getTarArgs("-xzf", fn, "--no-same-owner", "-C", tgt)...),
 		}...)
 	}
 
@@ -1692,7 +1676,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	}
 
 	compressArg := getCompressionArg(buildctx)
-	tarArgs := []string{"--sparse", "-cf", result}
+	tarArgs := getTarArgs("-cf", result)
 	if compressArg != "" {
 		tarArgs = append(tarArgs, compressArg)
 	}
@@ -1757,4 +1741,34 @@ func codecovComponentName(name string) string {
 	reg, _ := regexp.Compile("[^a-zA-Z0-9]+")
 	component := reg.ReplaceAllString(name, "-")
 	return strings.ToLower(component + "-coverage.out")
+}
+
+// Convert *Package slice to cache.Package slice
+func toPackageInterface(pkgs []*Package) []cache.Package {
+	result := make([]cache.Package, len(pkgs))
+	for i, p := range pkgs {
+		result[i] = p
+	}
+	return result
+}
+
+// Convert map[cache.Package]struct{} to map[*Package]struct{}
+func toPackageMap(in map[cache.Package]struct{}) map[*Package]struct{} {
+	result := make(map[*Package]struct{})
+	for p := range in {
+		if pkg, ok := p.(*Package); ok {
+			result[pkg] = struct{}{}
+		}
+	}
+	return result
+}
+
+// getTarArgs returns the appropriate tar arguments based on the platform.
+// On Linux, it includes the --sparse option for better handling of sparse files.
+// On other platforms (like macOS), it omits the --sparse option.
+func getTarArgs(args ...string) []string {
+	if runtime.GOOS == "linux" {
+		return append([]string{"--sparse"}, args...)
+	}
+	return args
 }
