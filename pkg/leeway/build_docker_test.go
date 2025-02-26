@@ -1025,3 +1025,321 @@ func (m *mockLocalCache) Versions() ([]string, error) {
 func (m *mockLocalCache) PackagesByVersion(version string) ([]cache.Package, error) {
 	return nil, nil
 }
+
+func TestBuildDockerTarContents(t *testing.T) {
+	// Create a temporary directory for our test
+	tmpDir, err := os.MkdirTemp("", "leeway-docker-build-tar-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a test Dockerfile
+	dockerfileContent := "FROM alpine:latest\nRUN echo 'hello world'\n"
+	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfileContent), 0644); err != nil {
+		t.Fatalf("failed to write Dockerfile: %v", err)
+	}
+
+	// Create a mock workspace
+	workspace := &Workspace{
+		Origin:     tmpDir,
+		Components: make(map[string]*Component),
+		Packages:   make(map[string]*Package),
+		Scripts:    make(map[string]*Script),
+		Provenance: WorkspaceProvenance{
+			Enabled: false,
+			SLSA:    false,
+		},
+	}
+
+	// Create a mock component
+	component := &Component{
+		W:      workspace,
+		Origin: tmpDir,
+		Name:   "test-component",
+		git: &GitInfo{
+			Commit: "test-commit",
+		},
+	}
+
+	// Add the component to the workspace
+	workspace.Components["test-component"] = component
+
+	// Create a basic Docker package
+	pkg := &Package{
+		C: component,
+		PackageInternal: PackageInternal{
+			Name: "test-pkg",
+			Type: DockerPackage,
+		},
+		Config: DockerPkgConfig{
+			Dockerfile: "Dockerfile",
+		},
+	}
+
+	// Create a test package with a fixed version
+	testPkg := newTestPackage(pkg, withVersionFn(func() (string, error) {
+		return "4956649c308a4fdefad9b1b793e86df975e8aca8", nil
+	}))
+
+	// Create build context
+	buildctx := &buildContext{
+		buildOptions: buildOptions{
+			LocalCache: &mockLocalCache{},
+		},
+		buildDir: tmpDir,
+	}
+
+	// Call the function under test
+	resultPath := filepath.Join(tmpDir, "result.tar.gz")
+	bld, err := testPkg.Package.buildDocker(buildctx, tmpDir, resultPath)
+	if err != nil {
+		t.Fatalf("buildDocker() error = %v", err)
+	}
+
+	// Execute the build commands to create the Docker tar file
+	for _, cmds := range bld.Commands {
+		for _, cmd := range cmds {
+			// Skip commands that would require Docker to be installed
+			if cmd[0] == "docker" {
+				// Instead, create a mock Docker tar file for testing
+				if len(cmd) > 2 && cmd[1] == "save" && cmd[2] == "-o" {
+					// This is the docker save command, create a mock tar file
+					mockDockerTarPath := cmd[3]
+
+					// Create a temporary tar file with some test files to simulate a Docker image
+					f, err := os.Create(mockDockerTarPath)
+					if err != nil {
+						t.Fatalf("failed to create mock Docker tar file: %v", err)
+					}
+
+					tw := tar.NewWriter(f)
+
+					// Add some test files to the tar to simulate a Docker image
+					testFiles := []struct {
+						name    string
+						content string
+					}{
+						{
+							name:    "manifest.json",
+							content: `[{"Config":"config.json","Layers":["layer1/layer.tar","layer2/layer.tar"]}]`,
+						},
+						{
+							name:    "config.json",
+							content: `{"architecture":"amd64","config":{"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]}}`,
+						},
+						{
+							name:    "layer1/layer.tar",
+							content: "layer1 content",
+						},
+						{
+							name:    "layer2/layer.tar",
+							content: "layer2 content",
+						},
+					}
+
+					for _, tf := range testFiles {
+						hdr := &tar.Header{
+							Name: tf.name,
+							Mode: 0644,
+							Size: int64(len(tf.content)),
+						}
+
+						if err := tw.WriteHeader(hdr); err != nil {
+							t.Fatalf("failed to write tar header for %s: %v", tf.name, err)
+						}
+
+						if _, err := tw.Write([]byte(tf.content)); err != nil {
+							t.Fatalf("failed to write content for %s: %v", tf.name, err)
+						}
+					}
+
+					// Close the tar writer to flush the data
+					tw.Close()
+					f.Close()
+				}
+				continue
+			}
+
+			// For tar commands, create a mock tar.gz file
+			if cmd[0] == "tar" {
+				// Find the output file path
+				var outputPath string
+				for i, arg := range cmd {
+					if arg == "-cf" && i+1 < len(cmd) {
+						outputPath = cmd[i+1]
+						break
+					}
+				}
+
+				if outputPath != "" {
+					// Create the directory structure if it doesn't exist
+					if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+						t.Fatalf("failed to create directory for tar output: %v", err)
+					}
+
+					// Create a mock tar.gz file
+					f, err := os.Create(outputPath)
+					if err != nil {
+						t.Fatalf("failed to create mock tar.gz file: %v", err)
+					}
+
+					gzw := gzip.NewWriter(f)
+					tw := tar.NewWriter(gzw)
+
+					// Add a test file to the tar.gz
+					content := "test content"
+					hdr := &tar.Header{
+						Name: "test-file.txt",
+						Mode: 0644,
+						Size: int64(len(content)),
+					}
+
+					if err := tw.WriteHeader(hdr); err != nil {
+						t.Fatalf("failed to write tar header: %v", err)
+					}
+
+					if _, err := tw.Write([]byte(content)); err != nil {
+						t.Fatalf("failed to write content: %v", err)
+					}
+
+					// Close everything to flush the data
+					tw.Close()
+					gzw.Close()
+					f.Close()
+				}
+				continue
+			}
+
+			// Execute other commands (mkdir, cp, etc.)
+			if cmd[0] == "mkdir" {
+				dirPath := cmd[len(cmd)-1]
+				if err := os.MkdirAll(dirPath, 0755); err != nil {
+					t.Fatalf("failed to create directory: %v", err)
+				}
+			} else if cmd[0] == "cp" {
+				// Skip cp commands for simplicity
+				continue
+			}
+		}
+	}
+
+	// Now verify the Docker tar file
+	if cmds, ok := bld.Commands[PackageBuildPhaseBuild]; ok && len(cmds) > 0 {
+		for _, cmd := range cmds {
+			if len(cmd) > 2 && cmd[0] == "docker" && cmd[1] == "save" && cmd[2] == "-o" {
+				dockerTarPath := cmd[3]
+
+				// Verify the Docker tar file exists
+				if _, err := os.Stat(dockerTarPath); err != nil {
+					t.Fatalf("Docker tar file does not exist: %v", err)
+				}
+
+				// Open the tar file
+				f, err := os.Open(dockerTarPath)
+				if err != nil {
+					t.Fatalf("failed to open Docker tar file: %v", err)
+				}
+				defer f.Close()
+
+				// Read the tar file
+				tr := tar.NewReader(f)
+
+				// Create a map to track which files we've found
+				foundFiles := make(map[string]bool)
+
+				// Read all entries
+				for {
+					header, err := tr.Next()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						t.Fatalf("tar.Next() error = %v", err)
+					}
+
+					// Mark this file as found
+					foundFiles[header.Name] = true
+
+					// Verify the file has content
+					if header.Size == 0 {
+						t.Errorf("file %s in Docker tar has zero size", header.Name)
+					}
+				}
+
+				// Verify we found at least some files
+				if len(foundFiles) == 0 {
+					t.Errorf("Docker tar file is empty (no files)")
+				}
+
+				// Verify we found the expected files
+				expectedFiles := []string{
+					"manifest.json",
+					"config.json",
+					"layer1/layer.tar",
+					"layer2/layer.tar",
+				}
+
+				for _, expectedFile := range expectedFiles {
+					if !foundFiles[expectedFile] {
+						t.Errorf("missing file %s in Docker tar", expectedFile)
+					}
+				}
+			}
+		}
+	}
+
+	// Verify the final tar.gz file
+	if _, err := os.Stat(resultPath); err != nil {
+		t.Fatalf("result tar.gz file does not exist: %v", err)
+	}
+
+	// Open the tar.gz file
+	f, err := os.Open(resultPath)
+	if err != nil {
+		t.Fatalf("failed to open result tar.gz file: %v", err)
+	}
+	defer f.Close()
+
+	// Read the tar.gz file
+	gzr, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("failed to create gzip reader: %v", err)
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+
+	// Create a map to track which files we've found
+	foundFiles := make(map[string]bool)
+
+	// Read all entries
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("tar.Next() error = %v", err)
+		}
+
+		// Mark this file as found
+		foundFiles[header.Name] = true
+
+		// Verify the file has content
+		if header.Size == 0 && header.Typeflag != tar.TypeDir {
+			t.Errorf("file %s in result tar.gz has zero size", header.Name)
+		}
+	}
+
+	// Verify we found at least some files
+	if len(foundFiles) == 0 {
+		t.Errorf("result tar.gz file is empty (no files)")
+	}
+
+	// Verify we found at least the test file
+	if !foundFiles["test-file.txt"] {
+		t.Errorf("missing test-file.txt in result tar.gz")
+	}
+}
