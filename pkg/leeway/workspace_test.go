@@ -306,7 +306,7 @@ func TestPackageDefinition(t *testing.T) {
 				}
 
 				tester := test.Tester[i](t, loc, state)
-				tester.Name = fmt.Sprintf("test-%003d", i)
+				tester.Name = fmt.Sprintf("test-%03d", i)
 				tester.Run()
 			}
 		})

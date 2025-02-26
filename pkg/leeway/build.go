@@ -30,7 +30,6 @@ import (
 	"golang.org/x/mod/modfile"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/xerrors"
-	"gopkg.in/yaml.v3"
 )
 
 // PkgNotBuiltErr is used when a package's dependency hasn't been built yet
@@ -87,10 +86,6 @@ const (
 	// dockerImageNamesFiles is the name of the file store in poushed Docker build artifacts
 	// which contains the names of the Docker images we just pushed
 	dockerImageNamesFiles = "imgnames.txt"
-
-	// dockerMetadataFile is the name of the file we YAML seralize the DockerPkgConfig.Metadata field to
-	// when building Docker images. We use this mechanism to produce the version manifest as part of the Gitpod build.
-	dockerMetadataFile = "metadata.yaml"
 )
 
 var (
@@ -109,7 +104,7 @@ func init() {
 var buildProcessVersions = map[PackageType]int{
 	YarnPackage:    7,
 	GoPackage:      2,
-	DockerPackage:  3,
+	DockerPackage:  4,
 	GenericPackage: 1,
 }
 
@@ -967,7 +962,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		} else {
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				append([]string{"tar"}, getTarArgs("-xzf", builtpkg, "--no-same-owner", "-C", tgt)...),
+				append([]string{"tar"}, getTarExtractArgs(builtpkg, "--no-same-owner", "-C", tgt)...),
 			}...)
 		}
 	}
@@ -1110,11 +1105,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			{"yarn", "pack", "--filename", pkg},
 			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
 			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
-			append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_pkg", ".")...),
+			append([]string{"tar"}, getTarExtractArgs(pkg, fmt.Sprintf("--use-compress-program=%v", compressor))...),
 		}...)
 		resultDir = "_pkg"
 	} else if cfg.Packaging == YarnArchive {
-		pkgCommands = append(pkgCommands, append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".")...))
+		pkgCommands = append(pkgCommands, append([]string{"tar"}, getTarExtractArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".")...))
 	} else {
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
 	}
@@ -1214,7 +1209,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				append([]string{"tar"}, getTarArgs("-xzf", builtpkg, "--no-same-owner", "-C", tgt)...),
+				append([]string{"tar"}, getTarExtractArgs(builtpkg, "--no-same-owner", "-C", tgt)...),
 			}...)
 
 			if dep.Type != GoPackage {
@@ -1377,7 +1372,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		tgt := p.BuildLayoutLocation(dep)
 		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 			{"mkdir", tgt},
-			append([]string{"tar"}, getTarArgs("-xzf", fn, "--no-same-owner", "-C", tgt)...),
+			append([]string{"tar"}, getTarExtractArgs(fn, "--no-same-owner", "-C", tgt)...),
 		}...)
 
 		if dep.Type != DockerPackage {
@@ -1416,13 +1411,29 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	buildcmd = append(buildcmd, ".")
 	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], buildcmd)
 
-	if len(cfg.Image) == 0 {
-		// we don't push the image, let's export it
-		ef := strings.TrimSuffix(result, ".gz")
-		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], [][]string{
-			{"docker", "save", "-o", ef, version},
-		}...)
+	// Ensure the result file has the correct .tar.gz extension
+	if !strings.HasSuffix(result, ".tar.gz") {
+		if strings.HasSuffix(result, ".tar") {
+			result = result + ".gz"
+		} else {
+			result = result + ".tar.gz"
+		}
 	}
+
+	// Create a temporary container ID for docker cp
+	containerID := fmt.Sprintf("leeway-tmp-%s", version)
+
+	// Create a temporary container from the image (but don't start it)
+	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], []string{"docker", "create", "--name", containerID, version})
+
+	// Create a directory for the container files
+	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], []string{"mkdir", "-p", "_container_files"})
+
+	// Copy files from the container to the local filesystem
+	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], []string{"docker", "cp", containerID + ":/", "_container_files"})
+
+	// Remove the temporary container
+	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], []string{"docker", "rm", containerID})
 
 	res = &packageBuild{
 		Commands: commands,
@@ -1430,91 +1441,74 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 	var pkgCommands [][]string
 	if len(cfg.Image) == 0 {
-		// We've already built the build artifact by exporting the archive using "docker save"
-		// At the very least we need to add the provenance bundle to that archive.
-		ef := strings.TrimSuffix(result, ".gz")
-		res.PostBuild = dockerExportPostBuild(wd, ef)
+		// We've already extracted the container files using "docker cp"
+		// At the very least we need to add the provenance bundle to the archive.
 
-		var pkgcmds [][]string
-		pkgcmds = append(pkgcmds, []string{"mkdir", "-p", "_mirror"})
-		if p.C.W.Provenance.Enabled {
-			pkgcmds = append(pkgcmds, []string{"tar", "fr", ef, "./" + provenanceBundleFilename})
+		pkgCommands = append(pkgCommands, []string{"mkdir", "-p", "_mirror"})
+
+		// Create empty imgnames.txt file
+		pkgCommands = append(pkgCommands, []string{"touch", "imgnames.txt"})
+
+		// Create empty metadata file
+		pkgCommands = append(pkgCommands, []string{"touch", "metadata.yaml"})
+
+		// Create a directory for the final container files
+		pkgCommands = append(pkgCommands, []string{"mkdir", "-p", "_container"})
+
+		// Copy the extracted files to the _container directory
+		pkgCommands = append(pkgCommands, []string{"cp", "-r", "_container_files/.", "_container/"})
+
+		// Copy the imgnames.txt and metadata.yaml files into the _container directory
+		pkgCommands = append(pkgCommands, []string{"cp", "imgnames.txt", "metadata.yaml", "_container/"})
+
+		// Use the updated result variable in the tar command
+		pkgCommands = append(pkgCommands, []string{"tar", "--sparse", "-cf", result, "-C", "_container", "."})
+		if log.IsLevelEnabled(log.DebugLevel) {
+			pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo 'DEBUG: Tar contents:' && tar -tvf %s", result)})
 		}
-
-		pkgcmds = append(pkgcmds, append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_mirror", ".")...))
-		commands[PackageBuildPhasePackage] = pkgcmds
+		commands[PackageBuildPhasePackage] = pkgCommands
 	} else if len(cfg.Image) > 0 {
 		for _, img := range cfg.Image {
-			pkgCommands = append(pkgCommands, [][]string{
-				{"docker", "tag", version, img},
-				{"docker", "push", img},
-			}...)
+			commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"docker", "tag", version, img})
+			commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"docker", "push", img})
 		}
-
-		// We pushed the image which means we won't export it. We still need to place a marker the build cache.
-		// The proper thing would be to export the image, but that's rather expensive. We'll place a tar file which
-		// contains the names of the image we just pushed instead.
-		pkgCommands = append(pkgCommands, []string{"mkdir", "-p", "_mirror"})
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"mkdir", "-p", "_mirror"})
 		for _, img := range cfg.Image {
-			pkgCommands = append(pkgCommands,
-				[]string{"sh", "-c", fmt.Sprintf("echo %s >> %s", img, dockerImageNamesFiles)},
-				[]string{"sh", "-c", fmt.Sprintf("echo built image: %s", img)},
-			)
+			commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"sh", "-c", fmt.Sprintf("echo %s >> imgnames.txt", img)})
+			commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"sh", "-c", fmt.Sprintf("echo built image: %s", img)})
 		}
-		// In addition to the imgnames.txt we also produce a file that contains the configured metadata,
-		// which provides a sensible way to add metadata to the image names.
-		consts, err := yaml.Marshal(cfg.Metadata)
+
+		// Create metadata file
+		metadataContent, err := json.Marshal(cfg.Metadata)
 		if err != nil {
-			return nil, err
+			return nil, xerrors.Errorf("cannot marshal metadata: %w", err)
 		}
-		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", base64.StdEncoding.EncodeToString(consts), dockerMetadataFile)})
+		metadataBase64 := base64.StdEncoding.EncodeToString(metadataContent)
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > metadata.yaml", metadataBase64)})
 
-		archiveCmd := append([]string{"tar"}, getTarArgs("-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./"+dockerImageNamesFiles, "./"+dockerMetadataFile)...)
-		if p.C.W.Provenance.Enabled {
-			archiveCmd = append(archiveCmd, "./"+provenanceBundleFilename)
-		}
-		pkgCommands = append(pkgCommands, archiveCmd)
+		// Create a directory for the container files
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"mkdir", "-p", "_container"})
 
-		commands[PackageBuildPhasePackage] = pkgCommands
-		res.Subjects = func() (res []in_toto.Subject, err error) {
-			defer func() {
-				if err != nil {
-					err = xerrors.Errorf("provenance get subjects: %w", err)
-				}
-			}()
-			out, err := exec.Command("docker", "inspect", version).CombinedOutput()
-			if err != nil {
-				return nil, xerrors.Errorf("cannot determine ID of the image we just built")
-			}
-			var inspectRes []struct {
-				ID string `json:"Id"`
-			}
-			err = json.Unmarshal(out, &inspectRes)
-			if err != nil {
-				return nil, xerrors.Errorf("cannot unmarshal Docker inspect response \"%s\": %w", string(out), err)
-			}
-			if len(inspectRes) == 0 {
-				return nil, xerrors.Errorf("did not receive a proper Docker inspect response")
-			}
-			segs := strings.Split(inspectRes[0].ID, ":")
-			if len(segs) != 2 {
-				return nil, xerrors.Errorf("docker inspect returned invalid digest: %s", inspectRes[0].ID)
-			}
+		// Copy the extracted files to the _container directory
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"cp", "-r", "_container_files/.", "_container/"})
 
-			digest := common.DigestSet{
-				segs[0]: segs[1],
-			}
+		// Copy the imgnames.txt and metadata.yaml files into the _container directory
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"cp", "imgnames.txt", "metadata.yaml", "_container/"})
 
-			res = make([]in_toto.Subject, 0, len(cfg.Image))
-			for _, tag := range cfg.Image {
-				res = append(res, in_toto.Subject{
-					Name:   tag,
-					Digest: digest,
-				})
-			}
+		// Create the final tar.gz file with the container files, imgnames.txt, and metadata.yaml
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], append([]string{"tar", "--sparse", "-cf", result}, getTarArgs("-C", "_container", ".")...))
+	} else {
+		// Create a directory for the container files
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"mkdir", "-p", "_container"})
 
-			return res, nil
-		}
+		// Copy the extracted files to the _container directory
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"cp", "-r", "_container_files/.", "_container/"})
+
+		// Copy the imgnames.txt and metadata.yaml files into the _container directory
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"cp", "imgnames.txt", "metadata.yaml", "_container/"})
+
+		// Create the final tar.gz file with the container files, imgnames.txt, and metadata.yaml
+		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], append([]string{"tar", "--sparse", "-cf", result}, getTarArgs("-C", "_container", ".")...))
 	}
 
 	return res, nil
@@ -1524,11 +1518,24 @@ func dockerExportPostBuild(builddir, result string) func(sources fileset) (subj 
 	return func(sources fileset) (subj []in_toto.Subject, absResultDir string, err error) {
 		f, err := os.Open(result)
 		if err != nil {
-			return
+			return nil, builddir, err
 		}
 		defer f.Close()
 
-		archive := tar.NewReader(f)
+		var archive *tar.Reader
+		if strings.HasSuffix(result, ".gz") || strings.HasSuffix(result, ".tar.gz") {
+			// Handle gzipped tar files
+			gzr, err := gzip.NewReader(f)
+			if err != nil {
+				return nil, builddir, err
+			}
+			defer gzr.Close()
+			archive = tar.NewReader(gzr)
+		} else {
+			// Handle regular tar files
+			archive = tar.NewReader(f)
+		}
+
 		for {
 			var hdr *tar.Header
 			hdr, err = archive.Next()
@@ -1536,7 +1543,7 @@ func dockerExportPostBuild(builddir, result string) func(sources fileset) (subj 
 				break
 			}
 			if err != nil {
-				return
+				return nil, builddir, err
 			}
 			if hdr.Typeflag != tar.TypeReg {
 				continue
@@ -1573,13 +1580,26 @@ func extractImageNameFromCache(pkgName, cacheBundleFN string) (imgname string, e
 	}
 	defer f.Close()
 
-	gzin, err := gzip.NewReader(f)
-	if err != nil {
-		return "", err
+	var tarin *tar.Reader
+	if strings.HasSuffix(cacheBundleFN, ".gz") || strings.HasSuffix(cacheBundleFN, ".tar.gz") {
+		// Try to handle gzipped tar files
+		gzin, err := gzip.NewReader(f)
+		if err != nil {
+			// If we get an error trying to read as gzip, try to read as a regular tar file
+			// This handles the case where a file has a .tar.gz extension but is not actually gzipped
+			if _, err := f.Seek(0, 0); err != nil {
+				return "", err
+			}
+			tarin = tar.NewReader(f)
+		} else {
+			defer gzin.Close()
+			tarin = tar.NewReader(gzin)
+		}
+	} else {
+		// Handle regular tar files
+		tarin = tar.NewReader(f)
 	}
-	defer gzin.Close()
 
-	tarin := tar.NewReader(gzin)
 	for {
 		hdr, err := tarin.Next()
 		if errors.Is(err, io.EOF) {
@@ -1632,7 +1652,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
 
 		compressArg := getCompressionArg(buildctx)
-		tarArgs := getTarArgs("-cf", result)
+		tarArgs := getTarExtractArgs("-cf", result)
 		if compressArg != "" {
 			tarArgs = append(tarArgs, compressArg)
 		}
@@ -1645,6 +1665,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 					PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
 				},
 			}, nil
+
 		}
 
 		tarArgs = append(tarArgs, "--files-from", "/dev/null")
@@ -1665,7 +1686,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		tgt := p.BuildLayoutLocation(dep)
 		commands = append(commands, [][]string{
 			{"mkdir", tgt},
-			append([]string{"tar"}, getTarArgs("-xzf", fn, "--no-same-owner", "-C", tgt)...),
+			append([]string{"tar"}, getTarExtractArgs(fn, "--no-same-owner", "-C", tgt)...),
 		}...)
 	}
 
@@ -1676,7 +1697,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	}
 
 	compressArg := getCompressionArg(buildctx)
-	tarArgs := getTarArgs("-cf", result)
+	tarArgs := getTarExtractArgs("-cf", result)
 	if compressArg != "" {
 		tarArgs = append(tarArgs, compressArg)
 	}
@@ -1763,12 +1784,70 @@ func toPackageMap(in map[cache.Package]struct{}) map[*Package]struct{} {
 	return result
 }
 
+// getTarExtractArgs returns the appropriate tar arguments for extracting a file
+// It checks if the file is actually gzipped before adding the -z option
+func getTarExtractArgs(filename string, otherArgs ...string) []string {
+	args := []string{}
+
+	// Add --sparse on Linux
+	if runtime.GOOS == "linux" {
+		args = append(args, "--sparse")
+	}
+
+	// Check if this is a create operation (-cf)
+	if len(filename) >= 3 && filename == "-cf" && len(otherArgs) > 0 {
+		// This is a create operation, not an extract operation
+		args = append(args, "-c", "-f", otherArgs[0])
+		// Add any other arguments after the first one (which is the filename)
+		if len(otherArgs) > 1 {
+			args = append(args, otherArgs[1:]...)
+		}
+		return args
+	}
+
+	// Start with -x
+	args = append(args, "-x")
+
+	// Add -z if the file is actually gzipped
+	if isGzipped(filename) {
+		args = append(args, "-z")
+	}
+
+	// Add -f followed by the filename
+	args = append(args, "-f", filename)
+
+	// Add any other arguments
+	args = append(args, otherArgs...)
+
+	return args
+}
+
+// isGzipped checks if a file is actually gzipped by trying to read its header
+func isGzipped(filename string) bool {
+	f, err := os.Open(filename)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	// Try to create a gzip reader
+	_, err = gzip.NewReader(f)
+	return err == nil
+}
+
 // getTarArgs returns the appropriate tar arguments based on the platform.
 // On Linux, it includes the --sparse option for better handling of sparse files.
 // On other platforms (like macOS), it omits the --sparse option.
 func getTarArgs(args ...string) []string {
+	result := []string{}
+
+	// Add --sparse on Linux
 	if runtime.GOOS == "linux" {
-		return append([]string{"--sparse"}, args...)
+		result = append(result, "--sparse")
 	}
-	return args
+
+	// Add all other arguments
+	result = append(result, args...)
+
+	return result
 }

@@ -21,6 +21,12 @@ while [[ $# -gt 0 ]]; do
       shift # past argument
       shift # past value
       ;;
+    --build-arg)
+      # Print build arguments to stderr for test verification
+      echo "$2" >&2
+      shift # past argument
+      shift # past value
+      ;;
     *)
       POSITIONAL_ARGS+=("$1") # save positional arg
       shift # past argument
@@ -67,6 +73,14 @@ func TestBuildDockerDeps(t *testing.T) {
 						Files: map[string]string{
 							"pkg0.Dockerfile": "FROM alpine:latest",
 							"pkg1.Dockerfile": "FROM ${DEP_COMP__PKG0}",
+							"debug.sh": `#!/bin/bash
+echo "DEBUG: Listing cache directory"
+find /tmp/leeway* -type f -name "*.tar*" | xargs ls -la
+echo "DEBUG: Examining tar.gz contents"
+find /tmp/leeway* -type f -name "*.tar.gz" | xargs -I{} tar -tvf {} | grep imgnames.txt
+echo "DEBUG: Examining tar contents"
+find /tmp/leeway* -type f -name "*.tar" | xargs -I{} tar -tvf {} | grep imgnames.txt
+`,
 						},
 						Packages: []leeway.Package{
 							{
@@ -84,6 +98,11 @@ func TestBuildDockerDeps(t *testing.T) {
 									Name:         "pkg1",
 									Type:         leeway.DockerPackage,
 									Dependencies: []string{":pkg0"},
+									PreparationCommands: [][]string{
+										{"sh", "-c", "echo '#!/bin/bash\necho \"DEBUG: Listing build directory contents\" > /tmp/debug_output.txt\nls -la >> /tmp/debug_output.txt\necho \"DEBUG: Listing comp--pkg0 directory contents\" >> /tmp/debug_output.txt\nls -la comp--pkg0 >> /tmp/debug_output.txt\necho \"DEBUG: Contents of comp--pkg0/imgnames.txt\" >> /tmp/debug_output.txt\ncat comp--pkg0/imgnames.txt >> /tmp/debug_output.txt\necho \"DEBUG: Contents of comp--pkg0/metadata.yaml\" >> /tmp/debug_output.txt\ncat comp--pkg0/metadata.yaml >> /tmp/debug_output.txt\necho \"DEBUG: Listing cache directory\" >> /tmp/debug_output.txt\nfind /tmp/leeway* -type f -name \"*.tar*\" | xargs ls -la >> /tmp/debug_output.txt\necho \"DEBUG: Examining tar.gz contents\" >> /tmp/debug_output.txt\nfind /tmp/leeway* -type f -name \"*.tar.gz\" | xargs -I{} tar -tvf {} | grep imgnames.txt >> /tmp/debug_output.txt\necho \"DEBUG: Examining tar contents\" >> /tmp/debug_output.txt\nfind /tmp/leeway* -type f -name \"*.tar\" | xargs -I{} tar -tvf {} | grep imgnames.txt >> /tmp/debug_output.txt\ncat /tmp/debug_output.txt' > debug.sh"},
+										{"chmod", "+x", "debug.sh"},
+										{"sh", "debug.sh"},
+									},
 								},
 								Config: leeway.DockerPkgConfig{
 									Dockerfile: "pkg1.Dockerfile",

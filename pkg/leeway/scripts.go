@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -122,25 +123,34 @@ func (p *Script) Run(opts ...BuildOption) error {
 		}
 	}
 
-	tdir, deplocs, err := p.synthesizePackagesWorkdir(buildCtx)
+	// Create the packages workdir for PATH and dependencies
+	packagesWd, err := p.synthesizePackagesWorkdir(p.dependencies, buildCtx)
 	if err != nil {
 		return err
 	}
 
-	paths := make([]string, 0, len(deplocs))
-	for _, pth := range deplocs {
-		paths = append(paths, pth)
+	// Determine the actual working directory based on WorkdirLayout
+	var wd string
+	if p.WorkdirLayout == WorkdirOrigin {
+		// Use the original component location
+		wd = p.C.Origin
+	} else {
+		// Use the synthesized packages workdir
+		wd = packagesWd
 	}
 
-	var wd string
-	switch p.WorkdirLayout {
-	case WorkdirPackages:
-		wd = tdir
-	case WorkdirOrigin:
-		fallthrough
-	default:
-		wd = p.C.Origin
+	// Build a list of paths to add to PATH
+	var pathsToAdd []string
+	pathsToAdd = append(pathsToAdd, packagesWd)
+
+	// Add each dependency's directory to the PATH
+	for _, dep := range p.dependencies {
+		depPath := filepath.Join(packagesWd, dep.FilesystemSafeName())
+		pathsToAdd = append(pathsToAdd, depPath)
 	}
+
+	// Join all paths with colon
+	pathAddition := strings.Join(pathsToAdd, ":")
 
 	var (
 		env = append(os.Environ(), p.Environment...)
@@ -155,14 +165,11 @@ func (p *Script) Run(opts ...BuildOption) error {
 		if strings.TrimPrefix(e, "PATH=") != "" {
 			e += ":"
 		}
-		e += strings.Join(paths, ":")
+		e += pathAddition
 		env[i] = e
 	}
 	if !pa {
-		env = append(env, fmt.Sprintf("PATH=%s", strings.Join(paths, ":")))
-	}
-	for n, pth := range deplocs {
-		env = append(env, fmt.Sprintf("%s=%s", strings.ToUpper(strings.ReplaceAll(n, "-", "_")), pth))
+		env = append(env, fmt.Sprintf("PATH=%s", pathAddition))
 	}
 
 	// execute script
@@ -189,39 +196,51 @@ func findUnresolvedArgumentsInScript(script *Script) ([]string, error) {
 	return res, nil
 }
 
-func (p *Script) synthesizePackagesWorkdir(buildCtx *buildContext) (path string, bins map[string]string, err error) {
-	path, err = os.MkdirTemp(buildCtx.buildDir, fmt.Sprintf("script-%s-*", p.FilesystemSafeName()))
+func (p *Script) synthesizePackagesWorkdir(deps []*Package, buildctx *buildContext) (string, error) {
+	wd, err := os.MkdirTemp("", "leeway-script-*")
 	if err != nil {
-		return
+		return "", err
 	}
 
-	bins = make(map[string]string, len(p.dependencies))
-	for _, dep := range p.dependencies {
-		br, exists := buildCtx.LocalCache.Location(dep)
+	for _, dep := range deps {
+		br, exists := buildctx.LocalCache.Location(dep)
 		if !exists {
-			err = xerrors.Errorf("dependency %s is not built", dep.FullName())
-			return
+			return "", PkgNotBuiltErr{dep}
 		}
 
-		loc := filepath.Join(path, dep.FilesystemSafeName())
-		err = os.MkdirAll(loc, 0755)
+		tgt := filepath.Join(wd, dep.FilesystemSafeName())
+		err = os.MkdirAll(tgt, 0755)
 		if err != nil {
-			return
+			return "", err
 		}
 
-		var out []byte
-		cmd := exec.Command("tar", getTarArgs("-xzf", br)...)
-		cmd.Dir = loc
-		out, err = cmd.CombinedOutput()
+		// Construct tar command arguments directly
+		args := []string{}
+
+		// Add --sparse on Linux
+		if runtime.GOOS == "linux" {
+			args = append(args, "--sparse")
+		}
+
+		// Extract operation
+		args = append(args, "-x", "-f", br)
+
+		// Add -z if the file is gzipped
+		if strings.HasSuffix(br, ".gz") || strings.HasSuffix(br, ".tgz") {
+			args = append(args, "-z")
+		}
+
+		cmd := exec.Command("tar", args...)
+		cmd.Dir = tgt
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		err = cmd.Run()
 		if err != nil {
-			err = xerrors.Errorf("cannot unarchive build result for %s: %s", dep.FullName(), string(out))
-			return
+			return "", err
 		}
-
-		bins[dep.FilesystemSafeName()] = loc
 	}
 
-	return
+	return wd, nil
 }
 
 func executeBashScript(script string, wd string, env []string) error {
