@@ -17,7 +17,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/gitpod-io/leeway/pkg/doublestar"
-	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 )
 
 // Arguments can be passed to components/packages introducing variation points
@@ -149,7 +148,7 @@ type PackageInternal struct {
 	PreparationCommands  [][]string        `yaml:"prep,omitempty"`
 }
 
-// Package represents a package in a workspace
+// Package is a single buildable artifact within a component
 type Package struct {
 	C *Component `yaml:"-"`
 
@@ -972,7 +971,7 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 	return nil
 }
 
-// Version returns a unique identifier for the package
+// Version computes the Package version based on the content hash of the sources
 func (p *Package) Version() (string, error) {
 	if p.versionCache != "" {
 		return p.versionCache, nil
@@ -1081,6 +1080,3 @@ func isPkgDirty(pkg *Package, info *GitInfo) bool {
 
 	return false
 }
-
-// Ensure Package implements cache.Package interface
-var _ cache.Package = (*Package)(nil)

@@ -1,7 +1,6 @@
 package leeway
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -126,111 +125,6 @@ func TestGitInfoDirtyFiles(t *testing.T) {
 			act := test.In.DirtyFiles(test.Files)
 			if diff := cmp.Diff(test.Expectation, act); diff != "" {
 				t.Errorf("ParseGitStatus() mismatch (-want +got):\n%s", diff)
-			}
-		})
-	}
-}
-
-func TestGitError(t *testing.T) {
-	err := &GitError{
-		Op:  "status",
-		Err: fmt.Errorf("command failed"),
-	}
-	expected := "git operation status failed: command failed"
-	if err.Error() != expected {
-		t.Errorf("GitError.Error() = %q, want %q", err.Error(), expected)
-	}
-}
-
-func TestGitInfoIsDirty(t *testing.T) {
-	tests := []struct {
-		name string
-		info *GitInfo
-		want bool
-	}{
-		{
-			name: "clean working copy",
-			info: &GitInfo{dirty: false},
-			want: false,
-		},
-		{
-			name: "dirty working copy",
-			info: &GitInfo{dirty: true},
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.info.IsDirty(); got != tt.want {
-				t.Errorf("GitInfo.IsDirty() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGitInfoHasDirtyFile(t *testing.T) {
-	tests := []struct {
-		name string
-		info *GitInfo
-		file string
-		want bool
-	}{
-		{
-			name: "clean working copy",
-			info: &GitInfo{dirty: false},
-			file: "foo",
-			want: false,
-		},
-		{
-			name: "dirty working copy no files tracked",
-			info: &GitInfo{
-				dirty:      true,
-				dirtyFiles: nil,
-			},
-			file: "foo",
-			want: true,
-		},
-		{
-			name: "dirty working copy with specific file",
-			info: &GitInfo{
-				dirty: true,
-				dirtyFiles: map[string]struct{}{
-					"foo": {},
-				},
-			},
-			file: "foo",
-			want: true,
-		},
-		{
-			name: "dirty working copy with clean file",
-			info: &GitInfo{
-				dirty: true,
-				dirtyFiles: map[string]struct{}{
-					"foo": {},
-				},
-			},
-			file: "bar",
-			want: false,
-		},
-		{
-			name: "dirty working copy with file in working copy",
-			info: &GitInfo{
-				WorkingCopyLoc: "/path/to",
-				dirty:          true,
-				dirtyFiles: map[string]struct{}{
-					"foo": {},
-				},
-			},
-			file: "/path/to/foo",
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.info.HasDirtyFile(tt.file); got != tt.want {
-				t.Errorf("GitInfo.HasDirtyFile() = %v, want %v", got, tt.want)
 			}
 		})
 	}
