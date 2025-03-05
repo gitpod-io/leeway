@@ -17,8 +17,6 @@ import (
 	"time"
 
 	"github.com/in-toto/in-toto-golang/in_toto"
-	"github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/common"
-	slsa "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 	"sigs.k8s.io/bom/pkg/provenance"
@@ -165,8 +163,9 @@ func (p *Package) produceSLSAEnvelope(buildctx *buildContext, subjects []in_toto
 	}
 
 	var (
-		now  = time.Now()
-		pred = provenance.NewSLSAPredicate()
+		recipeMaterial *int
+		now            = time.Now()
+		pred           = provenance.NewSLSAPredicate()
 	)
 	if p.C.Git().DirtyFiles(p.Sources) {
 		files, err := p.inTotoMaterials()
@@ -197,9 +196,11 @@ func (p *Package) produceSLSAEnvelope(buildctx *buildContext, subjects []in_toto
 			if err != nil {
 				return nil, err
 			}
-			files = append(files, common.ProvenanceMaterial{
+			pos := len(files)
+			recipeMaterial = &pos
+			files = append(files, in_toto.ProvenanceMaterial{
 				URI:    buildYAML,
-				Digest: common.DigestSet{"sha256": hash},
+				Digest: in_toto.DigestSet{"sha256": hash},
 			})
 		}
 		if !foundWorkspaceYAML {
@@ -207,25 +208,27 @@ func (p *Package) produceSLSAEnvelope(buildctx *buildContext, subjects []in_toto
 			if err != nil {
 				return nil, err
 			}
-			files = append(files, common.ProvenanceMaterial{
+			files = append(files, in_toto.ProvenanceMaterial{
 				URI:    workspaceYAML,
-				Digest: common.DigestSet{"sha256": hash},
+				Digest: in_toto.DigestSet{"sha256": hash},
 			})
 		}
 
 		pred.Materials = files
 	} else {
-		pred.Materials = []common.ProvenanceMaterial{
-			{URI: "git+" + git.Origin, Digest: common.DigestSet{"sha256": git.Commit}},
+		pred.Materials = []in_toto.ProvenanceMaterial{
+			{URI: "git+" + git.Origin, Digest: in_toto.DigestSet{"sha256": git.Commit}},
 		}
+		zero := 0
+		recipeMaterial = &zero
 	}
 
-	pred.Builder = common.ProvenanceBuilder{
+	pred.Builder = in_toto.ProvenanceBuilder{
 		ID: fmt.Sprintf("%s:%s@sha256:%s", ProvenanceBuilderID, Version, buildctx.leewayHash),
 	}
-	pred.Metadata = &slsa.ProvenanceMetadata{
-		Completeness: slsa.ProvenanceComplete{
-			Parameters:  true,
+	pred.Metadata = &in_toto.ProvenanceMetadata{
+		Completeness: in_toto.ProvenanceComplete{
+			Arguments:   true,
 			Environment: false,
 			Materials:   true,
 		},
@@ -233,23 +236,18 @@ func (p *Package) produceSLSAEnvelope(buildctx *buildContext, subjects []in_toto
 		BuildStartedOn:  &buildStarted,
 		BuildFinishedOn: &now,
 	}
-	pred.Invocation = slsa.ProvenanceInvocation{
-		ConfigSource: slsa.ConfigSource{
-			URI:        fmt.Sprintf("https://github.com/gitpod-io/leeway/build@%s:%d", p.Type, buildProcessVersions[p.Type]),
-			Digest:     map[string]string{},
-			EntryPoint: p.FullName(),
-		},
-		Parameters: map[string]interface{}{
-			"args": os.Args,
-		},
-		Environment: map[string]interface{}{
-			"manifest": p.C.W.EnvironmentManifest,
+	pred.Recipe = in_toto.ProvenanceRecipe{
+		Type:              fmt.Sprintf("https://github.com/gitpod-io/leeway/build@%s:%d", p.Type, buildProcessVersions[p.Type]),
+		Arguments:         os.Args,
+		EntryPoint:        p.FullName(),
+		DefinedInMaterial: recipeMaterial,
+		Environment: provenanceEnvironment{
+			Manifest: p.C.W.EnvironmentManifest,
 		},
 	}
 
 	stmt := provenance.NewSLSAStatement()
 	stmt.Subject = subjects
-	stmt.PredicateType = slsa.PredicateSLSAProvenance
 	stmt.Predicate = pred
 
 	payload, err := json.MarshalIndent(stmt, "", "  ")
@@ -273,8 +271,12 @@ func (p *Package) produceSLSAEnvelope(buildctx *buildContext, subjects []in_toto
 	}, nil
 }
 
-func (p *Package) inTotoMaterials() ([]common.ProvenanceMaterial, error) {
-	res := make([]common.ProvenanceMaterial, 0, len(p.Sources))
+type provenanceEnvironment struct {
+	Manifest EnvironmentManifest `json:"manifest"`
+}
+
+func (p *Package) inTotoMaterials() ([]in_toto.ProvenanceMaterial, error) {
+	res := make([]in_toto.ProvenanceMaterial, 0, len(p.Sources))
 	for _, src := range p.Sources {
 		skip, err := shouldSkipSource(src)
 		if err != nil {
@@ -290,9 +292,9 @@ func (p *Package) inTotoMaterials() ([]common.ProvenanceMaterial, error) {
 			return nil, err
 		}
 
-		res = append(res, common.ProvenanceMaterial{
+		res = append(res, in_toto.ProvenanceMaterial{
 			URI: materialFileURI(src, p.C.W.Origin),
-			Digest: map[string]string{
+			Digest: in_toto.DigestSet{
 				"sha256": hash,
 			},
 		})
@@ -384,7 +386,7 @@ func (fset fileset) Subjects(base string) ([]in_toto.Subject, error) {
 
 		res = append(res, in_toto.Subject{
 			Name: src,
-			Digest: common.DigestSet{
+			Digest: in_toto.DigestSet{
 				"sha256": fmt.Sprintf("%x", hash.Sum(nil)),
 			},
 		})
