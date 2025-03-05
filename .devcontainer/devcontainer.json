@@ -1,6 +1,13 @@
 {
 	"name": "leeway",
-	"image": "mcr.microsoft.com/devcontainers/go:1.22",
-	// Features to add to the dev container. More info: https://containers.dev/features.
-	"features": {}
+	"build": {
+		"context": "..",
+		"dockerfile": "../.gitpod.Dockerfile"
+	},
+	"runArgs": [
+		"--privileged",
+		"--security-opt=seccomp=unconfined",
+		"--network=host"
+	],
+	"containerUser": "root"
 }
