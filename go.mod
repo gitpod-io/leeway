@@ -3,11 +3,10 @@ module github.com/gitpod-io/leeway
 go 1.23
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.32.3
-	github.com/aws/aws-sdk-go-v2/config v1.28.1
-	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.35
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.66.2
-	github.com/aws/aws-sdk-go-v2/service/sts v1.32.3
+	github.com/aws/aws-sdk-go-v2 v1.36.1
+	github.com/aws/aws-sdk-go-v2/config v1.29.6
+	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.59
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.75.4
 	github.com/creack/pty v1.1.23
 	github.com/disiqueira/gotree v1.0.0
 	github.com/dop251/goja v0.0.0-20241024094426-79f3a7efcdbd
@@ -16,7 +15,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gookit/color v1.5.4
 	github.com/imdario/mergo v0.3.13
-	github.com/in-toto/in-toto-golang v0.3.3
+	github.com/in-toto/in-toto-golang v0.9.0
 	github.com/karrick/godirwalk v1.17.0
 	github.com/minio/highwayhash v1.0.2
 	github.com/opencontainers/runc v1.1.10
