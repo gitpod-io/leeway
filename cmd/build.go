@@ -344,29 +344,36 @@ func (c *pullOnlyRemoteCache) Upload(ctx context.Context, src cache.LocalCache, 
 	return nil
 }
 
-func getRemoteCache() leeway.RemoteCache {
+func getRemoteCache() cache.RemoteCache {
 	remoteCacheBucket := os.Getenv(EnvvarRemoteCacheBucket)
 	remoteStorage := os.Getenv(EnvvarRemoteCacheStorage)
 	if remoteCacheBucket != "" {
 		switch remoteStorage {
 		case "GCP":
-			return leeway.GSUtilRemoteCache{
-				BucketName: remoteCacheBucket,
-			}
+			return remote.NewGSUtilCache(
+				&cache.RemoteConfig{
+					BucketName: remoteCacheBucket,
+				},
+			)
 		case "AWS":
-			rc, err := leeway.NewS3RemoteCache(remoteCacheBucket, nil)
+			rc, err := remote.NewS3Cache(
+				&cache.RemoteConfig{
+					BucketName: remoteCacheBucket,
+				},
+			)
 			if err != nil {
 				log.Fatalf("cannot access remote S3 cache: %v", err)
 			}
 
 			return rc
 		default:
-			return leeway.GSUtilRemoteCache{
-				BucketName: remoteCacheBucket,
-			}
+			return remote.NewGSUtilCache(
+				&cache.RemoteConfig{
+					BucketName: remoteCacheBucket,
+				},
+			)
 		}
-
 	}
 
-	return leeway.NoRemoteCache{}
+	return remote.NewNoRemoteCache()
 }
