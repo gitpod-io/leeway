@@ -435,7 +435,15 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 
 	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(context.Background(), toPackageInterface(pkgsToCheckRemoteCache))
 	if err != nil {
-		return err
+		log.WithError(err).Warn("failed to check remote cache, proceeding with local build")
+		pkgsInRemoteCache = make(map[cache.Package]struct{})
+	}
+
+	// Log packages that will be built locally
+	for _, p := range pkgsToCheckRemoteCache {
+		if _, exists := pkgsInRemoteCache[p]; !exists {
+			log.WithField("package", p.FullName()).Debug("package not found in remote cache, will build locally")
+		}
 	}
 
 	pkgsWillBeDownloaded := make(map[*Package]struct{})

@@ -1,0 +1,434 @@
+package remote
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
+	"github.com/google/go-cmp/cmp"
+)
+
+// mockS3Client implements a mock S3 client for testing
+type mockS3Client struct {
+	headObjectFunc func(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	getObjectFunc  func(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	putObjectFunc  func(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+}
+
+func (m *mockS3Client) HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	if m.headObjectFunc != nil {
+		return m.headObjectFunc(ctx, params, optFns...)
+	}
+	return nil, fmt.Errorf("HeadObject not implemented")
+}
+
+func (m *mockS3Client) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	if m.getObjectFunc != nil {
+		return m.getObjectFunc(ctx, params, optFns...)
+	}
+	return nil, fmt.Errorf("GetObject not implemented")
+}
+
+func (m *mockS3Client) PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	if m.putObjectFunc != nil {
+		return m.putObjectFunc(ctx, params, optFns...)
+	}
+	return nil, fmt.Errorf("PutObject not implemented")
+}
+
+func (m *mockS3Client) AbortMultipartUpload(ctx context.Context, params *s3.AbortMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
+	return &s3.AbortMultipartUploadOutput{}, nil
+}
+
+func (m *mockS3Client) CompleteMultipartUpload(ctx context.Context, params *s3.CompleteMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+	return &s3.CompleteMultipartUploadOutput{}, nil
+}
+
+func (m *mockS3Client) CreateMultipartUpload(ctx context.Context, params *s3.CreateMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+	return &s3.CreateMultipartUploadOutput{}, nil
+}
+
+func (m *mockS3Client) UploadPart(ctx context.Context, params *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+	return &s3.UploadPartOutput{}, nil
+}
+
+func (m *mockS3Client) ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	return &s3.ListObjectsV2Output{}, nil
+}
+
+func TestS3Cache_ExistingPackages(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tests := []struct {
+		name            string
+		packages        []cache.Package
+		mockHeadObject  func(key string) (*s3.HeadObjectOutput, error)
+		expectedResults map[string]struct{}
+		expectError     bool
+	}{
+		{
+			name: "finds tar.gz package",
+			packages: []cache.Package{
+				&mockPackage{version: "v1"},
+			},
+			mockHeadObject: func(key string) (*s3.HeadObjectOutput, error) {
+				if key == "v1.tar.gz" {
+					return &s3.HeadObjectOutput{}, nil
+				}
+				return nil, &types.NoSuchKey{}
+			},
+			expectedResults: map[string]struct{}{
+				"v1": {},
+			},
+		},
+		{
+			name: "finds tar package when tar.gz not found",
+			packages: []cache.Package{
+				&mockPackage{version: "v1"},
+			},
+			mockHeadObject: func(key string) (*s3.HeadObjectOutput, error) {
+				if key == "v1.tar.gz" {
+					return nil, &types.NoSuchKey{}
+				}
+				if key == "v1.tar" {
+					return &s3.HeadObjectOutput{}, nil
+				}
+				return nil, &types.NoSuchKey{}
+			},
+			expectedResults: map[string]struct{}{
+				"v1": {},
+			},
+		},
+		{
+			name: "package not found",
+			packages: []cache.Package{
+				&mockPackage{version: "v1"},
+			},
+			mockHeadObject: func(key string) (*s3.HeadObjectOutput, error) {
+				return nil, &types.NoSuchKey{}
+			},
+			expectedResults: map[string]struct{}{},
+		},
+		{
+			name: "version error",
+			packages: []cache.Package{
+				&mockPackage{version: "v1", err: errors.New("version error")},
+			},
+			mockHeadObject: func(key string) (*s3.HeadObjectOutput, error) {
+				return &s3.HeadObjectOutput{}, nil
+			},
+			expectedResults: map[string]struct{}{},
+			expectError:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockS3Client{
+				headObjectFunc: func(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+					return tt.mockHeadObject(*params.Key)
+				},
+			}
+
+			s3Cache := &S3Cache{
+				storage: &S3Storage{
+					client:     mockClient,
+					bucketName: "test-bucket",
+				},
+				workerCount: 1,
+			}
+
+			results, err := s3Cache.ExistingPackages(ctx, tt.packages)
+			if tt.expectError {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			resultVersions := make(map[string]struct{})
+			for pkg := range results {
+				version, err := pkg.Version()
+				if err != nil {
+					t.Errorf("unexpected error getting version: %v", err)
+					continue
+				}
+				resultVersions[version] = struct{}{}
+			}
+			if !cmp.Equal(tt.expectedResults, resultVersions) {
+				t.Errorf("expected results %v, got %v", tt.expectedResults, resultVersions)
+			}
+		})
+	}
+}
+
+func TestS3Cache_Download(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tmpDir, err := os.MkdirTemp("", "s3cache-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create test directories
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		t.Fatalf("failed to create test directories: %v", err)
+	}
+
+	tests := []struct {
+		name           string
+		packages       []cache.Package
+		mockGetObject  func(key string) error
+		localCache     *mockLocalCache
+		expectError    bool
+		expectedFiles  []string
+		expectedErrors []string
+	}{
+		{
+			name: "downloads tar.gz package",
+			packages: []cache.Package{
+				&mockPackage{version: "v1"},
+			},
+			mockGetObject: func(key string) error {
+				if key == "v1.tar.gz" {
+					return nil
+				}
+				return &types.NoSuchKey{}
+			},
+			localCache: &mockLocalCache{
+				locations: map[string]string{
+					"v1": filepath.Join(tmpDir, "pkg1.tar.gz"),
+				},
+			},
+			expectedFiles: []string{"pkg1.tar.gz"},
+		},
+		{
+			name: "downloads tar package when tar.gz fails",
+			packages: []cache.Package{
+				&mockPackage{version: "v1"},
+			},
+			mockGetObject: func(key string) error {
+				if key == "v1.tar.gz" {
+					return &types.NoSuchKey{}
+				}
+				if key == "v1.tar" {
+					return nil
+				}
+				return &types.NoSuchKey{}
+			},
+			localCache: &mockLocalCache{
+				locations: map[string]string{
+					"v1": filepath.Join(tmpDir, "pkg1.tar"),
+				},
+			},
+			expectedFiles: []string{"pkg1.tar"},
+		},
+		{
+			name: "fails when package not found",
+			packages: []cache.Package{
+				&mockPackage{version: "v1"},
+			},
+			mockGetObject: func(key string) error {
+				return &types.NoSuchKey{}
+			},
+			localCache: &mockLocalCache{
+				locations: map[string]string{
+					"v1": filepath.Join(tmpDir, "pkg1.tar.gz"),
+				},
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create test directories and empty files for each test case
+			for _, path := range tt.localCache.locations {
+				dir := filepath.Dir(path)
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Fatalf("failed to create directory %s: %v", dir, err)
+				}
+			}
+
+			mockClient := &mockS3Client{
+				getObjectFunc: func(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+					err := tt.mockGetObject(*params.Key)
+					if err != nil {
+						return nil, err
+					}
+
+					// Get the destination path from the test case
+					version, err := tt.packages[0].Version()
+					if err != nil {
+						t.Fatalf("failed to get version: %v", err)
+					}
+					path := tt.localCache.locations[version]
+
+					// Write test data directly to the file
+					if err := os.WriteFile(path, []byte("test data"), 0644); err != nil {
+						t.Fatalf("failed to write test data: %v", err)
+					}
+
+					// Return an empty reader since we've already written the file
+					return &s3.GetObjectOutput{
+						Body:          io.NopCloser(bytes.NewReader(nil)),
+						ContentLength: aws.Int64(9), // length of "test data"
+					}, nil
+				},
+			}
+
+			s3Cache := &S3Cache{
+				storage: &S3Storage{
+					client:     mockClient,
+					bucketName: "test-bucket",
+				},
+				workerCount: 1,
+			}
+
+			err := s3Cache.Download(ctx, tt.localCache, tt.packages)
+			if tt.expectError {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			for _, expectedFile := range tt.expectedFiles {
+				path := filepath.Join(tmpDir, expectedFile)
+				if _, err := os.Stat(path); err != nil {
+					t.Errorf("expected file %s to exist: %v", path, err)
+					continue
+				}
+				// Verify file contents
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Errorf("failed to read file %s: %v", path, err)
+					continue
+				}
+				if string(data) != "test data" {
+					t.Errorf("expected file %s to contain 'test data', got %q", path, string(data))
+				}
+			}
+		})
+	}
+}
+
+func TestS3Cache_Upload(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tmpDir, err := os.MkdirTemp("", "s3cache-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create test directories
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		t.Fatalf("failed to create test directories: %v", err)
+	}
+
+	tests := []struct {
+		name          string
+		packages      []cache.Package
+		mockPutObject func(key string) error
+		localCache    *mockLocalCache
+		expectError   bool
+	}{
+		{
+			name: "successful upload",
+			packages: []cache.Package{
+				&mockPackage{version: "v1"},
+			},
+			mockPutObject: func(key string) error {
+				return nil
+			},
+			localCache: &mockLocalCache{
+				locations: map[string]string{
+					"v1": filepath.Join(tmpDir, "pkg1.tar.gz"),
+				},
+			},
+		},
+		{
+			name: "package not in local cache",
+			packages: []cache.Package{
+				&mockPackage{version: "v1"},
+			},
+			localCache: &mockLocalCache{
+				locations: map[string]string{},
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create test directories and files for each test case
+			if !tt.expectError {
+				for _, path := range tt.localCache.locations {
+					dir := filepath.Dir(path)
+					if err := os.MkdirAll(dir, 0755); err != nil {
+						t.Fatalf("failed to create directory %s: %v", dir, err)
+					}
+					if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+						t.Fatalf("failed to write test file %s: %v", path, err)
+					}
+				}
+			}
+
+			mockClient := &mockS3Client{
+				putObjectFunc: func(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+					if tt.mockPutObject != nil {
+						if err := tt.mockPutObject(*params.Key); err != nil {
+							return nil, err
+						}
+					}
+					return &s3.PutObjectOutput{}, nil
+				},
+			}
+
+			s3Cache := &S3Cache{
+				storage: &S3Storage{
+					client:     mockClient,
+					bucketName: "test-bucket",
+				},
+				workerCount: 1,
+			}
+
+			err := s3Cache.Upload(ctx, tt.localCache, tt.packages)
+			if tt.expectError {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
