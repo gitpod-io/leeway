@@ -73,7 +73,7 @@ var provenanceAssertCmd = &cobra.Command{
 				return nil
 			}
 
-			failures = append(assertions.AssertEnvelope(env), failures...)
+			failures = append(assertions.AssertBundle(env), failures...)
 
 			raw, err := base64.StdEncoding.DecodeString(env.Payload)
 			if err != nil {

@@ -173,33 +173,6 @@ func getBuildArgs() (leeway.Arguments, error) {
 	return res, nil
 }
 
-func getRemoteCache() leeway.RemoteCache {
-	remoteCacheBucket := os.Getenv(EnvvarRemoteCacheBucket)
-	remoteStorage := os.Getenv(EnvvarRemoteCacheStorage)
-	if remoteCacheBucket != "" {
-		switch remoteStorage {
-		case "GCP":
-			return leeway.GSUtilRemoteCache{
-				BucketName: remoteCacheBucket,
-			}
-		case "AWS":
-			rc, err := leeway.NewS3RemoteCache(remoteCacheBucket, nil)
-			if err != nil {
-				log.Fatalf("cannot access remote S3 cache: %v", err)
-			}
-
-			return rc
-		default:
-			return leeway.GSUtilRemoteCache{
-				BucketName: remoteCacheBucket,
-			}
-		}
-
-	}
-
-	return leeway.NoRemoteCache{}
-}
-
 func addExperimentalCommand(parent, child *cobra.Command) {
 	if os.Getenv("LEEWAY_EXPERIMENTAL") != "true" {
 		return

@@ -1,6 +1,7 @@
 package leeway
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,56 +11,89 @@ import (
 	"golang.org/x/xerrors"
 )
 
+const (
+	gitDirName     = ".git"
+	gitStatusError = 128
+)
+
+// GitError represents an error that occurred during a Git operation
+type GitError struct {
+	Op  string
+	Err error
+}
+
+func (e *GitError) Error() string {
+	return fmt.Sprintf("git operation %s failed: %v", e.Op, e.Err)
+}
+
+// GitInfo represents the state of a Git working copy including commit information,
+// origin URL, and dirty state tracking.
 type GitInfo struct {
+	// WorkingCopyLoc is the absolute path to the Git working copy
 	WorkingCopyLoc string
-	Commit         string
-	Origin         string
+	// Commit is the current HEAD commit hash
+	Commit string
+	// Origin is the remote origin URL
+	Origin string
 
 	dirty      bool
 	dirtyFiles map[string]struct{}
 }
 
+// executeGitCommand is a helper function to execute Git commands and handle their output
+func executeGitCommand(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", &GitError{
+			Op:  strings.Join(args, " "),
+			Err: err,
+		}
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // GetGitInfo returns the git status required during a leeway build
 func GetGitInfo(loc string) (*GitInfo, error) {
-	gitfc := filepath.Join(loc, ".git")
+	gitfc := filepath.Join(loc, gitDirName)
 	stat, err := os.Stat(gitfc)
 	if err != nil || !stat.IsDir() {
 		return nil, nil
 	}
 
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = loc
-	out, err := cmd.CombinedOutput()
+	commit, err := executeGitCommand(loc, "rev-parse", "HEAD")
 	if err != nil {
 		return nil, err
 	}
+
 	res := GitInfo{
 		WorkingCopyLoc: loc,
-		Commit:         strings.TrimSpace(string(out)),
+		Commit:         commit,
 	}
 
-	cmd = exec.Command("git", "config", "--get", "remote.origin.url")
-	cmd.Dir = loc
-	out, err = cmd.CombinedOutput()
-	if err != nil && len(out) > 0 {
-		return nil, err
+	origin, err := executeGitCommand(loc, "config", "--get", "remote.origin.url")
+	if err == nil {
+		res.Origin = origin
 	}
-	res.Origin = strings.TrimSpace(string(out))
 
-	cmd = exec.Command("git", "status", "--porcelain")
-	cmd.Dir = loc
-	out, err = cmd.CombinedOutput()
-	if serr, ok := err.(*exec.ExitError); ok && serr.ExitCode() != 128 {
-		// git status --short seems to exit with 128 all the time - that's ok, but we need to account for that.
-		log.WithField("exitCode", serr.ExitCode()).Debug("git status --porcelain exited with failed exit code. Working copy is dirty.")
+	status, err := executeGitCommand(loc, "status", "--porcelain")
+	if serr, ok := err.(*exec.ExitError); ok && serr.ExitCode() != gitStatusError {
+		log.WithFields(log.Fields{
+			"exitCode":    serr.ExitCode(),
+			"workingCopy": loc,
+		}).Debug("git status --porcelain exited with failed exit code. Working copy is dirty.")
 		res.dirty = true
 	} else if _, ok := err.(*exec.ExitError); !ok && err != nil {
 		return nil, err
-	} else if len(strings.TrimSpace(string(out))) != 0 {
-		log.WithField("out", string(out)).Debug("`git status --porcelain` produced output. Working copy is dirty.")
+	} else if status != "" {
+		log.WithFields(log.Fields{
+			"workingCopy": loc,
+			"status":      status,
+		}).Debug("working copy is dirty")
 
 		res.dirty = true
-		res.dirtyFiles, err = parseGitStatus(out)
+		res.dirtyFiles, err = parseGitStatus([]byte(status))
 		if err != nil {
 			log.WithError(err).Warn("cannot parse git status: assuming all files are dirty")
 		}
@@ -91,34 +125,50 @@ func parseGitStatus(out []byte) (files map[string]struct{}, err error) {
 	return
 }
 
-// DirtyFiles returns true if a single file of the file list
-// is dirty.
-func (gi *GitInfo) DirtyFiles(files []string) bool {
-	if !gi.dirty {
-		// nothing's dirty
-		log.WithField("workingCopy", gi.WorkingCopyLoc).Debug("building from a clean working copy")
+// IsDirty returns whether the working copy has any modifications
+func (info *GitInfo) IsDirty() bool {
+	return info.dirty
+}
+
+// HasDirtyFile checks if a specific file is dirty
+func (info *GitInfo) HasDirtyFile(file string) bool {
+	if !info.dirty {
 		return false
 	}
-	if len(gi.dirtyFiles) == 0 {
-		// we don't have any record of dirty files, just that the
-		// working copy is dirty. Hence, we assume all files are dirty.
-		log.WithField("workingCopy", gi.WorkingCopyLoc).Debug("no records of dirty files - assuming dirty Git working copy")
+	if len(info.dirtyFiles) == 0 {
+		return true
+	}
+
+	file = strings.TrimPrefix(file, info.WorkingCopyLoc)
+	file = strings.TrimPrefix(file, "/")
+	_, isDirty := info.dirtyFiles[file]
+	return isDirty
+}
+
+// DirtyFiles returns true if a single file of the file list is dirty
+func (info *GitInfo) DirtyFiles(files []string) bool {
+	if !info.dirty {
+		log.WithField("workingCopy", info.WorkingCopyLoc).Debug("building from a clean working copy")
+		return false
+	}
+	if len(info.dirtyFiles) == 0 {
+		log.WithField("workingCopy", info.WorkingCopyLoc).Debug("no records of dirty files - assuming dirty Git working copy")
 		return true
 	}
 	for _, f := range files {
-		if !strings.HasPrefix(f, gi.WorkingCopyLoc) {
-			// We don't know anything about this file, but the caller
-			// might make important decisions on the dirty-state of
-			// the files. For good measure we assume the file is dirty.
-			log.WithField("workingCopy", gi.WorkingCopyLoc).WithField("fn", f).Debug("no records of this file - assuming it's dirty")
+		if !strings.HasPrefix(f, info.WorkingCopyLoc) {
+			log.WithFields(log.Fields{
+				"workingCopy": info.WorkingCopyLoc,
+				"file":        f,
+			}).Debug("no records of this file - assuming it's dirty")
 			return true
 		}
 
-		fn := strings.TrimPrefix(f, gi.WorkingCopyLoc)
-		fn = strings.TrimPrefix(fn, "/")
-		_, dirty := gi.dirtyFiles[fn]
-		if dirty {
-			log.WithField("workingCopy", gi.WorkingCopyLoc).WithField("fn", f).Debug("found dirty source file")
+		if info.HasDirtyFile(f) {
+			log.WithFields(log.Fields{
+				"workingCopy": info.WorkingCopyLoc,
+				"file":        f,
+			}).Debug("found dirty source file")
 			return true
 		}
 	}
