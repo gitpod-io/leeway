@@ -211,8 +211,12 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 	} else {
 		localCacheLoc = os.Getenv(leeway.EnvvarCacheDir)
 		if localCacheLoc == "" {
-			localCacheLoc = filepath.Join(os.TempDir(), "cache")
+			localCacheLoc = filepath.Join(os.TempDir(), "leeway", "cache")
 		}
+	}
+	// Ensure cache directory exists with proper permissions
+	if err := os.MkdirAll(localCacheLoc, 0755); err != nil {
+		log.WithError(err).Fatal("failed to create cache directory")
 	}
 	log.WithField("location", localCacheLoc).Debug("set up local cache")
 	localCache, err := local.NewFilesystemCache(localCacheLoc)

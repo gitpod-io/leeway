@@ -120,7 +120,12 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 
 	buildDir := os.Getenv(EnvvarBuildDir)
 	if buildDir == "" {
-		buildDir = filepath.Join(os.TempDir(), "build")
+		buildDir = filepath.Join(os.TempDir(), "leeway", "build")
+	}
+
+	// Ensure cache directory exists with proper permissions
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		log.WithError(err).Fatal("failed to create build directory")
 	}
 
 	var buildLimit *semaphore.Weighted
