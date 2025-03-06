@@ -127,38 +127,58 @@ func (s *S3Cache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (m
 			return fmt.Errorf("failed to get version: %w", err)
 		}
 
-		// Check for .tar.gz first
+		// Try .tar.gz first
 		gzKey := fmt.Sprintf("%s.tar.gz", version)
 		exists, err := s.storage.HasObject(ctx, gzKey)
 		if err != nil {
-			return fmt.Errorf("failed to check object %s: %w", gzKey, err)
-		}
-
-		if exists {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     gzKey,
+				"error":   err,
+			}).Debug("failed to check .tar.gz in remote cache, will try .tar")
+		} else if exists {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     gzKey,
+			}).Debug("found package in remote cache (.tar.gz)")
 			mu.Lock()
 			result[p] = struct{}{}
 			mu.Unlock()
 			return nil
 		}
 
-		// Fall back to .tar
+		// Fall back to .tar if .tar.gz doesn't exist or had error
 		tarKey := fmt.Sprintf("%s.tar", version)
 		exists, err = s.storage.HasObject(ctx, tarKey)
 		if err != nil {
-			return fmt.Errorf("failed to check object %s: %w", tarKey, err)
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     tarKey,
+				"error":   err,
+			}).Debug("failed to check .tar in remote cache")
+			return nil // Continue with next package, will trigger local build
 		}
 
 		if exists {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     tarKey,
+			}).Debug("found package in remote cache (.tar)")
 			mu.Lock()
 			result[p] = struct{}{}
 			mu.Unlock()
+		} else {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"version": version,
+			}).Debug("package not found in remote cache, will build locally")
 		}
 
 		return nil
 	})
 
 	if err != nil {
-		log.WithError(err).Error("failed to check existing packages")
+		log.WithError(err).Error("failed to check existing packages in remote cache")
 		// Return partial results even if some checks failed
 		return result, err
 	}
@@ -183,16 +203,34 @@ func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cac
 		gzKey := fmt.Sprintf("%s.tar.gz", version)
 		_, err = s.storage.GetObject(ctx, gzKey, localPath)
 		if err == nil {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     gzKey,
+			}).Debug("successfully downloaded package from remote cache (.tar.gz)")
 			return nil
 		}
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"key":     gzKey,
+			"error":   err,
+		}).Debug("failed to download .tar.gz from remote cache, trying .tar")
 
 		// Try .tar if .tar.gz fails
 		tarKey := fmt.Sprintf("%s.tar", version)
 		_, err = s.storage.GetObject(ctx, tarKey, localPath)
 		if err != nil {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     tarKey,
+				"error":   err,
+			}).Debug("failed to download package from remote cache, will build locally")
 			return fmt.Errorf("failed to download package %s: %w", p.FullName(), err)
 		}
 
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"key":     tarKey,
+		}).Debug("successfully downloaded package from remote cache (.tar)")
 		return nil
 	})
 }
@@ -214,9 +252,21 @@ func (s *S3Cache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache
 	})
 }
 
+// s3ClientAPI is a subset of the S3 client interface we need
+type s3ClientAPI interface {
+	HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	AbortMultipartUpload(ctx context.Context, params *s3.AbortMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
+	CompleteMultipartUpload(ctx context.Context, params *s3.CompleteMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error)
+	CreateMultipartUpload(ctx context.Context, params *s3.CreateMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error)
+	UploadPart(ctx context.Context, params *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error)
+	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+}
+
 // S3Storage implements ObjectStorage using AWS S3
 type S3Storage struct {
-	client     *s3.Client
+	client     s3ClientAPI
 	bucketName string
 }
 
