@@ -186,16 +186,15 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 	log.WithField("cacheMode", cm).Debug("configuring caches")
 	cacheLevel := leeway.CacheLevel(cm)
 
-	var remoteCache cache.RemoteCache
+	remoteCache := getRemoteCache()
 	switch cacheLevel {
 	case leeway.CacheNone, leeway.CacheLocal:
 		remoteCache = remote.NewNoRemoteCache()
 	case leeway.CacheRemotePull:
-		remoteCache = &pullOnlyRemoteCache{C: remote.NewNoRemoteCache()}
+		remoteCache = &pullOnlyRemoteCache{C: remoteCache}
 	case leeway.CacheRemotePush:
-		remoteCache = &pushOnlyRemoteCache{C: remote.NewNoRemoteCache()}
+		remoteCache = &pushOnlyRemoteCache{C: remoteCache}
 	case leeway.CacheRemote:
-		remoteCache = remote.NewNoRemoteCache()
 	default:
 		log.Fatalf("invalid cache level: %s", cacheLevel)
 	}
@@ -343,4 +342,31 @@ func (c *pullOnlyRemoteCache) Download(ctx context.Context, dst cache.LocalCache
 
 func (c *pullOnlyRemoteCache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
 	return nil
+}
+
+func getRemoteCache() leeway.RemoteCache {
+	remoteCacheBucket := os.Getenv(EnvvarRemoteCacheBucket)
+	remoteStorage := os.Getenv(EnvvarRemoteCacheStorage)
+	if remoteCacheBucket != "" {
+		switch remoteStorage {
+		case "GCP":
+			return leeway.GSUtilRemoteCache{
+				BucketName: remoteCacheBucket,
+			}
+		case "AWS":
+			rc, err := leeway.NewS3RemoteCache(remoteCacheBucket, nil)
+			if err != nil {
+				log.Fatalf("cannot access remote S3 cache: %v", err)
+			}
+
+			return rc
+		default:
+			return leeway.GSUtilRemoteCache{
+				BucketName: remoteCacheBucket,
+			}
+		}
+
+	}
+
+	return leeway.NoRemoteCache{}
 }
