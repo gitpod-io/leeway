@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -136,6 +137,7 @@ func (s *S3Cache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (m
 				"key":     gzKey,
 				"error":   err,
 			}).Debug("failed to check .tar.gz in remote cache, will try .tar")
+			// Continue to check .tar format - don't return error here
 		} else if exists {
 			log.WithFields(log.Fields{
 				"package": p.FullName(),
@@ -156,6 +158,7 @@ func (s *S3Cache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (m
 				"key":     tarKey,
 				"error":   err,
 			}).Debug("failed to check .tar in remote cache")
+			// Don't return error for missing objects - this is expected
 			return nil // Continue with next package, will trigger local build
 		}
 
@@ -178,9 +181,9 @@ func (s *S3Cache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (m
 	})
 
 	if err != nil {
-		log.WithError(err).Error("failed to check existing packages in remote cache")
+		log.WithError(err).Warn("failed to check existing packages in remote cache")
 		// Return partial results even if some checks failed
-		return result, err
+		return result, nil
 	}
 
 	return result, nil
@@ -188,7 +191,7 @@ func (s *S3Cache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (m
 
 // Download implements RemoteCache
 func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) error {
-	return s.processPackages(ctx, pkgs, func(ctx context.Context, p cache.Package) error {
+	err := s.processPackages(ctx, pkgs, func(ctx context.Context, p cache.Package) error {
 		version, err := p.Version()
 		if err != nil {
 			return fmt.Errorf("failed to get version for package %s: %w", p.FullName(), err)
@@ -209,22 +212,40 @@ func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cac
 			}).Debug("successfully downloaded package from remote cache (.tar.gz)")
 			return nil
 		}
-		log.WithFields(log.Fields{
-			"package": p.FullName(),
-			"key":     gzKey,
-			"error":   err,
-		}).Debug("failed to download .tar.gz from remote cache, trying .tar")
+
+		// Check if this is a "not found" error
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "404") {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     gzKey,
+			}).Debug("package not found in remote cache (.tar.gz), trying .tar")
+		} else {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     gzKey,
+				"error":   err,
+			}).Debug("failed to download .tar.gz from remote cache, trying .tar")
+		}
 
 		// Try .tar if .tar.gz fails
 		tarKey := fmt.Sprintf("%s.tar", version)
 		_, err = s.storage.GetObject(ctx, tarKey, localPath)
 		if err != nil {
+			// Check if this is a "not found" error
+			if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "404") {
+				log.WithFields(log.Fields{
+					"package": p.FullName(),
+					"key":     tarKey,
+				}).Debug("package not found in remote cache (.tar), will build locally")
+				return nil // Not an error, just not found
+			}
+
 			log.WithFields(log.Fields{
 				"package": p.FullName(),
 				"key":     tarKey,
 				"error":   err,
 			}).Debug("failed to download package from remote cache, will build locally")
-			return fmt.Errorf("failed to download package %s: %w", p.FullName(), err)
+			return nil // Continue with local build
 		}
 
 		log.WithFields(log.Fields{
@@ -233,6 +254,14 @@ func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cac
 		}).Debug("successfully downloaded package from remote cache (.tar)")
 		return nil
 	})
+
+	if err != nil {
+		log.WithError(err).Warn("errors occurred during download from remote cache")
+		// Continue with local builds for packages that couldn't be downloaded
+		return nil
+	}
+
+	return nil
 }
 
 // Upload implements RemoteCache
@@ -287,10 +316,17 @@ func (s *S3Storage) HasObject(ctx context.Context, key string) (bool, error) {
 	})
 
 	if err != nil {
+		// Check for various "not found" error types
 		var nsk *types.NoSuchKey
 		if errors.As(err, &nsk) {
 			return false, nil
 		}
+
+		// Also handle 404 NotFound errors which might not be properly wrapped as NoSuchKey
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "404") {
+			return false, nil
+		}
+
 		return false, err
 	}
 
@@ -318,7 +354,22 @@ func (s *S3Storage) GetObject(ctx context.Context, key string, dest string) (int
 		Bucket: aws.String(s.bucketName),
 		Key:    aws.String(key),
 	})
+
 	if err != nil {
+		// Remove the partially downloaded file if there was an error
+		os.Remove(dest)
+
+		// Check for various "not found" error types
+		var nsk *types.NoSuchKey
+		if errors.As(err, &nsk) {
+			return 0, fmt.Errorf("object not found: %w", err)
+		}
+
+		// Also handle 404 NotFound errors which might not be properly wrapped
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "404") {
+			return 0, fmt.Errorf("object not found: %w", err)
+		}
+
 		return 0, fmt.Errorf("failed to download object: %w", err)
 	}
 
