@@ -41,6 +41,10 @@ func (fsc *FilesystemCache) Location(pkg cache.Package) (path string, exists boo
 	tarPath := filepath.Join(fsc.Origin, fmt.Sprintf("%s.tar", version))
 	exists = fileExists(tarPath)
 
+	// Ensure parent directory exists for download operations
+	// This is safe to do even if we're just checking existence
+	_ = os.MkdirAll(filepath.Dir(tarPath), 0755)
+
 	return tarPath, exists
 }
 
