@@ -323,7 +323,7 @@ func (s *S3Storage) HasObject(ctx context.Context, key string) (bool, error) {
 		}
 
 		// Also handle 404 NotFound errors which might not be properly wrapped as NoSuchKey
-		if strings.Contains(err.Error(), "NotFound") {
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "404") {
 			return false, nil
 		}
 
