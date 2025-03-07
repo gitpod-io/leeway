@@ -303,6 +303,11 @@ func (s *S3Storage) GetObject(ctx context.Context, key string, dest string) (int
 		d.PartSize = defaultS3PartSize
 	})
 
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return 0, fmt.Errorf("failed to create parent directory: %w", err)
+	}
+
 	file, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create destination file: %w", err)
