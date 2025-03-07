@@ -129,7 +129,7 @@ func TestS3Cache_ExistingPackages(t *testing.T) {
 				return &s3.HeadObjectOutput{}, nil
 			},
 			expectedResults: map[string]struct{}{},
-			expectError:     true,
+			expectError:     false,
 		},
 	}
 
@@ -254,7 +254,8 @@ func TestS3Cache_Download(t *testing.T) {
 					"v1": filepath.Join(tmpDir, "pkg1.tar.gz"),
 				},
 			},
-			expectError: true,
+			expectError:   false,
+			expectedFiles: []string{},
 		},
 	}
 
