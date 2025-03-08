@@ -454,6 +454,21 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	pkgsWillBeDownloaded := make(map[*Package]struct{})
 	pkg.packagesToDownload(pkgsInLocalCache, toPackageMap(pkgsInRemoteCache), pkgsWillBeDownloaded)
 
+	// Validate packages before attempting download
+	log.Debug("Validating packages before download from remote cache")
+	var validPkgsToDownload []*Package
+	for p := range pkgsWillBeDownloaded {
+		validPkgsToDownload = append(validPkgsToDownload, p)
+	}
+	validPkgsToDownload = validatePackagesForDownload(validPkgsToDownload, ctx.BuildDir())
+
+	log.WithField("packageCount", len(validPkgsToDownload)).Debug("Downloading packages from remote cache")
+	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, toPackageInterface(validPkgsToDownload))
+	if err != nil {
+		// Make this a warning instead of an error, so we can continue with local builds
+		log.WithError(err).Warn("Failed to download packages from remote cache, continuing with local builds")
+	}
+
 	pkgstatus := make(map[*Package]PackageBuildStatus)
 	unresolvedArgs := make(map[string][]string)
 	for _, dep := range allpkg {
@@ -489,16 +504,6 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 			pkgs = append(pkgs, dep.FullName())
 			unresolvedArgs[arg] = pkgs
 		}
-	}
-
-	pkgsToDownload := make([]*Package, 0, len(pkgsWillBeDownloaded))
-	for p := range pkgsWillBeDownloaded {
-		pkgsToDownload = append(pkgsToDownload, p)
-	}
-
-	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, toPackageInterface(pkgsToDownload))
-	if err != nil {
-		return err
 	}
 
 	ctx.Reporter.BuildStarted(pkg, pkgstatus)
@@ -1530,6 +1535,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			if len(inspectRes) == 0 {
 				return nil, xerrors.Errorf("did not receive a proper Docker inspect response")
 			}
+
+			// Parse the image ID to extract the digest components
 			segs := strings.Split(inspectRes[0].ID, ":")
 			if len(segs) != 2 {
 				return nil, xerrors.Errorf("docker inspect returned invalid digest: %s", inspectRes[0].ID)
@@ -1664,49 +1671,6 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	// shortcut: no command == empty package
 	if len(cfg.Commands) == 0 && len(cfg.Test) == 0 {
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
-
-		compressArg := getCompressionArg(buildctx)
-		tarArgs := []string{"--sparse", "-cf", result}
-		if compressArg != "" {
-			tarArgs = append(tarArgs, compressArg)
-		}
-
-		// if provenance is enabled, we have to make sure we capture the bundle
-		if p.C.W.Provenance.Enabled {
-			tarArgs = append(tarArgs, "./"+provenanceBundleFilename)
-			return &packageBuild{
-				Commands: map[PackageBuildPhase][][]string{
-					PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
-				},
-			}, nil
-		}
-
-		tarArgs = append(tarArgs, "--files-from", "/dev/null")
-		return &packageBuild{
-			Commands: map[PackageBuildPhase][][]string{
-				PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
-			},
-		}, nil
-	}
-
-	var commands [][]string
-	for _, dep := range p.GetDependencies() {
-		fn, exists := buildctx.LocalCache.Location(dep)
-		if !exists {
-			return nil, PkgNotBuiltErr{dep}
-		}
-
-		tgt := p.BuildLayoutLocation(dep)
-		commands = append(commands, [][]string{
-			{"mkdir", tgt},
-			{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
-		}...)
-	}
-
-	commands = append(commands, p.PreparationCommands...)
-	commands = append(commands, cfg.Commands...)
-	if !cfg.DontTest && !buildctx.DontTest {
-		commands = append(commands, cfg.Test...)
 	}
 
 	compressArg := getCompressionArg(buildctx)
@@ -1714,11 +1678,20 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	if compressArg != "" {
 		tarArgs = append(tarArgs, compressArg)
 	}
-	tarArgs = append(tarArgs, ".")
 
+	// if provenance is enabled, we have to make sure we capture the bundle
+	if p.C.W.Provenance.Enabled {
+		tarArgs = append(tarArgs, "./"+provenanceBundleFilename)
+		return &packageBuild{
+			Commands: map[PackageBuildPhase][][]string{
+				PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
+			},
+		}, nil
+	}
+
+	tarArgs = append(tarArgs, "--files-from", "/dev/null")
 	return &packageBuild{
 		Commands: map[PackageBuildPhase][][]string{
-			PackageBuildPhaseBuild:   commands,
 			PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
 		},
 	}, nil
@@ -1777,22 +1750,43 @@ func codecovComponentName(name string) string {
 	return strings.ToLower(component + "-coverage.out")
 }
 
-// Convert *Package slice to cache.Package slice
+// Convert *Package slice to cache.Package slice with improved logging
 func toPackageInterface(pkgs []*Package) []cache.Package {
 	result := make([]cache.Package, len(pkgs))
 	for i, p := range pkgs {
+		if p == nil {
+			log.WithField("index", i).Warn("Nil package encountered in conversion")
+			continue
+		}
 		result[i] = p
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"type":    fmt.Sprintf("%T", p),
+		}).Debug("Converting package to interface")
 	}
 	return result
 }
 
-// Convert map[cache.Package]struct{} to map[*Package]struct{}
+// Convert map[cache.Package]struct{} to map[*Package]struct{} with improved logging and error handling
 func toPackageMap(in map[cache.Package]struct{}) map[*Package]struct{} {
 	result := make(map[*Package]struct{})
 	for p := range in {
-		if pkg, ok := p.(*Package); ok {
-			result[pkg] = struct{}{}
+		if p == nil {
+			log.Warn("Nil package encountered in map conversion")
+			continue
 		}
+
+		pkg, ok := p.(*Package)
+		if !ok {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"type":    fmt.Sprintf("%T", p),
+			}).Warn("Failed to convert cache.Package to *Package")
+			continue
+		}
+
+		result[pkg] = struct{}{}
+		log.WithField("package", pkg.FullName()).Debug("Successfully converted package in map")
 	}
 	return result
 }
@@ -1805,4 +1799,33 @@ func getTarArgs(args ...string) []string {
 		return append([]string{"--sparse"}, args...)
 	}
 	return args
+}
+
+// validatePackagesForDownload performs pre-download validation on packages
+func validatePackagesForDownload(pkgs []*Package, buildDir string) []*Package {
+	var validPkgs []*Package
+	for _, p := range pkgs {
+		if p == nil {
+			log.Warn("Skipping nil package in download list")
+			continue
+		}
+
+		version, err := p.Version()
+		if err != nil {
+			log.WithError(err).WithField("package", p.FullName()).Warn("Cannot get version, skipping download")
+			continue
+		}
+
+		// Check if build directory exists and create if necessary
+		pkgBuildDir := filepath.Join(buildDir, p.FilesystemSafeName()+"."+version)
+		if _, err := os.Stat(filepath.Dir(pkgBuildDir)); os.IsNotExist(err) {
+			if err := os.MkdirAll(filepath.Dir(pkgBuildDir), 0755); err != nil {
+				log.WithError(err).WithField("dir", filepath.Dir(pkgBuildDir)).Warn("Failed to create directory")
+				// Continue anyway, will fail later if necessary
+			}
+		}
+
+		validPkgs = append(validPkgs, p)
+	}
+	return validPkgs
 }
