@@ -166,6 +166,12 @@ func addBuildFlags(cmd *cobra.Command) {
 		cacheDefault = "remote"
 	}
 
+	// Never use all CPUs, leave one free for other processes
+	cpus := runtime.NumCPU()
+	if cpus > 2 {
+		cpus--
+	}
+
 	cmd.Flags().StringP("cache", "c", cacheDefault, "Configures the caching behaviour: none=no caching, local=local caching only, remote-pull=download from remote but never upload, remote-push=push to remote cache only but don't download, remote=use all configured caches")
 	cmd.Flags().Bool("dry-run", false, "Don't actually build but stop after showing what would need to be built")
 	cmd.Flags().String("dump-plan", "", "Writes the build plan as JSON to a file. Use \"-\" to write the build plan to stderr.")
@@ -173,7 +179,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("dont-test", false, "Disable all package-level tests (defaults to false)")
 	cmd.Flags().Bool("dont-compress", false, "Disable compression of build artifacts (defaults to false)")
 	cmd.Flags().Bool("jailed-execution", false, "Run all build commands using runc (defaults to false)")
-	cmd.Flags().UintP("max-concurrent-tasks", "j", uint(runtime.NumCPU()), "Limit the number of max concurrent build tasks - set to 0 to disable the limit")
+	cmd.Flags().UintP("max-concurrent-tasks", "j", uint(cpus), "Limit the number of max concurrent build tasks - set to 0 to disable the limit")
 	cmd.Flags().String("coverage-output-path", "", "Output path where test coverage file will be copied after running tests")
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
