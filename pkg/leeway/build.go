@@ -1162,6 +1162,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			BuildTarCommand(
 				WithOutputFile(result),
 				WithWorkingDir("_mirror"),
+				WithCompression(!buildctx.DontCompress),
 			),
 		}...)
 		resultDir = "_mirror"
@@ -1189,12 +1190,14 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			BuildTarCommand(
 				WithOutputFile(result),
 				WithWorkingDir("_pkg"),
+				WithCompression(!buildctx.DontCompress),
 			),
 		}...)
 		resultDir = "_pkg"
 	} else if cfg.Packaging == YarnArchive {
 		pkgCommands = append(pkgCommands, BuildTarCommand(
 			WithOutputFile(result),
+			WithCompression(!buildctx.DontCompress),
 		))
 	} else {
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
@@ -1374,6 +1377,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage],
 		BuildTarCommand(
 			WithOutputFile(result),
+			WithCompression(!buildctx.DontCompress),
 		),
 	)
 	if !cfg.DontTest && !buildctx.DontTest {
@@ -1576,6 +1580,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		archiveCmd := BuildTarCommand(
 			WithOutputFile(result),
 			WithSourcePaths(sourcePaths...),
+			WithCompression(!buildctx.DontCompress),
 		)
 		pkgCommands = append(pkgCommands, archiveCmd)
 
@@ -1756,6 +1761,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 			tarCmd = BuildTarCommand(
 				WithOutputFile(result),
 				WithSourcePaths(fmt.Sprintf("./%s", provenanceBundleFilename)),
+				WithCompression(!buildctx.DontCompress),
 			)
 			return &packageBuild{
 				Commands: map[PackageBuildPhase][][]string{
@@ -1777,7 +1783,9 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		// Truly empty package with no dependencies
 		tarCmd = BuildTarCommand(
 			WithFilesFrom("/dev/null"),
+			WithCompression(!buildctx.DontCompress),
 		)
+
 		return &packageBuild{
 			Commands: map[PackageBuildPhase][][]string{
 				PackageBuildPhasePackage: {tarCmd},
@@ -1815,14 +1823,15 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		commands = append(commands, cfg.Test...)
 	}
 
-	tarArgs := BuildTarCommand(
-		WithOutputFile(result),
-	)
-
 	return &packageBuild{
 		Commands: map[PackageBuildPhase][][]string{
-			PackageBuildPhaseBuild:   commands,
-			PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
+			PackageBuildPhaseBuild: commands,
+			PackageBuildPhasePackage: {
+				BuildTarCommand(
+					WithOutputFile(result),
+					WithCompression(!buildctx.DontCompress),
+				),
+			},
 		},
 	}, nil
 }
@@ -2005,6 +2014,12 @@ func BuildTarCommand(options ...func(*TarOptions)) []string {
 	}
 
 	// Basic create command
+	if opts.UseCompression {
+		if !strings.HasSuffix(opts.OutputFile, ".gz") {
+			opts.OutputFile = opts.OutputFile + ".gz"
+		}
+	}
+
 	cmd = append(cmd, "-cf", opts.OutputFile)
 
 	// Add working directory if specified
@@ -2105,21 +2120,13 @@ func BuildUnTarCommand(options ...func(*UnTarOptions)) ([]string, error) {
 	// Start building the command
 	cmd := []string{"tar"}
 
-	// Determine extraction flag based on compression
-	extractFlag := "-xf"
-
-	if opts.AutoDetectCompression {
-		isCompressed, err := isCompressedFile(opts.InputFile)
-		if err != nil {
-			return nil, err
-		}
-		if isCompressed {
-			extractFlag = "-xzf"
-		}
+	// Add Linux-specific optimizations
+	if runtime.GOOS == "linux" {
+		cmd = append(cmd, "--sparse")
 	}
 
-	// Add extraction flag and input file
-	cmd = append(cmd, extractFlag, opts.InputFile)
+	// Basic extraction command
+	cmd = append(cmd, "-xf", opts.InputFile)
 
 	// Add ownership flag if needed
 	if !opts.PreserveSameOwner {
@@ -2129,6 +2136,19 @@ func BuildUnTarCommand(options ...func(*UnTarOptions)) ([]string, error) {
 	// Add target directory if specified
 	if opts.TargetDir != "" {
 		cmd = append(cmd, "-C", opts.TargetDir)
+	}
+
+	// Handle compression if needed
+	if opts.AutoDetectCompression {
+		isCompressed, err := isCompressedFile(opts.InputFile)
+		if err != nil {
+			return nil, err
+		}
+		if isCompressed {
+			// Use the same compressor as in BuildTarCommand but with decompression flag
+			decompressFlag := fmt.Sprintf("--use-compress-program=%v -d", compressor)
+			cmd = append(cmd, decompressFlag)
+		}
 	}
 
 	return cmd, nil
