@@ -22,15 +22,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gitpod-io/leeway/pkg/leeway/cache"
-	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
 	"github.com/in-toto/in-toto-golang/in_toto"
 	"github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/common"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
+
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
 )
 
 // PkgNotBuiltErr is used when a package's dependency hasn't been built yet
@@ -438,36 +440,24 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToCheckRemoteCache = append(pkgsToCheckRemoteCache, p)
 	}
 
-	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(context.Background(), toPackageInterface(pkgsToCheckRemoteCache))
+	pkgsToCheckRemoteCacheCache := toPackageInterface(pkgsToCheckRemoteCache)
+	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(context.Background(), pkgsToCheckRemoteCacheCache)
 	if err != nil {
-		log.WithError(err).Warn("failed to check remote cache, proceeding with local build")
-		pkgsInRemoteCache = make(map[cache.Package]struct{})
+		return err
 	}
 
-	// Log packages that will be built locally
-	for _, p := range pkgsToCheckRemoteCache {
-		if _, exists := pkgsInRemoteCache[p]; !exists {
-			log.WithField("package", p.FullName()).Debug("package not found in remote cache, will build locally")
+	pkgsInRemoteCacheMap := make(map[*Package]struct{})
+	// convert pkgsInRemoteCache to map[*Package]struct{}
+	for p := range pkgsInRemoteCache {
+		for _, pkg := range allpkg {
+			if pkg.FullName() == p.FullName() {
+				pkgsInRemoteCacheMap[pkg] = struct{}{}
+			}
 		}
 	}
 
 	pkgsWillBeDownloaded := make(map[*Package]struct{})
-	pkg.packagesToDownload(pkgsInLocalCache, toPackageMap(pkgsInRemoteCache), pkgsWillBeDownloaded)
-
-	// Validate packages before attempting download
-	log.Debug("Validating packages before download from remote cache")
-	var validPkgsToDownload []*Package
-	for p := range pkgsWillBeDownloaded {
-		validPkgsToDownload = append(validPkgsToDownload, p)
-	}
-	validPkgsToDownload = validatePackagesForDownload(validPkgsToDownload, ctx.BuildDir())
-
-	log.WithField("packageCount", len(validPkgsToDownload)).Debug("Downloading packages from remote cache")
-	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, toPackageInterface(validPkgsToDownload))
-	if err != nil {
-		// Make this a warning instead of an error, so we can continue with local builds
-		log.WithError(err).Warn("Failed to download packages from remote cache, continuing with local builds")
-	}
+	pkg.packagesToDownload(pkgsInLocalCache, pkgsInRemoteCacheMap, pkgsWillBeDownloaded)
 
 	pkgstatus := make(map[*Package]PackageBuildStatus)
 	unresolvedArgs := make(map[string][]string)
@@ -506,6 +496,22 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		}
 	}
 
+	pkgsToDownload := make([]*Package, 0, len(pkgsWillBeDownloaded))
+	for p := range pkgsWillBeDownloaded {
+		pkgsToDownload = append(pkgsToDownload, p)
+	}
+
+	// Convert []*Package to []cache.Package
+	pkgsToDownloadCache := make([]cache.Package, len(pkgsToDownload))
+	for i, p := range pkgsToDownload {
+		pkgsToDownloadCache[i] = p
+	}
+
+	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, pkgsToDownloadCache)
+	if err != nil {
+		return err
+	}
+
 	ctx.Reporter.BuildStarted(pkg, pkgstatus)
 	defer func(err *error) {
 		ctx.Reporter.BuildFinished(pkg, *err)
@@ -534,10 +540,18 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	buildErr := pkg.build(ctx)
-	cacheErr := ctx.RemoteCache.Upload(context.Background(), ctx.LocalCache, toPackageInterface(ctx.GetNewPackagesForCache()))
+
+	pkgsToUpload := ctx.GetNewPackagesForCache()
+	// Convert []*Package to []cache.Package
+	pkgsToUploadCache := make([]cache.Package, len(pkgsToUpload))
+	for i, p := range pkgsToUpload {
+		pkgsToUploadCache[i] = p
+	}
+
+	cacheErr := ctx.RemoteCache.Upload(context.Background(), ctx.LocalCache, pkgsToUploadCache)
 
 	if buildErr != nil {
-		// We deliberately swallowed the target pacakge build error as that will have already been reported using the reporter.
+		// We deliberately swallow the target pacakge build error as that will have already been reported using the reporter.
 		return xerrors.Errorf("build failed")
 	}
 	if cacheErr != nil {
@@ -593,130 +607,96 @@ func writeBuildPlan(out io.Writer, pkg *Package, status map[*Package]PackageBuil
 	return nil
 }
 
-func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
+func (p *Package) buildDependencies(buildctx *buildContext) error {
 	deps := p.GetDependencies()
 	if deps == nil {
 		return xerrors.Errorf("package \"%s\" is not linked", p.FullName())
 	}
 
-	failchan := make(chan error)
-	donechan := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(len(p.GetDependencies()))
-
-	for _, dep := range p.GetDependencies() {
-		go func(dep *Package) {
-			err := dep.build(buildctx)
-			if err != nil {
-				failchan <- err
-			}
-			wg.Done()
-		}(dep)
-	}
-	go func() {
-		wg.Wait()
-		donechan <- struct{}{}
-	}()
-
-	select {
-	case err := <-failchan:
-		return err
-	case <-donechan:
+	// No dependencies means nothing to build
+	if len(deps) == 0 {
 		return nil
 	}
+
+	// Use errgroup to simplify error handling and synchronization
+	g := new(errgroup.Group)
+
+	for _, dep := range deps {
+		// Capture the dependency in a local variable to avoid closure issues
+		d := dep
+		g.Go(func() error {
+			return d.build(buildctx)
+		})
+	}
+
+	// Wait for all goroutines to complete, returning the first error encountered
+	return g.Wait()
 }
 
-func (p *Package) build(buildctx *buildContext) (err error) {
+func (p *Package) build(buildctx *buildContext) error {
+	// Try to obtain lock for building this package
 	doBuild := buildctx.ObtainBuildLock(p)
 	if !doBuild {
+		// Another goroutine is already building this package
 		return nil
 	}
 	defer buildctx.ReleaseBuildLock(p)
 
+	// Get package version
 	version, err := p.Version()
 	if err != nil {
 		return err
 	}
 
-	err = p.buildDependencies(buildctx)
-	if err != nil {
+	// Build dependencies first
+	if err := p.buildDependencies(buildctx); err != nil {
 		return err
 	}
 
-	// Return early if the package is already built. We're explicitly performing this check after having built all the dependencies.
-	//  Previously we had it before, but that resulted in failed builds as there's no guarantee that the cache will contain transitive dependencies; in our case they were sometimes evicted from the cache due to S3 lifecycle rules
-	_, alreadyBuilt := buildctx.LocalCache.Location(p)
-	if p.Ephemeral {
-		// ephemeral packages always require a rebuild
-	} else if alreadyBuilt {
+	// Skip if package is already built (except for ephemeral packages)
+	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
 		log.WithField("package", p.FullName()).Debug("already built")
 		return nil
 	}
 
+	// Initialize package build report
 	pkgRep := &PackageBuildReport{
 		phaseEnter: make(map[PackageBuildPhase]time.Time),
 		phaseDone:  make(map[PackageBuildPhase]time.Time),
+		Phases:     []PackageBuildPhase{PackageBuildPhasePrep},
 	}
 	pkgRep.phaseEnter[PackageBuildPhasePrep] = time.Now()
-	pkgRep.Phases = append(pkgRep.Phases, PackageBuildPhasePrep)
 
+	// Notify reporter that package build is starting
 	buildctx.Reporter.PackageBuildStarted(p)
-	defer func(err *error) {
-		pkgRep.Error = *err
-		buildctx.Reporter.PackageBuildFinished(p, pkgRep)
-	}(&err)
 
-	pkgdir := p.FilesystemSafeName() + "." + version
-	builddir := filepath.Join(buildctx.BuildDir(), pkgdir)
-	if _, err := os.Stat(builddir); !os.IsNotExist(err) {
-		err := os.RemoveAll(builddir)
-		if err != nil {
-			return err
-		}
-	}
-	err = os.MkdirAll(builddir, 0755)
-	if err != nil {
+	// Ensure we notify reporter when build finishes
+	defer func() {
+		pkgRep.Error = err
+		buildctx.Reporter.PackageBuildFinished(p, pkgRep)
+	}()
+
+	// Prepare build directory
+	builddir := filepath.Join(buildctx.BuildDir(), p.FilesystemSafeName()+"."+version)
+	if err := prepareDirectory(builddir); err != nil {
 		return err
 	}
 
-	if len(p.Sources) > 0 {
-		var (
-			parentedFiles    []string
-			notParentedFiles []string
-		)
-		for _, src := range p.Sources {
-			prefix := p.C.Origin + "/"
-			if strings.HasPrefix(src, prefix) {
-				parentedFiles = append(parentedFiles, strings.TrimPrefix(src, prefix))
-			} else {
-				notParentedFiles = append(notParentedFiles, src)
-			}
-		}
-
-		if len(parentedFiles) > 0 {
-			parentedFiles = append([]string{"--parents"}, parentedFiles...)
-			err = run(buildctx.Reporter, p, nil, p.C.Origin, "cp", append(parentedFiles, builddir)...)
-			if err != nil {
-				return err
-			}
-		}
-
-		if len(notParentedFiles) > 0 {
-			err = run(buildctx.Reporter, p, nil, p.C.Origin, "cp", append(notParentedFiles, builddir)...)
-			if err != nil {
-				return err
-			}
-		}
+	// Copy source files if needed
+	if err := copySources(p, builddir); err != nil {
+		return err
 	}
 
+	// Acquire build resources
+	buildctx.LimitConcurrentBuilds()
+	defer buildctx.ReleaseConcurrentBuild()
+
+	// Build the package based on its type
 	var (
 		result, _ = buildctx.LocalCache.Location(p)
 		bld       *packageBuild
 		sources   fileset
 	)
-
-	buildctx.LimitConcurrentBuilds()
-	defer buildctx.ReleaseConcurrentBuild()
 
 	switch p.Type {
 	case YarnPackage:
@@ -728,20 +708,22 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	case GenericPackage:
 		bld, err = p.buildGeneric(buildctx, builddir, result)
 	default:
-		err = xerrors.Errorf("cannot build package type: %s", p.Type)
+		return xerrors.Errorf("cannot build package type: %s", p.Type)
 	}
+
 	if err != nil {
 		return err
 	}
 
+	// Handle provenance if enabled
 	now := time.Now()
 	if p.C.W.Provenance.Enabled {
-		sources, err = computeFileset(builddir)
-		if err != nil {
+		if sources, err = computeFileset(builddir); err != nil {
 			return err
 		}
 	}
 
+	// Execute build phases
 	for _, phase := range []PackageBuildPhase{
 		PackageBuildPhasePrep,
 		PackageBuildPhasePull,
@@ -749,77 +731,125 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		PackageBuildPhaseTest,
 		PackageBuildPhaseBuild,
 	} {
-		cmds := bld.Commands[phase]
-		if len(cmds) == 0 {
-			continue
-		}
-		if phase != PackageBuildPhasePrep {
-			pkgRep.phaseEnter[phase] = time.Now()
-			pkgRep.Phases = append(pkgRep.Phases, phase)
-		}
-		log.WithField("phase", phase).WithField("package", p.FullName()).WithField("commands", bld.Commands[phase]).Debug("running commands")
-		err = executeCommandsForPackage(buildctx, p, builddir, cmds)
-		pkgRep.phaseDone[phase] = time.Now()
-		if err != nil {
+		if err := executeBuildPhase(buildctx, p, builddir, bld, phase, pkgRep); err != nil {
 			return err
 		}
 	}
 
+	// Handle provenance subjects
 	if p.C.W.Provenance.Enabled {
-		var (
-			subjects  []in_toto.Subject
-			resultDir = builddir
-		)
-		if bld.Subjects != nil {
-			subjects, err = bld.Subjects()
-			if err != nil {
-				return err
-			}
-		} else if bld.PostBuild != nil {
-			subjects, resultDir, err = bld.PostBuild(sources)
-			if err != nil {
-				return err
-			}
-		} else {
-			postBuild, err := computeFileset(builddir)
-			if err != nil {
-				return err
-			}
-			subjects, err = postBuild.Sub(sources).Subjects(builddir)
-			if err != nil {
-				return err
-			}
-		}
-
-		err = writeProvenance(p, buildctx, resultDir, subjects, now)
-		if err != nil {
+		if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
 			return err
 		}
 	}
 
+	// Handle test coverage if available
 	if bld.TestCoverage != nil {
 		coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
 		if err != nil {
 			return err
 		}
-
 		pkgRep.TestCoverageAvailable = true
 		pkgRep.TestCoveragePercentage = coverage
 		pkgRep.FunctionsWithoutTest = funcsWithoutTest
 		pkgRep.FunctionsWithTest = funcsWithTest
 	}
 
-	err = executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage])
-	if err != nil {
+	// Package the build results
+	if err := executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage]); err != nil {
 		return err
 	}
 
-	err = buildctx.RegisterNewlyBuilt(p)
-	if err != nil {
-		return err
+	// Register newly built package
+	return buildctx.RegisterNewlyBuilt(p)
+}
+
+func prepareDirectory(dir string) error {
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
 	}
+	return os.MkdirAll(dir, 0755)
+}
+
+func copySources(p *Package, builddir string) error {
+	if len(p.Sources) == 0 {
+		return nil
+	}
+
+	var parentedFiles, notParentedFiles []string
+	prefix := p.C.Origin + "/"
+
+	for _, src := range p.Sources {
+		if strings.HasPrefix(src, prefix) {
+			parentedFiles = append(parentedFiles, strings.TrimPrefix(src, prefix))
+		} else {
+			notParentedFiles = append(notParentedFiles, src)
+		}
+	}
+
+	if len(parentedFiles) > 0 {
+		args := append([]string{"--parents"}, parentedFiles...)
+		args = append(args, builddir)
+		if err := run(nil, p, nil, p.C.Origin, "cp", args...); err != nil {
+			return err
+		}
+	}
+
+	if len(notParentedFiles) > 0 {
+		args := append(notParentedFiles, builddir)
+		if err := run(nil, p, nil, p.C.Origin, "cp", args...); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func executeBuildPhase(buildctx *buildContext, p *Package, builddir string, bld *packageBuild, phase PackageBuildPhase, pkgRep *PackageBuildReport) error {
+	cmds := bld.Commands[phase]
+	if len(cmds) == 0 {
+		return nil
+	}
+
+	if phase != PackageBuildPhasePrep {
+		pkgRep.phaseEnter[phase] = time.Now()
+		pkgRep.Phases = append(pkgRep.Phases, phase)
+	}
+
+	log.WithField("phase", phase).WithField("package", p.FullName()).WithField("commands", bld.Commands[phase]).Debug("running commands")
+
+	err := executeCommandsForPackage(buildctx, p, builddir, cmds)
+	pkgRep.phaseDone[phase] = time.Now()
 
 	return err
+}
+
+func handleProvenance(p *Package, buildctx *buildContext, builddir string, bld *packageBuild, sources fileset, now time.Time) error {
+	var (
+		subjects  []in_toto.Subject
+		resultDir = builddir
+		err       error
+	)
+
+	if bld.Subjects != nil {
+		subjects, err = bld.Subjects()
+	} else if bld.PostBuild != nil {
+		subjects, resultDir, err = bld.PostBuild(sources)
+	} else {
+		postBuild, err := computeFileset(builddir)
+		if err != nil {
+			return err
+		}
+		subjects, err = postBuild.Sub(sources).Subjects(builddir)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return writeProvenance(p, buildctx, resultDir, subjects, now)
 }
 
 // Collects the minimal set of packages to download from the remote cache
@@ -841,12 +871,13 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 		// If the package is in the remote cache then we want to download it
 		toDownload[p] = struct{}{}
 
-		// For Generic and Docker packages we can short-circuit here.
-		// For Yarn and Go we can not, see comment below for details.
-		switch p.Type {
-		case GenericPackage, DockerPackage:
-			return
-		}
+		// If we don't download the package is going to be built (missing in local cache)
+		// // For Generic and Docker packages we can short-circuit here.
+		// // For Yarn and Go we can not, see comment below for details.
+		// switch p.Type {
+		// case GenericPackage, DockerPackage:
+		// 	return
+		// }
 	}
 
 	var deps []*Package
@@ -1535,13 +1566,10 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			if len(inspectRes) == 0 {
 				return nil, xerrors.Errorf("did not receive a proper Docker inspect response")
 			}
-
-			// Parse the image ID to extract the digest components
 			segs := strings.Split(inspectRes[0].ID, ":")
 			if len(segs) != 2 {
 				return nil, xerrors.Errorf("docker inspect returned invalid digest: %s", inspectRes[0].ID)
 			}
-
 			digest := common.DigestSet{
 				segs[0]: segs[1],
 			}
@@ -1671,17 +1699,52 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	// shortcut: no command == empty package
 	if len(cfg.Commands) == 0 && len(cfg.Test) == 0 {
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
-	}
 
-	compressArg := getCompressionArg(buildctx)
-	tarArgs := []string{"--sparse", "-cf", result}
-	if compressArg != "" {
-		tarArgs = append(tarArgs, compressArg)
-	}
+		// Even for empty packages, we need to handle dependencies
+		var commands [][]string
+		for _, dep := range p.GetDependencies() {
+			fn, exists := buildctx.LocalCache.Location(dep)
+			if !exists {
+				return nil, PkgNotBuiltErr{dep}
+			}
 
-	// if provenance is enabled, we have to make sure we capture the bundle
-	if p.C.W.Provenance.Enabled {
-		tarArgs = append(tarArgs, "./"+provenanceBundleFilename)
+			tgt := p.BuildLayoutLocation(dep)
+			commands = append(commands, [][]string{
+				{"mkdir", tgt},
+				{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
+			}...)
+		}
+
+		compressArg := getCompressionArg(buildctx)
+		tarArgs := []string{"--sparse", "-cf", result}
+		if compressArg != "" {
+			tarArgs = append(tarArgs, compressArg)
+		}
+
+		// if provenance is enabled, we have to make sure we capture the bundle
+		if p.C.W.Provenance.Enabled {
+			tarArgs = append(tarArgs, "./"+provenanceBundleFilename)
+			return &packageBuild{
+				Commands: map[PackageBuildPhase][][]string{
+					PackageBuildPhaseBuild:   commands,
+					PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
+				},
+			}, nil
+		}
+
+		if len(commands) > 0 {
+			// If we have dependencies, include them in the tar
+			tarArgs = append(tarArgs, ".")
+			return &packageBuild{
+				Commands: map[PackageBuildPhase][][]string{
+					PackageBuildPhaseBuild:   commands,
+					PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
+				},
+			}, nil
+		}
+
+		// Truly empty package with no dependencies
+		tarArgs = append(tarArgs, "--files-from", "/dev/null")
 		return &packageBuild{
 			Commands: map[PackageBuildPhase][][]string{
 				PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
@@ -1689,9 +1752,36 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		}, nil
 	}
 
-	tarArgs = append(tarArgs, "--files-from", "/dev/null")
+	var commands [][]string
+	for _, dep := range p.GetDependencies() {
+		fn, exists := buildctx.LocalCache.Location(dep)
+		if !exists {
+			return nil, PkgNotBuiltErr{dep}
+		}
+
+		tgt := p.BuildLayoutLocation(dep)
+		commands = append(commands, [][]string{
+			{"mkdir", tgt},
+			{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
+		}...)
+	}
+
+	commands = append(commands, p.PreparationCommands...)
+	commands = append(commands, cfg.Commands...)
+	if !cfg.DontTest && !buildctx.DontTest {
+		commands = append(commands, cfg.Test...)
+	}
+
+	compressArg := getCompressionArg(buildctx)
+	tarArgs := []string{"--sparse", "-cf", result}
+	if compressArg != "" {
+		tarArgs = append(tarArgs, compressArg)
+	}
+	tarArgs = append(tarArgs, ".")
+
 	return &packageBuild{
 		Commands: map[PackageBuildPhase][][]string{
+			PackageBuildPhaseBuild:   commands,
 			PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
 		},
 	}, nil
@@ -1740,7 +1830,9 @@ type reporterStream struct {
 }
 
 func (s *reporterStream) Write(buf []byte) (n int, err error) {
-	s.R.PackageBuildLog(s.P, s.IsErr, buf)
+	if s.R != nil {
+		s.R.PackageBuildLog(s.P, s.IsErr, buf)
+	}
 	return len(buf), nil
 }
 

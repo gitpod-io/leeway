@@ -405,10 +405,6 @@ func (s *S3Storage) ValidateObject(ctx context.Context, key, localPath string) e
 		return fmt.Errorf("downloaded file is empty")
 	}
 
-	// Validate the checksum if available
-	// We don't have access to the response headers here directly,
-	// but the AWS SDK should have already validated the checksum
-	// if ChecksumMode was enabled in the request
 	log.WithFields(log.Fields{
 		"path": localPath,
 		"size": info.Size(),
@@ -434,36 +430,38 @@ func (s *S3Storage) GetObject(ctx context.Context, key string, dest string) (int
 	}
 	defer file.Close()
 
+	// Set up cleanup in case of error
+	var downloadErr error
+	defer func() {
+		if downloadErr != nil {
+			os.Remove(dest)
+		}
+	}()
+
 	input := &s3.GetObjectInput{
-		Bucket:       aws.String(s.bucketName),
-		Key:          aws.String(key),
-		ChecksumMode: types.ChecksumModeEnabled,
+		Bucket: aws.String(s.bucketName),
+		Key:    aws.String(key),
 	}
 
-	n, err := downloader.Download(ctx, file, input)
-
-	if err != nil {
-		// Remove the partially downloaded file if there was an error
-		os.Remove(dest)
-
+	n, downloadErr := downloader.Download(ctx, file, input)
+	if downloadErr != nil {
 		// Check for various "not found" error types
 		var nsk *types.NoSuchKey
-		if errors.As(err, &nsk) {
-			return 0, fmt.Errorf("object not found: %w", err)
+		if errors.As(downloadErr, &nsk) {
+			return 0, fmt.Errorf("object not found: %w", downloadErr)
 		}
 
 		// Also handle 404 NotFound errors which might not be properly wrapped
-		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "404") {
-			return 0, fmt.Errorf("object not found: %w", err)
+		if strings.Contains(downloadErr.Error(), "NotFound") || strings.Contains(downloadErr.Error(), "404") {
+			return 0, fmt.Errorf("object not found: %w", downloadErr)
 		}
 
-		return 0, fmt.Errorf("failed to download object: %w", err)
+		return 0, fmt.Errorf("failed to download object: %w", downloadErr)
 	}
 
 	// Validate the downloaded file
 	if err := s.ValidateObject(ctx, key, dest); err != nil {
-		// Remove the invalid file
-		os.Remove(dest)
+		downloadErr = err
 		return 0, fmt.Errorf("downloaded object validation failed: %w", err)
 	}
 
@@ -482,11 +480,11 @@ func (s *S3Storage) UploadObject(ctx context.Context, key string, src string) er
 		u.PartSize = defaultS3PartSize
 	})
 
+	// For multipart uploads, we use a different approach with checksums
 	input := &s3.PutObjectInput{
-		Bucket:            aws.String(s.bucketName),
-		Key:               aws.String(key),
-		Body:              file,
-		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+		Bucket: aws.String(s.bucketName),
+		Key:    aws.String(key),
+		Body:   file,
 	}
 
 	_, err = uploader.Upload(ctx, input)
