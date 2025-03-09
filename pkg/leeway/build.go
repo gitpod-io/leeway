@@ -446,15 +446,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return err
 	}
 
-	pkgsInRemoteCacheMap := make(map[*Package]struct{})
-	// convert pkgsInRemoteCache to map[*Package]struct{}
-	for p := range pkgsInRemoteCache {
-		for _, pkg := range allpkg {
-			if pkg.FullName() == p.FullName() {
-				pkgsInRemoteCacheMap[pkg] = struct{}{}
-			}
-		}
-	}
+	pkgsInRemoteCacheMap := toPackageMap(pkgsInRemoteCache)
 
 	pkgsWillBeDownloaded := make(map[*Package]struct{})
 	pkg.packagesToDownload(pkgsInLocalCache, pkgsInRemoteCacheMap, pkgsWillBeDownloaded)
