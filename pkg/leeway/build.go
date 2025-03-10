@@ -864,14 +864,6 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	if existsInRemoteCache {
 		// If the package is in the remote cache then we want to download it
 		toDownload[p] = struct{}{}
-
-		// If we don't download the package is going to be built (missing in local cache)
-		// // For Generic and Docker packages we can short-circuit here.
-		// // For Yarn and Go we can not, see comment below for details.
-		// switch p.Type {
-		// case GenericPackage, DockerPackage:
-		// 	return
-		// }
 	}
 
 	var deps []*Package

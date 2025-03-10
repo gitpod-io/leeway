@@ -209,8 +209,19 @@ func (p *Script) synthesizePackagesWorkdir(buildCtx *buildContext) (path string,
 			return
 		}
 
+		var untarCmd []string
+		untarCmd, err = BuildUnTarCommand(
+			WithInputFile(br),
+			WithTargetDir(loc),
+			WithAutoDetectCompression(true),
+		)
+		if err != nil {
+			err = xerrors.Errorf("cannot build untar command for %s: %w", dep.FullName(), err)
+			return
+		}
+
 		var out []byte
-		cmd := exec.Command("tar", "--sparse", "-xzf", br)
+		cmd := exec.Command(untarCmd[0], untarCmd[1:]...)
 		cmd.Dir = loc
 		out, err = cmd.CombinedOutput()
 		if err != nil {
