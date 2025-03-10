@@ -22,15 +22,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gitpod-io/leeway/pkg/leeway/cache"
-	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
 	"github.com/in-toto/in-toto-golang/in_toto"
 	"github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/common"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
+
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
 )
 
 // PkgNotBuiltErr is used when a package's dependency hasn't been built yet
@@ -438,21 +440,16 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToCheckRemoteCache = append(pkgsToCheckRemoteCache, p)
 	}
 
-	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(context.Background(), toPackageInterface(pkgsToCheckRemoteCache))
+	pkgsToCheckRemoteCacheCache := toPackageInterface(pkgsToCheckRemoteCache)
+	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(context.Background(), pkgsToCheckRemoteCacheCache)
 	if err != nil {
-		log.WithError(err).Warn("failed to check remote cache, proceeding with local build")
-		pkgsInRemoteCache = make(map[cache.Package]struct{})
+		return err
 	}
 
-	// Log packages that will be built locally
-	for _, p := range pkgsToCheckRemoteCache {
-		if _, exists := pkgsInRemoteCache[p]; !exists {
-			log.WithField("package", p.FullName()).Debug("package not found in remote cache, will build locally")
-		}
-	}
+	pkgsInRemoteCacheMap := toPackageMap(pkgsInRemoteCache)
 
 	pkgsWillBeDownloaded := make(map[*Package]struct{})
-	pkg.packagesToDownload(pkgsInLocalCache, toPackageMap(pkgsInRemoteCache), pkgsWillBeDownloaded)
+	pkg.packagesToDownload(pkgsInLocalCache, pkgsInRemoteCacheMap, pkgsWillBeDownloaded)
 
 	pkgstatus := make(map[*Package]PackageBuildStatus)
 	unresolvedArgs := make(map[string][]string)
@@ -496,7 +493,13 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToDownload = append(pkgsToDownload, p)
 	}
 
-	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, toPackageInterface(pkgsToDownload))
+	// Convert []*Package to []cache.Package
+	pkgsToDownloadCache := make([]cache.Package, len(pkgsToDownload))
+	for i, p := range pkgsToDownload {
+		pkgsToDownloadCache[i] = p
+	}
+
+	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, pkgsToDownloadCache)
 	if err != nil {
 		return err
 	}
@@ -529,10 +532,18 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	buildErr := pkg.build(ctx)
-	cacheErr := ctx.RemoteCache.Upload(context.Background(), ctx.LocalCache, toPackageInterface(ctx.GetNewPackagesForCache()))
+
+	pkgsToUpload := ctx.GetNewPackagesForCache()
+	// Convert []*Package to []cache.Package
+	pkgsToUploadCache := make([]cache.Package, len(pkgsToUpload))
+	for i, p := range pkgsToUpload {
+		pkgsToUploadCache[i] = p
+	}
+
+	cacheErr := ctx.RemoteCache.Upload(context.Background(), ctx.LocalCache, pkgsToUploadCache)
 
 	if buildErr != nil {
-		// We deliberately swallowed the target pacakge build error as that will have already been reported using the reporter.
+		// We deliberately swallow the target pacakge build error as that will have already been reported using the reporter.
 		return xerrors.Errorf("build failed")
 	}
 	if cacheErr != nil {
@@ -588,130 +599,96 @@ func writeBuildPlan(out io.Writer, pkg *Package, status map[*Package]PackageBuil
 	return nil
 }
 
-func (p *Package) buildDependencies(buildctx *buildContext) (err error) {
+func (p *Package) buildDependencies(buildctx *buildContext) error {
 	deps := p.GetDependencies()
 	if deps == nil {
 		return xerrors.Errorf("package \"%s\" is not linked", p.FullName())
 	}
 
-	failchan := make(chan error)
-	donechan := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(len(p.GetDependencies()))
-
-	for _, dep := range p.GetDependencies() {
-		go func(dep *Package) {
-			err := dep.build(buildctx)
-			if err != nil {
-				failchan <- err
-			}
-			wg.Done()
-		}(dep)
-	}
-	go func() {
-		wg.Wait()
-		donechan <- struct{}{}
-	}()
-
-	select {
-	case err := <-failchan:
-		return err
-	case <-donechan:
+	// No dependencies means nothing to build
+	if len(deps) == 0 {
 		return nil
 	}
+
+	// Use errgroup to simplify error handling and synchronization
+	g := new(errgroup.Group)
+
+	for _, dep := range deps {
+		// Capture the dependency in a local variable to avoid closure issues
+		d := dep
+		g.Go(func() error {
+			return d.build(buildctx)
+		})
+	}
+
+	// Wait for all goroutines to complete, returning the first error encountered
+	return g.Wait()
 }
 
-func (p *Package) build(buildctx *buildContext) (err error) {
+func (p *Package) build(buildctx *buildContext) error {
+	// Try to obtain lock for building this package
 	doBuild := buildctx.ObtainBuildLock(p)
 	if !doBuild {
+		// Another goroutine is already building this package
 		return nil
 	}
 	defer buildctx.ReleaseBuildLock(p)
 
+	// Get package version
 	version, err := p.Version()
 	if err != nil {
 		return err
 	}
 
-	err = p.buildDependencies(buildctx)
-	if err != nil {
+	// Build dependencies first
+	if err := p.buildDependencies(buildctx); err != nil {
 		return err
 	}
 
-	// Return early if the package is already built. We're explicitly performing this check after having built all the dependencies.
-	//  Previously we had it before, but that resulted in failed builds as there's no guarantee that the cache will contain transitive dependencies; in our case they were sometimes evicted from the cache due to S3 lifecycle rules
-	_, alreadyBuilt := buildctx.LocalCache.Location(p)
-	if p.Ephemeral {
-		// ephemeral packages always require a rebuild
-	} else if alreadyBuilt {
+	// Skip if package is already built (except for ephemeral packages)
+	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
 		log.WithField("package", p.FullName()).Debug("already built")
 		return nil
 	}
 
+	// Initialize package build report
 	pkgRep := &PackageBuildReport{
 		phaseEnter: make(map[PackageBuildPhase]time.Time),
 		phaseDone:  make(map[PackageBuildPhase]time.Time),
+		Phases:     []PackageBuildPhase{PackageBuildPhasePrep},
 	}
 	pkgRep.phaseEnter[PackageBuildPhasePrep] = time.Now()
-	pkgRep.Phases = append(pkgRep.Phases, PackageBuildPhasePrep)
 
+	// Notify reporter that package build is starting
 	buildctx.Reporter.PackageBuildStarted(p)
-	defer func(err *error) {
-		pkgRep.Error = *err
-		buildctx.Reporter.PackageBuildFinished(p, pkgRep)
-	}(&err)
 
-	pkgdir := p.FilesystemSafeName() + "." + version
-	builddir := filepath.Join(buildctx.BuildDir(), pkgdir)
-	if _, err := os.Stat(builddir); !os.IsNotExist(err) {
-		err := os.RemoveAll(builddir)
-		if err != nil {
-			return err
-		}
-	}
-	err = os.MkdirAll(builddir, 0755)
-	if err != nil {
+	// Ensure we notify reporter when build finishes
+	defer func() {
+		pkgRep.Error = err
+		buildctx.Reporter.PackageBuildFinished(p, pkgRep)
+	}()
+
+	// Prepare build directory
+	builddir := filepath.Join(buildctx.BuildDir(), p.FilesystemSafeName()+"."+version)
+	if err := prepareDirectory(builddir); err != nil {
 		return err
 	}
 
-	if len(p.Sources) > 0 {
-		var (
-			parentedFiles    []string
-			notParentedFiles []string
-		)
-		for _, src := range p.Sources {
-			prefix := p.C.Origin + "/"
-			if strings.HasPrefix(src, prefix) {
-				parentedFiles = append(parentedFiles, strings.TrimPrefix(src, prefix))
-			} else {
-				notParentedFiles = append(notParentedFiles, src)
-			}
-		}
-
-		if len(parentedFiles) > 0 {
-			parentedFiles = append([]string{"--parents"}, parentedFiles...)
-			err = run(buildctx.Reporter, p, nil, p.C.Origin, "cp", append(parentedFiles, builddir)...)
-			if err != nil {
-				return err
-			}
-		}
-
-		if len(notParentedFiles) > 0 {
-			err = run(buildctx.Reporter, p, nil, p.C.Origin, "cp", append(notParentedFiles, builddir)...)
-			if err != nil {
-				return err
-			}
-		}
+	// Copy source files if needed
+	if err := copySources(p, builddir); err != nil {
+		return err
 	}
 
+	// Acquire build resources
+	buildctx.LimitConcurrentBuilds()
+	defer buildctx.ReleaseConcurrentBuild()
+
+	// Build the package based on its type
 	var (
 		result, _ = buildctx.LocalCache.Location(p)
 		bld       *packageBuild
 		sources   fileset
 	)
-
-	buildctx.LimitConcurrentBuilds()
-	defer buildctx.ReleaseConcurrentBuild()
 
 	switch p.Type {
 	case YarnPackage:
@@ -723,20 +700,22 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	case GenericPackage:
 		bld, err = p.buildGeneric(buildctx, builddir, result)
 	default:
-		err = xerrors.Errorf("cannot build package type: %s", p.Type)
+		return xerrors.Errorf("cannot build package type: %s", p.Type)
 	}
+
 	if err != nil {
 		return err
 	}
 
+	// Handle provenance if enabled
 	now := time.Now()
 	if p.C.W.Provenance.Enabled {
-		sources, err = computeFileset(builddir)
-		if err != nil {
+		if sources, err = computeFileset(builddir); err != nil {
 			return err
 		}
 	}
 
+	// Execute build phases
 	for _, phase := range []PackageBuildPhase{
 		PackageBuildPhasePrep,
 		PackageBuildPhasePull,
@@ -744,77 +723,127 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		PackageBuildPhaseTest,
 		PackageBuildPhaseBuild,
 	} {
-		cmds := bld.Commands[phase]
-		if len(cmds) == 0 {
-			continue
-		}
-		if phase != PackageBuildPhasePrep {
-			pkgRep.phaseEnter[phase] = time.Now()
-			pkgRep.Phases = append(pkgRep.Phases, phase)
-		}
-		log.WithField("phase", phase).WithField("package", p.FullName()).WithField("commands", bld.Commands[phase]).Debug("running commands")
-		err = executeCommandsForPackage(buildctx, p, builddir, cmds)
-		pkgRep.phaseDone[phase] = time.Now()
-		if err != nil {
+		if err := executeBuildPhase(buildctx, p, builddir, bld, phase, pkgRep); err != nil {
 			return err
 		}
 	}
 
+	// Handle provenance subjects
 	if p.C.W.Provenance.Enabled {
-		var (
-			subjects  []in_toto.Subject
-			resultDir = builddir
-		)
-		if bld.Subjects != nil {
-			subjects, err = bld.Subjects()
-			if err != nil {
-				return err
-			}
-		} else if bld.PostBuild != nil {
-			subjects, resultDir, err = bld.PostBuild(sources)
-			if err != nil {
-				return err
-			}
-		} else {
-			postBuild, err := computeFileset(builddir)
-			if err != nil {
-				return err
-			}
-			subjects, err = postBuild.Sub(sources).Subjects(builddir)
-			if err != nil {
-				return err
-			}
-		}
-
-		err = writeProvenance(p, buildctx, resultDir, subjects, now)
-		if err != nil {
+		if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
 			return err
 		}
 	}
 
+	// Handle test coverage if available
 	if bld.TestCoverage != nil {
 		coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
 		if err != nil {
 			return err
 		}
-
 		pkgRep.TestCoverageAvailable = true
 		pkgRep.TestCoveragePercentage = coverage
 		pkgRep.FunctionsWithoutTest = funcsWithoutTest
 		pkgRep.FunctionsWithTest = funcsWithTest
 	}
 
-	err = executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage])
-	if err != nil {
-		return err
+	// Package the build results
+	if len(bld.Commands[PackageBuildPhasePackage]) > 0 {
+		if err := executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage]); err != nil {
+			return err
+		}
 	}
 
-	err = buildctx.RegisterNewlyBuilt(p)
-	if err != nil {
-		return err
+	// Register newly built package
+	return buildctx.RegisterNewlyBuilt(p)
+}
+
+func prepareDirectory(dir string) error {
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
 	}
+	return os.MkdirAll(dir, 0755)
+}
+
+func copySources(p *Package, builddir string) error {
+	if len(p.Sources) == 0 {
+		return nil
+	}
+
+	var parentedFiles, notParentedFiles []string
+	prefix := p.C.Origin + "/"
+
+	for _, src := range p.Sources {
+		if strings.HasPrefix(src, prefix) {
+			parentedFiles = append(parentedFiles, strings.TrimPrefix(src, prefix))
+		} else {
+			notParentedFiles = append(notParentedFiles, src)
+		}
+	}
+
+	if len(parentedFiles) > 0 {
+		args := append([]string{"--parents"}, parentedFiles...)
+		args = append(args, builddir)
+		if err := run(nil, p, nil, p.C.Origin, "cp", args...); err != nil {
+			return err
+		}
+	}
+
+	if len(notParentedFiles) > 0 {
+		args := append(notParentedFiles, builddir)
+		if err := run(nil, p, nil, p.C.Origin, "cp", args...); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func executeBuildPhase(buildctx *buildContext, p *Package, builddir string, bld *packageBuild, phase PackageBuildPhase, pkgRep *PackageBuildReport) error {
+	cmds := bld.Commands[phase]
+	if len(cmds) == 0 {
+		return nil
+	}
+
+	if phase != PackageBuildPhasePrep {
+		pkgRep.phaseEnter[phase] = time.Now()
+		pkgRep.Phases = append(pkgRep.Phases, phase)
+	}
+
+	log.WithField("phase", phase).WithField("package", p.FullName()).WithField("commands", bld.Commands[phase]).Debug("running commands")
+
+	err := executeCommandsForPackage(buildctx, p, builddir, cmds)
+	pkgRep.phaseDone[phase] = time.Now()
 
 	return err
+}
+
+func handleProvenance(p *Package, buildctx *buildContext, builddir string, bld *packageBuild, sources fileset, now time.Time) error {
+	var (
+		subjects  []in_toto.Subject
+		resultDir = builddir
+		err       error
+	)
+
+	if bld.Subjects != nil {
+		subjects, err = bld.Subjects()
+	} else if bld.PostBuild != nil {
+		subjects, resultDir, err = bld.PostBuild(sources)
+	} else {
+		var postBuild fileset
+		postBuild, err = computeFileset(builddir)
+		if err != nil {
+			return err
+		}
+		subjects, err = postBuild.Sub(sources).Subjects(builddir)
+	}
+	if err != nil {
+		return err
+	}
+
+	return writeProvenance(p, buildctx, resultDir, subjects, now)
 }
 
 // Collects the minimal set of packages to download from the remote cache
@@ -835,13 +864,6 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	if existsInRemoteCache {
 		// If the package is in the remote cache then we want to download it
 		toDownload[p] = struct{}{}
-
-		// For Generic and Docker packages we can short-circuit here.
-		// For Yarn and Go we can not, see comment below for details.
-		switch p.Type {
-		case GenericPackage, DockerPackage:
-			return
-		}
 	}
 
 	var deps []*Package
@@ -999,9 +1021,18 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			// make previously built package availabe through yarn lock
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"sh", "-c", fmt.Sprintf("tar Ozfx %s package/%s | sed '/resolved /c\\  resolved \"file://%s\"' >> yarn.lock", builtpkg, pkgYarnLock, builtpkg)})
 		} else {
+			untarCmd, err := BuildUnTarCommand(
+				WithInputFile(builtpkg),
+				WithTargetDir(tgt),
+				WithAutoDetectCompression(true),
+			)
+			if err != nil {
+				return nil, err
+			}
+
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				{"tar", "--sparse", "-xzf", builtpkg, "--no-same-owner", "-C", tgt},
+				untarCmd,
 			}...)
 		}
 	}
@@ -1120,7 +1151,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://./%s > _mirror/content_yarn.lock", dst)},
 			{"sh", "-c", "cat yarn.lock >> _mirror/content_yarn.lock"},
 			{"yarn", "pack", "--filename", dst},
-			{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_mirror", "."},
+			BuildTarCommand(
+				WithOutputFile(result),
+				WithWorkingDir("_mirror"),
+				WithCompression(!buildctx.DontCompress),
+			),
 		}...)
 		resultDir = "_mirror"
 	} else if cfg.Packaging == YarnLibrary {
@@ -1144,11 +1179,18 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			{"yarn", "pack", "--filename", pkg},
 			{"sh", "-c", fmt.Sprintf("cat yarn.lock %s > _pkg/yarn.lock", pkgYarnLock)},
 			{"yarn", "--cwd", "_pkg", "install", "--prod", "--frozen-lockfile"},
-			{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "-C", "_pkg", "."},
+			BuildTarCommand(
+				WithOutputFile(result),
+				WithWorkingDir("_pkg"),
+				WithCompression(!buildctx.DontCompress),
+			),
 		}...)
 		resultDir = "_pkg"
 	} else if cfg.Packaging == YarnArchive {
-		pkgCommands = append(pkgCommands, []string{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "."})
+		pkgCommands = append(pkgCommands, BuildTarCommand(
+			WithOutputFile(result),
+			WithCompression(!buildctx.DontCompress),
+		))
 	} else {
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
 	}
@@ -1246,9 +1288,18 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			}
 
 			tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
+			untarCmd, err := BuildUnTarCommand(
+				WithInputFile(builtpkg),
+				WithTargetDir(tgt),
+				WithAutoDetectCompression(true),
+			)
+			if err != nil {
+				return nil, err
+			}
+
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 				{"mkdir", tgt},
-				{"tar", "xfz", builtpkg, "--no-same-owner", "-C", tgt},
+				untarCmd,
 			}...)
 
 			if dep.Type != GoPackage {
@@ -1315,9 +1366,12 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	}
 
 	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"rm", "-rf", "_deps"})
-	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{
-		"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), ".",
-	})
+	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage],
+		BuildTarCommand(
+			WithOutputFile(result),
+			WithCompression(!buildctx.DontCompress),
+		),
+	)
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], [][]string{
 			{"sh", "-c", fmt.Sprintf(`if [ -f "%v" ]; then cp -f %v %v; fi`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.buildOptions.CoverageOutputPath)},
@@ -1411,9 +1465,17 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		}
 
 		tgt := p.BuildLayoutLocation(dep)
+		untarCmd, err := BuildUnTarCommand(
+			WithInputFile(fn),
+			WithTargetDir(tgt),
+			WithAutoDetectCompression(true),
+		)
+		if err != nil {
+			return nil, err
+		}
 		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
 			{"mkdir", tgt},
-			{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
+			untarCmd,
 		}...)
 
 		if dep.Type != DockerPackage {
@@ -1503,10 +1565,15 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		}
 		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", base64.StdEncoding.EncodeToString(consts), dockerMetadataFile)})
 
-		archiveCmd := []string{"tar", "--sparse", "-cf", result, fmt.Sprintf("--use-compress-program=%v", compressor), "./" + dockerImageNamesFiles, "./" + dockerMetadataFile}
+		sourcePaths := []string{fmt.Sprintf("./%s", dockerImageNamesFiles), fmt.Sprintf("./%s", dockerMetadataFile)}
 		if p.C.W.Provenance.Enabled {
-			archiveCmd = append(archiveCmd, "./"+provenanceBundleFilename)
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
 		}
+		archiveCmd := BuildTarCommand(
+			WithOutputFile(result),
+			WithSourcePaths(sourcePaths...),
+			WithCompression(!buildctx.DontCompress),
+		)
 		pkgCommands = append(pkgCommands, archiveCmd)
 
 		commands[PackageBuildPhasePackage] = pkgCommands
@@ -1534,7 +1601,6 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			if len(segs) != 2 {
 				return nil, xerrors.Errorf("docker inspect returned invalid digest: %s", inspectRes[0].ID)
 			}
-
 			digest := common.DigestSet{
 				segs[0]: segs[1],
 			}
@@ -1646,14 +1712,6 @@ func extractImageNameFromCache(pkgName, cacheBundleFN string) (imgname string, e
 	return "", nil
 }
 
-// Helper function to get compression arg based on DontCompress setting
-func getCompressionArg(ctx *buildContext) string {
-	if ctx.DontCompress {
-		return ""
-	}
-	return fmt.Sprintf("--use-compress-program=%v", compressor)
-}
-
 // Update buildGeneric to use compression arg helper
 func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
 	cfg, ok := p.Config.(GenericPkgConfig)
@@ -1665,26 +1723,64 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	if len(cfg.Commands) == 0 && len(cfg.Test) == 0 {
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
 
-		compressArg := getCompressionArg(buildctx)
-		tarArgs := []string{"--sparse", "-cf", result}
-		if compressArg != "" {
-			tarArgs = append(tarArgs, compressArg)
+		// Even for empty packages, we need to handle dependencies
+		var commands [][]string
+		for _, dep := range p.GetDependencies() {
+			fn, exists := buildctx.LocalCache.Location(dep)
+			if !exists {
+				return nil, PkgNotBuiltErr{dep}
+			}
+
+			tgt := p.BuildLayoutLocation(dep)
+
+			untarCmd, err := BuildUnTarCommand(
+				WithInputFile(fn),
+				WithTargetDir(tgt),
+				WithAutoDetectCompression(true),
+			)
+			if err != nil {
+				return nil, err
+			}
+			commands = append(commands, [][]string{
+				{"mkdir", tgt},
+				untarCmd,
+			}...)
 		}
 
-		// if provenance is enabled, we have to make sure we capture the bundle
+		// Use buildTarCommand directly which will handle compression internally
+		var tarCmd []string
 		if p.C.W.Provenance.Enabled {
-			tarArgs = append(tarArgs, "./"+provenanceBundleFilename)
+			tarCmd = BuildTarCommand(
+				WithOutputFile(result),
+				WithSourcePaths(fmt.Sprintf("./%s", provenanceBundleFilename)),
+				WithCompression(!buildctx.DontCompress),
+			)
 			return &packageBuild{
 				Commands: map[PackageBuildPhase][][]string{
-					PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
+					PackageBuildPhaseBuild:   commands,
+					PackageBuildPhasePackage: {tarCmd},
 				},
 			}, nil
 		}
 
-		tarArgs = append(tarArgs, "--files-from", "/dev/null")
+		if len(commands) > 0 {
+			return &packageBuild{
+				Commands: map[PackageBuildPhase][][]string{
+					PackageBuildPhaseBuild:   commands,
+					PackageBuildPhasePackage: {tarCmd},
+				},
+			}, nil
+		}
+
+		// Truly empty package with no dependencies
+		tarCmd = BuildTarCommand(
+			WithFilesFrom("/dev/null"),
+			WithCompression(!buildctx.DontCompress),
+		)
+
 		return &packageBuild{
 			Commands: map[PackageBuildPhase][][]string{
-				PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
+				PackageBuildPhasePackage: {tarCmd},
 			},
 		}, nil
 	}
@@ -1697,9 +1793,19 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		}
 
 		tgt := p.BuildLayoutLocation(dep)
+
+		untarCmd, err := BuildUnTarCommand(
+			WithInputFile(fn),
+			WithTargetDir(tgt),
+			WithAutoDetectCompression(true),
+		)
+		if err != nil {
+			return nil, err
+		}
+
 		commands = append(commands, [][]string{
 			{"mkdir", tgt},
-			{"tar", "--sparse", "-xzf", fn, "--no-same-owner", "-C", tgt},
+			untarCmd,
 		}...)
 	}
 
@@ -1709,17 +1815,15 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		commands = append(commands, cfg.Test...)
 	}
 
-	compressArg := getCompressionArg(buildctx)
-	tarArgs := []string{"--sparse", "-cf", result}
-	if compressArg != "" {
-		tarArgs = append(tarArgs, compressArg)
-	}
-	tarArgs = append(tarArgs, ".")
-
 	return &packageBuild{
 		Commands: map[PackageBuildPhase][][]string{
-			PackageBuildPhaseBuild:   commands,
-			PackageBuildPhasePackage: {append([]string{"tar"}, tarArgs...)},
+			PackageBuildPhaseBuild: commands,
+			PackageBuildPhasePackage: {
+				BuildTarCommand(
+					WithOutputFile(result),
+					WithCompression(!buildctx.DontCompress),
+				),
+			},
 		},
 	}, nil
 }
@@ -1735,6 +1839,9 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 	env := append(os.Environ(), p.Environment...)
 	env = append(env, fmt.Sprintf("LEEWAY_WORKSPACE_ROOT=%s", p.C.W.Origin))
 	for _, cmd := range commands {
+		if len(cmd) == 0 {
+			continue // Skip empty commands
+		}
 		err := run(buildctx.Reporter, p, env, wd, cmd[0], cmd[1:]...)
 		if err != nil {
 			return err
@@ -1767,7 +1874,9 @@ type reporterStream struct {
 }
 
 func (s *reporterStream) Write(buf []byte) (n int, err error) {
-	s.R.PackageBuildLog(s.P, s.IsErr, buf)
+	if s.R != nil {
+		s.R.PackageBuildLog(s.P, s.IsErr, buf)
+	}
 	return len(buf), nil
 }
 
@@ -1777,32 +1886,262 @@ func codecovComponentName(name string) string {
 	return strings.ToLower(component + "-coverage.out")
 }
 
-// Convert *Package slice to cache.Package slice
+// Convert *Package slice to cache.Package slice with improved logging
 func toPackageInterface(pkgs []*Package) []cache.Package {
 	result := make([]cache.Package, len(pkgs))
 	for i, p := range pkgs {
+		if p == nil {
+			log.WithField("index", i).Warn("Nil package encountered in conversion")
+			continue
+		}
 		result[i] = p
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"type":    fmt.Sprintf("%T", p),
+		}).Debug("Converting package to interface")
 	}
 	return result
 }
 
-// Convert map[cache.Package]struct{} to map[*Package]struct{}
+// Convert map[cache.Package]struct{} to map[*Package]struct{} with improved logging and error handling
 func toPackageMap(in map[cache.Package]struct{}) map[*Package]struct{} {
 	result := make(map[*Package]struct{})
 	for p := range in {
-		if pkg, ok := p.(*Package); ok {
-			result[pkg] = struct{}{}
+		if p == nil {
+			log.Warn("Nil package encountered in map conversion")
+			continue
 		}
+
+		pkg, ok := p.(*Package)
+		if !ok {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"type":    fmt.Sprintf("%T", p),
+			}).Warn("Failed to convert cache.Package to *Package")
+			continue
+		}
+
+		result[pkg] = struct{}{}
+		log.WithField("package", pkg.FullName()).Debug("Successfully converted package in map")
 	}
 	return result
 }
 
-// getTarArgs returns the appropriate tar arguments based on the platform.
-// On Linux, it includes the --sparse option for better handling of sparse files.
-// On other platforms (like macOS), it omits the --sparse option.
-func getTarArgs(args ...string) []string {
-	if runtime.GOOS == "linux" {
-		return append([]string{"--sparse"}, args...)
+// TarOptions represents configuration options for creating tar archives
+type TarOptions struct {
+	// OutputFile is the path to the output .tar or .tar.gz file
+	OutputFile string
+
+	// SourcePaths are the files/directories to include in the archive
+	SourcePaths []string
+
+	// WorkingDir changes to this directory before archiving (-C flag)
+	WorkingDir string
+
+	// UseCompression determines whether to apply compression
+	UseCompression bool
+
+	// FilesFrom specifies a file containing a list of files to include
+	FilesFrom string
+}
+
+// WithOutputFile sets the output file path for the tar archive
+func WithOutputFile(path string) func(*TarOptions) {
+	return func(opts *TarOptions) {
+		opts.OutputFile = path
 	}
-	return args
+}
+
+// WithSourcePaths adds files or directories to include in the archive
+func WithSourcePaths(paths ...string) func(*TarOptions) {
+	return func(opts *TarOptions) {
+		opts.SourcePaths = append(opts.SourcePaths, paths...)
+	}
+}
+
+// WithWorkingDir sets the working directory for the tar command
+func WithWorkingDir(dir string) func(*TarOptions) {
+	return func(opts *TarOptions) {
+		opts.WorkingDir = dir
+	}
+}
+
+// WithCompression enables compression for the tar archive
+func WithCompression(enabled bool) func(*TarOptions) {
+	return func(opts *TarOptions) {
+		opts.UseCompression = enabled
+	}
+}
+
+// WithFilesFrom specifies a file containing the list of files to archive
+func WithFilesFrom(filePath string) func(*TarOptions) {
+	return func(opts *TarOptions) {
+		opts.FilesFrom = filePath
+	}
+}
+
+// BuildTarCommand creates a platform-optimized tar command with the given options
+func BuildTarCommand(options ...func(*TarOptions)) []string {
+	// Initialize default options
+	opts := &TarOptions{
+		UseCompression: true, // Default to using compression
+	}
+
+	// Apply all option functions
+	for _, option := range options {
+		option(opts)
+	}
+
+	// Start building the command
+	cmd := []string{"tar"}
+
+	// Add Linux-specific optimizations
+	if runtime.GOOS == "linux" {
+		cmd = append(cmd, "--sparse")
+	}
+
+	// Handle files-from case specially
+	if opts.FilesFrom != "" {
+		return append(cmd, "--files-from", opts.FilesFrom)
+	}
+
+	// Basic create command
+	if opts.UseCompression {
+		if !strings.HasSuffix(opts.OutputFile, ".gz") {
+			opts.OutputFile = opts.OutputFile + ".gz"
+		}
+	}
+
+	cmd = append(cmd, "-cf", opts.OutputFile)
+
+	// Add working directory if specified
+	if opts.WorkingDir != "" {
+		cmd = append(cmd, "-C", opts.WorkingDir)
+	}
+
+	// Add compression if needed
+	if opts.UseCompression {
+		cmd = append(cmd, fmt.Sprintf("--use-compress-program=%v", compressor))
+	}
+
+	// Add source paths (or "." if none specified)
+	if len(opts.SourcePaths) > 0 {
+		cmd = append(cmd, opts.SourcePaths...)
+	} else {
+		cmd = append(cmd, ".")
+	}
+
+	return cmd
+}
+
+// UnTarOptions represents configuration options for extracting tar archives
+type UnTarOptions struct {
+	// InputFile is the path to the .tar or .tar.gz file to extract
+	InputFile string
+
+	// TargetDir is the directory where files should be extracted
+	TargetDir string
+
+	// PreserveSameOwner determines whether to preserve file ownership
+	PreserveSameOwner bool
+
+	// AutoDetectCompression will check if the file is compressed
+	AutoDetectCompression bool
+}
+
+// WithInputFile sets the input archive file path
+func WithInputFile(path string) func(*UnTarOptions) {
+	return func(opts *UnTarOptions) {
+		opts.InputFile = path
+	}
+}
+
+// WithTargetDir sets the directory where files will be extracted
+func WithTargetDir(dir string) func(*UnTarOptions) {
+	return func(opts *UnTarOptions) {
+		opts.TargetDir = dir
+	}
+}
+
+// WithPreserveSameOwner enables preserving file ownership
+func WithPreserveSameOwner(preserve bool) func(*UnTarOptions) {
+	return func(opts *UnTarOptions) {
+		opts.PreserveSameOwner = preserve
+	}
+}
+
+// WithAutoDetectCompression enables automatic detection of file compression
+func WithAutoDetectCompression(detect bool) func(*UnTarOptions) {
+	return func(opts *UnTarOptions) {
+		opts.AutoDetectCompression = detect
+	}
+}
+
+// isCompressedFile checks if a file is compressed by examining its header
+func isCompressedFile(filepath string) (bool, error) {
+	file, err := os.Open(filepath)
+	if err != nil {
+		return false, fmt.Errorf("failed to open file for compression detection: %w", err)
+	}
+	defer file.Close()
+
+	// Read the first few bytes to check for gzip magic number (1F 8B)
+	header := make([]byte, 2)
+	_, err = file.Read(header)
+	if err != nil {
+		return false, fmt.Errorf("failed to read file header: %w", err)
+	}
+
+	// Check for gzip magic number
+	return header[0] == 0x1F && header[1] == 0x8B, nil
+}
+
+// BuildUnTarCommand creates a command to extract tar archives
+func BuildUnTarCommand(options ...func(*UnTarOptions)) ([]string, error) {
+	// Initialize default options
+	opts := &UnTarOptions{
+		PreserveSameOwner:     false, // Default to not preserving ownership
+		AutoDetectCompression: true,  // Default to auto-detecting compression
+	}
+
+	// Apply all option functions
+	for _, option := range options {
+		option(opts)
+	}
+
+	// Start building the command
+	cmd := []string{"tar"}
+
+	// Add Linux-specific optimizations
+	if runtime.GOOS == "linux" {
+		cmd = append(cmd, "--sparse")
+	}
+
+	// Basic extraction command
+	cmd = append(cmd, "-xf", opts.InputFile)
+
+	// Add ownership flag if needed
+	if !opts.PreserveSameOwner {
+		cmd = append(cmd, "--no-same-owner")
+	}
+
+	// Add target directory if specified
+	if opts.TargetDir != "" {
+		cmd = append(cmd, "-C", opts.TargetDir)
+	}
+
+	// Handle compression if needed
+	if opts.AutoDetectCompression {
+		isCompressed, err := isCompressedFile(opts.InputFile)
+		if err != nil {
+			return nil, err
+		}
+		if isCompressed {
+			// Use the same compressor as in BuildTarCommand but with decompression flag
+			decompressFlag := fmt.Sprintf("--use-compress-program=%v -d", compressor)
+			cmd = append(cmd, decompressFlag)
+		}
+	}
+
+	return cmd, nil
 }

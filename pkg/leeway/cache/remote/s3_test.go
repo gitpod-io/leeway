@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,106 +194,93 @@ func TestS3Cache_Download(t *testing.T) {
 		t.Fatalf("failed to create test directories: %v", err)
 	}
 
+	// Mock local cache that will return paths in tmpDir
+	mockLocalCache := &struct{ cache.LocalCache }{
+		LocalCache: &testLocalCache{
+			baseDir: tmpDir,
+		},
+	}
+
 	tests := []struct {
-		name           string
-		packages       []cache.Package
-		mockGetObject  func(key string) error
-		localCache     *mockLocalCache
-		expectError    bool
-		expectedFiles  []string
-		expectedErrors []string
+		name          string
+		packages      []cache.Package
+		mockGetObject func(key string) (*s3.GetObjectOutput, error)
+		localCache    cache.LocalCache
+		expectedFiles []string
+		expectError   bool
 	}{
 		{
 			name: "downloads tar.gz package",
 			packages: []cache.Package{
-				&mockPackage{version: "v1"},
+				s3TestPackage{versionStr: "v1", fullName: "pkg1"},
 			},
-			mockGetObject: func(key string) error {
+			mockGetObject: func(key string) (*s3.GetObjectOutput, error) {
 				if key == "v1.tar.gz" {
-					return nil
+					// Return success and actually write the file
+					path := filepath.Join(tmpDir, "v1.tar.gz")
+					if err := os.WriteFile(path, []byte("test data"), 0644); err != nil {
+						return nil, err
+					}
+					return &s3.GetObjectOutput{
+						Body:          io.NopCloser(bytes.NewReader([]byte("test data"))),
+						ContentLength: aws.Int64(9), // length of "test data"
+					}, nil
 				}
-				return &types.NoSuchKey{}
+				return nil, &types.NoSuchKey{}
 			},
-			localCache: &mockLocalCache{
-				locations: map[string]string{
-					"v1": filepath.Join(tmpDir, "pkg1.tar.gz"),
-				},
-			},
-			expectedFiles: []string{"pkg1.tar.gz"},
+			localCache:    mockLocalCache,
+			expectedFiles: []string{"v1.tar.gz"},
 		},
 		{
 			name: "downloads tar package when tar.gz fails",
 			packages: []cache.Package{
-				&mockPackage{version: "v1"},
+				s3TestPackage{versionStr: "v2", fullName: "pkg2"},
 			},
-			mockGetObject: func(key string) error {
-				if key == "v1.tar.gz" {
-					return &types.NoSuchKey{}
+			mockGetObject: func(key string) (*s3.GetObjectOutput, error) {
+				if key == "v2.tar.gz" {
+					return nil, &types.NoSuchKey{}
 				}
-				if key == "v1.tar" {
-					return nil
+				if key == "v2.tar" {
+					// Return success and actually write the file
+					path := filepath.Join(tmpDir, "v2.tar")
+					if err := os.WriteFile(path, []byte("test data for tar"), 0644); err != nil {
+						return nil, err
+					}
+					return &s3.GetObjectOutput{
+						Body:          io.NopCloser(bytes.NewReader([]byte("test data for tar"))),
+						ContentLength: aws.Int64(16), // length of "test data for tar"
+					}, nil
 				}
-				return &types.NoSuchKey{}
+				return nil, &types.NoSuchKey{}
 			},
-			localCache: &mockLocalCache{
-				locations: map[string]string{
-					"v1": filepath.Join(tmpDir, "pkg1.tar"),
-				},
-			},
-			expectedFiles: []string{"pkg1.tar"},
+			localCache:    mockLocalCache,
+			expectedFiles: []string{"v2.tar"},
 		},
 		{
 			name: "fails when package not found",
 			packages: []cache.Package{
-				&mockPackage{version: "v1"},
+				s3TestPackage{versionStr: "v3", fullName: "pkg3"},
 			},
-			mockGetObject: func(key string) error {
-				return &types.NoSuchKey{}
+			mockGetObject: func(key string) (*s3.GetObjectOutput, error) {
+				return nil, &types.NoSuchKey{}
 			},
-			localCache: &mockLocalCache{
-				locations: map[string]string{
-					"v1": filepath.Join(tmpDir, "pkg1.tar.gz"),
-				},
-			},
-			expectError:   false,
+			localCache:    mockLocalCache,
 			expectedFiles: []string{},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create test directories and empty files for each test case
-			for _, path := range tt.localCache.locations {
-				dir := filepath.Dir(path)
-				if err := os.MkdirAll(dir, 0755); err != nil {
-					t.Fatalf("failed to create directory %s: %v", dir, err)
-				}
+			// Clean up any existing files
+			files, _ := filepath.Glob(filepath.Join(tmpDir, "*"))
+			for _, f := range files {
+				os.Remove(f)
 			}
 
 			mockClient := &mockS3Client{
 				getObjectFunc: func(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
-					err := tt.mockGetObject(*params.Key)
-					if err != nil {
-						return nil, err
-					}
-
-					// Get the destination path from the test case
-					version, err := tt.packages[0].Version()
-					if err != nil {
-						t.Fatalf("failed to get version: %v", err)
-					}
-					path := tt.localCache.locations[version]
-
-					// Write test data directly to the file
-					if err := os.WriteFile(path, []byte("test data"), 0644); err != nil {
-						t.Fatalf("failed to write test data: %v", err)
-					}
-
-					// Return an empty reader since we've already written the file
-					return &s3.GetObjectOutput{
-						Body:          io.NopCloser(bytes.NewReader(nil)),
-						ContentLength: aws.Int64(9), // length of "test data"
-					}, nil
+					output, err := tt.mockGetObject(*params.Key)
+					return output, err
 				},
 			}
 
@@ -320,7 +308,9 @@ func TestS3Cache_Download(t *testing.T) {
 			for _, expectedFile := range tt.expectedFiles {
 				path := filepath.Join(tmpDir, expectedFile)
 				if _, err := os.Stat(path); err != nil {
-					t.Errorf("expected file %s to exist: %v", path, err)
+					// Try to list all files in the directory to help debugging
+					files, _ := filepath.Glob(filepath.Join(tmpDir, "*"))
+					t.Errorf("expected file %s to exist: %v. Directory contents: %v", path, err, files)
 					continue
 				}
 				// Verify file contents
@@ -329,8 +319,12 @@ func TestS3Cache_Download(t *testing.T) {
 					t.Errorf("failed to read file %s: %v", path, err)
 					continue
 				}
-				if string(data) != "test data" {
-					t.Errorf("expected file %s to contain 'test data', got %q", path, string(data))
+				expectedContent := "test data"
+				if strings.HasSuffix(expectedFile, ".tar") {
+					expectedContent = "test data for tar"
+				}
+				if string(data) != expectedContent {
+					t.Errorf("expected file %s to contain %q, got %q", path, expectedContent, string(data))
 				}
 			}
 		})
@@ -432,4 +426,31 @@ func TestS3Cache_Upload(t *testing.T) {
 			}
 		})
 	}
+}
+
+// testLocalCache is a simplified local cache implementation for testing
+type testLocalCache struct {
+	baseDir string
+}
+
+func (c *testLocalCache) Location(pkg cache.Package) (path string, exists bool) {
+	version, err := pkg.Version()
+	if err != nil {
+		return "", false
+	}
+
+	// Check for .tar.gz file first
+	gzPath := filepath.Join(c.baseDir, fmt.Sprintf("%s.tar.gz", version))
+	if _, err := os.Stat(gzPath); err == nil {
+		return gzPath, true
+	}
+
+	// Fall back to .tar file
+	tarPath := filepath.Join(c.baseDir, fmt.Sprintf("%s.tar", version))
+	if _, err := os.Stat(tarPath); err == nil {
+		return tarPath, true
+	}
+
+	// Neither exists - return the tar.gz path for future creation
+	return gzPath, false
 }

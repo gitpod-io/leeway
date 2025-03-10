@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
+	log "github.com/sirupsen/logrus"
 )
 
 // FilesystemCache implements a flat folder cache
@@ -28,6 +29,13 @@ func NewFilesystemCache(location string) (*FilesystemCache, error) {
 func (fsc *FilesystemCache) Location(pkg cache.Package) (path string, exists bool) {
 	version, err := pkg.Version()
 	if err != nil {
+		log.WithError(err).WithField("package", pkg.FullName()).Warn("Failed to get package version")
+		return "", false
+	}
+
+	// Ensure the cache directory exists first - do this unconditionally
+	if err := os.MkdirAll(fsc.Origin, 0755); err != nil {
+		log.WithError(err).WithField("dir", fsc.Origin).Warn("Failed to create cache directory")
 		return "", false
 	}
 
@@ -41,9 +49,11 @@ func (fsc *FilesystemCache) Location(pkg cache.Package) (path string, exists boo
 	tarPath := filepath.Join(fsc.Origin, fmt.Sprintf("%s.tar", version))
 	exists = fileExists(tarPath)
 
-	// Ensure parent directory exists for download operations
-	// This is safe to do even if we're just checking existence
-	_ = os.MkdirAll(filepath.Dir(tarPath), 0755)
+	// Always ensure the parent directory exists for this path
+	// This is critical for download operations to succeed
+	if err := os.MkdirAll(filepath.Dir(tarPath), 0755); err != nil {
+		log.WithError(err).WithField("dir", filepath.Dir(tarPath)).Warn("Failed to create directory for package")
+	}
 
 	return tarPath, exists
 }
