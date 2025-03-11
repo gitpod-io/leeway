@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/google/go-cmp/cmp"
 )
@@ -376,6 +377,24 @@ func TestS3Cache_Upload(t *testing.T) {
 				locations: map[string]string{},
 			},
 			expectError: true,
+		},
+		{
+			name: "403 forbidden error should not fail",
+			packages: []cache.Package{
+				&mockPackage{version: "v1"},
+			},
+			mockPutObject: func(key string) error {
+				return &smithy.GenericAPIError{
+					Code:    "Forbidden",
+					Message: "Access Denied",
+				}
+			},
+			localCache: &mockLocalCache{
+				locations: map[string]string{
+					"v1": filepath.Join(tmpDir, "pkg1.tar.gz"),
+				},
+			},
+			expectError: false,
 		},
 	}
 
