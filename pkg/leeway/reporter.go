@@ -220,8 +220,15 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRe
 		coverage = color.Sprintf("<fg=yellow>test coverage: %d%%</> <gray>(%d of %d functions have tests)</>\n", rep.TestCoveragePercentage, rep.FunctionsWithTest, rep.FunctionsWithTest+rep.FunctionsWithoutTest)
 	}
 	msg := color.Sprintf("%s<green>package build succeeded</> <gray>(%.2fs)</>\n", coverage, dur.Seconds())
+
 	if rep.Error != nil {
 		msg = color.Sprintf("<red>package build failed while %sing</>\n<white>Reason:</> %s\n", rep.LastPhase(), rep.Error)
+	} else {
+		var coverage string
+		if rep.TestCoverageAvailable {
+			coverage = color.Sprintf("<fg=yellow>test coverage: %d%%</> <gray>(%d of %d functions have tests)</>\n", rep.TestCoveragePercentage, rep.FunctionsWithTest, rep.FunctionsWithTest+rep.FunctionsWithoutTest)
+		}
+		msg = color.Sprintf("%s<green>package build succeded</> <gray>(%.2fs)</>\n", coverage, dur.Seconds())
 	}
 	//nolint:errcheck
 	io.WriteString(out, msg)
