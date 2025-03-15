@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
@@ -480,7 +481,6 @@ func (s *S3Storage) UploadObject(ctx context.Context, key string, src string) er
 		u.PartSize = defaultS3PartSize
 	})
 
-	// For multipart uploads, we use a different approach with checksums
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(s.bucketName),
 		Key:    aws.String(key),
@@ -489,6 +489,11 @@ func (s *S3Storage) UploadObject(ctx context.Context, key string, src string) er
 
 	_, err = uploader.Upload(ctx, input)
 	if err != nil {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "Forbidden" {
+			log.WithError(err).Warnf("permission denied while uploading object %s to S3 - continuing", key)
+			return nil
+		}
 		return fmt.Errorf("failed to upload object: %w", err)
 	}
 
