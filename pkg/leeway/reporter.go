@@ -178,7 +178,7 @@ func (r *ConsoleReporter) BuildFinished(pkg *Package, err error) {
 		return
 	}
 
-	color.Println("\n<green>build succeded</>")
+	color.Println("\n<green>build succeeded</>")
 }
 
 // PackageBuildStarted is called when a package build actually gets underway.
@@ -219,7 +219,7 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRe
 	if rep.TestCoverageAvailable {
 		coverage = color.Sprintf("<fg=yellow>test coverage: %d%%</> <gray>(%d of %d functions have tests)</>\n", rep.TestCoveragePercentage, rep.FunctionsWithTest, rep.FunctionsWithTest+rep.FunctionsWithoutTest)
 	}
-	msg := color.Sprintf("%s<green>package build succeded</> <gray>(%.2fs)</>\n", coverage, dur.Seconds())
+	msg := color.Sprintf("%s<green>package build succeeded</> <gray>(%.2fs)</>\n", coverage, dur.Seconds())
 	if rep.Error != nil {
 		msg = color.Sprintf("<red>package build failed while %sing</>\n<white>Reason:</> %s\n", rep.LastPhase(), rep.Error)
 	}
@@ -438,7 +438,7 @@ func (r *HTMLReporter) Report() {
 {{- range $pkg, $report := .Packages }}
 <h2 id="{{ $report.ID }}">{{ $report.StatusIcon }} {{ $pkg }}</h2>
 {{ if $report.HasError -}}
-<details open> 
+<details open>
 	<summary>Error message</summary>
 	<pre><code>{{ $report.Error }}</code></pre>
 </details>
