@@ -533,6 +533,13 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 
 	buildErr := pkg.build(ctx)
 
+	// Check for build errors immediately and return if there are any
+	if buildErr != nil {
+		// We deliberately swallow the target package build error as that will have already been reported using the reporter.
+		return xerrors.Errorf("build failed")
+	}
+
+	// Only proceed with cache upload if build succeeded
 	pkgsToUpload := ctx.GetNewPackagesForCache()
 	// Convert []*Package to []cache.Package
 	pkgsToUploadCache := make([]cache.Package, len(pkgsToUpload))
@@ -541,11 +548,6 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	cacheErr := ctx.RemoteCache.Upload(context.Background(), ctx.LocalCache, pkgsToUploadCache)
-
-	if buildErr != nil {
-		// We deliberately swallow the target pacakge build error as that will have already been reported using the reporter.
-		return xerrors.Errorf("build failed")
-	}
 	if cacheErr != nil {
 		return cacheErr
 	}

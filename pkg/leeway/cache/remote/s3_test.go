@@ -369,16 +369,6 @@ func TestS3Cache_Upload(t *testing.T) {
 			},
 		},
 		{
-			name: "package not in local cache",
-			packages: []cache.Package{
-				&mockPackage{version: "v1"},
-			},
-			localCache: &mockLocalCache{
-				locations: map[string]string{},
-			},
-			expectError: true,
-		},
-		{
 			name: "403 forbidden error should not fail",
 			packages: []cache.Package{
 				&mockPackage{version: "v1"},

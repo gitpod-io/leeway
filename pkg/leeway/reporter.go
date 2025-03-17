@@ -178,7 +178,7 @@ func (r *ConsoleReporter) BuildFinished(pkg *Package, err error) {
 		return
 	}
 
-	color.Println("\n<green>build succeded</>")
+	color.Println("\n<green>build succeeded</>")
 }
 
 // PackageBuildStarted is called when a package build actually gets underway.

@@ -114,6 +114,9 @@ func (s *S3Cache) processPackages(ctx context.Context, pkgs []cache.Package, fn 
 	}
 
 	if len(errs) > 0 {
+		// For upload operations, we want to log errors but not fail the entire build
+		// This is determined by the caller (Upload vs Download vs ExistingPackages)
+		log.WithField("errorCount", len(errs)).Debug("Some packages had errors during processing")
 		return fmt.Errorf("multiple errors occurred: %v", errs)
 	}
 
@@ -326,19 +329,42 @@ func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cac
 
 // Upload implements RemoteCache
 func (s *S3Cache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
-	return s.processPackages(ctx, pkgs, func(ctx context.Context, p cache.Package) error {
+	var uploadErrors []error
+
+	err := s.processPackages(ctx, pkgs, func(ctx context.Context, p cache.Package) error {
 		localPath, exists := src.Location(p)
 		if !exists {
-			return fmt.Errorf("package %s not found in local cache", p.FullName())
+			log.WithField("package", p.FullName()).Warn("package not found in local cache - skipping upload")
+			return nil // Skip but don't fail everything
 		}
 
 		key := filepath.Base(localPath)
 		if err := s.storage.UploadObject(ctx, key, localPath); err != nil {
-			return fmt.Errorf("failed to upload package %s: %w", p.FullName(), err)
+			log.WithError(err).WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     key,
+			}).Warn("failed to upload package to remote cache - continuing")
+			uploadErrors = append(uploadErrors, fmt.Errorf("package %s: %w", p.FullName(), err))
+			return nil // Don't fail the entire operation
 		}
 
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"key":     key,
+		}).Debug("successfully uploaded package to remote cache")
 		return nil
 	})
+
+	if err != nil {
+		log.WithError(err).Warn("errors occurred during upload to remote cache - continuing")
+		// Don't return the error to allow the build to continue
+	}
+
+	if len(uploadErrors) > 0 {
+		log.WithField("errorCount", len(uploadErrors)).Warn("some packages failed to upload to remote cache - continuing with build")
+	}
+
+	return nil // Always return nil to allow the build to continue
 }
 
 // s3ClientAPI is a subset of the S3 client interface we need
@@ -475,6 +501,7 @@ func (s *S3Storage) GetObject(ctx context.Context, key string, dest string) (int
 func (s *S3Storage) UploadObject(ctx context.Context, key string, src string) error {
 	file, err := os.Open(src)
 	if err != nil {
+		log.WithError(err).WithField("key", key).Warn("failed to open source file for upload")
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
 	defer file.Close()
@@ -492,10 +519,20 @@ func (s *S3Storage) UploadObject(ctx context.Context, key string, src string) er
 	_, err = uploader.Upload(ctx, input)
 	if err != nil {
 		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "Forbidden" {
-			log.WithError(err).Warnf("permission denied while uploading object %s to S3 - continuing", key)
-			return nil
+		if errors.As(err, &apiErr) {
+			if apiErr.ErrorCode() == "Forbidden" {
+				log.WithError(err).Warnf("permission denied while uploading object %s to S3 - continuing", key)
+				return nil
+			}
+			// Handle other API errors as warnings too
+			log.WithError(err).WithFields(log.Fields{
+				"key":       key,
+				"errorCode": apiErr.ErrorCode(),
+			}).Warn("S3 API error while uploading object - continuing")
+			return fmt.Errorf("S3 API error: %w", err)
 		}
+		// Handle non-API errors
+		log.WithError(err).WithField("key", key).Warn("failed to upload object - continuing")
 		return fmt.Errorf("failed to upload object: %w", err)
 	}
 
