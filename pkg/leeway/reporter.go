@@ -216,7 +216,7 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRe
 	r.mu.Unlock()
 
 	var msg string
-	if rep.Error != nil {
+  if rep.Error != nil {
 		msg = color.Sprintf("<red>package build failed while %sing</>\n<white>Reason:</> %s\n", rep.LastPhase(), rep.Error)
 	} else {
 		var coverage string
