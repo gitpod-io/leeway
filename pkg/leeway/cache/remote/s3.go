@@ -361,7 +361,9 @@ type S3Storage struct {
 
 // NewS3Storage creates a new S3 storage implementation
 func NewS3Storage(bucketName string, cfg *aws.Config) *S3Storage {
-	client := s3.NewFromConfig(*cfg)
+	client := s3.NewFromConfig(*cfg, func(o *s3.Options) {
+		o.DisableLogOutputChecksumValidationSkipped = true
+	})
 	return &S3Storage{
 		client:     client,
 		bucketName: bucketName,
