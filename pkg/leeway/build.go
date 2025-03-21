@@ -25,6 +25,7 @@ import (
 	"github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/common"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
@@ -174,35 +175,20 @@ func (c *buildContext) ObtainBuildLock(p *Package) (haveLock bool) {
 	key := p.FullName()
 
 	c.pkgLockCond.L.Lock()
-	defer c.pkgLockCond.L.Unlock()
-
 	if _, ok := c.pkgLocks[key]; !ok {
 		// no one's holding the lock at the moment
 		c.pkgLocks[key] = struct{}{}
-		log.WithField("package", key).Debug("obtained build lock for package")
+		c.pkgLockCond.L.Unlock()
 		return true
 	}
 
 	// someone else has the lock - wait for that to finish
-	log.WithField("package", key).Debug("waiting for package lock - another build is in progress")
-	waitStart := time.Now()
 	for _, ok := c.pkgLocks[key]; ok; _, ok = c.pkgLocks[key] {
+		log.WithField("package", key).Debug("waiting for package to be built")
 		c.pkgLockCond.Wait()
 	}
-	waitDuration := time.Since(waitStart)
-
-	// When we get here, the package has been built by another goroutine
-	// Check to see if it was successful by verifying it exists in the cache
-	if _, exists := c.LocalCache.Location(p); !p.Ephemeral && exists {
-		log.WithField("package", key).WithField("waitDuration", waitDuration).Debug("package was built by another goroutine")
-		return false
-	}
-
-	// The package was being built but isn't in the cache - this suggests
-	// the other build failed or was incomplete. We should attempt to build it again.
-	log.WithField("package", key).WithField("waitDuration", waitDuration).Warn("package was being built but not found in cache, acquiring lock again")
-	c.pkgLocks[key] = struct{}{}
-	return true
+	c.pkgLockCond.L.Unlock()
+	return false
 }
 
 // ReleaseBuildLock signals the end of a package build
@@ -210,18 +196,6 @@ func (c *buildContext) ReleaseBuildLock(p *Package) {
 	key := p.FullName()
 
 	c.pkgLockCond.L.Lock()
-
-	// Check if package is in cache to log build status
-	_, exists := c.LocalCache.Location(p)
-	if !p.Ephemeral && exists {
-		log.WithField("package", key).Debug("releasing lock for successfully built package")
-	} else if !p.Ephemeral {
-		log.WithField("package", key).Warn("releasing lock for package that failed to build or was not cached")
-	} else {
-		// Ephemeral packages are never cached
-		log.WithField("package", key).Debug("releasing lock for ephemeral package")
-	}
-
 	delete(c.pkgLocks, key)
 	c.pkgLockCond.Broadcast()
 	c.pkgLockCond.L.Unlock()
@@ -626,47 +600,28 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 		return nil
 	}
 
-	// Log dependency build start
-	log.WithField("package", p.FullName()).WithField("dependencyCount", len(deps)).Debug("building dependencies sequentially")
+	// Use errgroup to simplify error handling and synchronization
+	g := new(errgroup.Group)
 
-	// Build dependencies sequentially in a deterministic order
-	// This is more conservative but avoids dependency race conditions
-	for i, dep := range deps {
-		log.WithField("parent", p.FullName()).WithField("dependency", dep.FullName()).WithField("index", i+1).WithField("total", len(deps)).Debug("building dependency")
-
-		if err := dep.build(buildctx); err != nil {
-			return xerrors.Errorf("failed to build dependency %s for %s: %w",
-				dep.FullName(), p.FullName(), err)
-		}
-
-		log.WithField("parent", p.FullName()).WithField("dependency", dep.FullName()).Debug("dependency built successfully")
+	for _, dep := range deps {
+		// Capture the dependency in a local variable to avoid closure issues
+		d := dep
+		g.Go(func() error {
+			return d.build(buildctx)
+		})
 	}
 
-	log.WithField("package", p.FullName()).Debug("all dependencies built successfully")
-	return nil
+	// Wait for all goroutines to complete, returning the first error encountered
+	return g.Wait()
 }
 
 func (p *Package) build(buildctx *buildContext) error {
-	// Skip building if the package is already in the cache
-	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
-		log.WithField("package", p.FullName()).Debug("already built")
-		return nil
-	}
-
-	// Build dependencies first - we need to do this BEFORE obtaining the lock
-	// to prevent deadlocks and ensure correct build order
-	if err := p.buildDependencies(buildctx); err != nil {
-		return err
-	}
-
 	// Try to obtain lock for building this package
 	doBuild := buildctx.ObtainBuildLock(p)
 	if !doBuild {
-		// Another goroutine already built this package successfully
+		// Another goroutine is already building this package
 		return nil
 	}
-
-	// Release lock when we're done
 	defer buildctx.ReleaseBuildLock(p)
 
 	// Get package version
@@ -675,10 +630,14 @@ func (p *Package) build(buildctx *buildContext) error {
 		return err
 	}
 
-	// Check again if package is already built - could have been built by another goroutine
-	// while we were building dependencies
+	// Build dependencies first
+	if err := p.buildDependencies(buildctx); err != nil {
+		return err
+	}
+
+	// Skip if package is already built (except for ephemeral packages)
 	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
-		log.WithField("package", p.FullName()).Debug("already built by another process")
+		log.WithField("package", p.FullName()).Debug("already built")
 		return nil
 	}
 
@@ -794,9 +753,7 @@ func (p *Package) build(buildctx *buildContext) error {
 	}
 
 	// Register newly built package
-	err = buildctx.RegisterNewlyBuilt(p)
-
-	return err
+	return buildctx.RegisterNewlyBuilt(p)
 }
 
 func prepareDirectory(dir string) error {
@@ -1484,8 +1441,6 @@ func parseGoCoverOutput(input string) (coverage, funcsWithoutTest, funcsWithTest
 
 // buildDocker implements the build process for Docker packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
-// Version 4: Added PostProcess hook for reliable Docker image extraction regardless of provenance settings
-// Version 5: Changed Docker image extraction to place filesystem content in a "content" subdirectory
 func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
 	cfg, ok := p.Config.(DockerPkgConfig)
 	if !ok {
@@ -1498,19 +1453,33 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 	dockerfile := filepath.Join(p.C.Origin, cfg.Dockerfile)
 	if _, err := os.Stat(dockerfile); os.IsNotExist(err) {
-		return nil, err
+		return nil, xerrors.Errorf("dockerfile not found: %s", dockerfile)
 	}
+
+	logger := log.WithFields(log.Fields{
+		"package": p.FullName(),
+		"type":    "docker",
+	})
+	logger.Debug("preparing docker build")
 
 	var (
 		commands          = make(map[PackageBuildPhase][][]string)
 		imageDependencies = make(map[string]string)
 	)
 	commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"cp", dockerfile, "Dockerfile"})
+
+	// Track and process dependencies
 	for _, dep := range p.GetDependencies() {
 		fn, exists := buildctx.LocalCache.Location(dep)
 		if !exists {
 			return nil, PkgNotBuiltErr{dep}
 		}
+
+		depLogger := logger.WithFields(log.Fields{
+			"dependency":     dep.FullName(),
+			"dependencyType": string(dep.Type),
+		})
+		depLogger.Debug("processing dependency")
 
 		tgt := p.BuildLayoutLocation(dep)
 		untarCmd, err := BuildUnTarCommand(
@@ -1519,21 +1488,31 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			WithAutoDetectCompression(true),
 		)
 		if err != nil {
-			return nil, err
+			return nil, xerrors.Errorf("failed to build untar command for dependency %s: %w", dep.FullName(), err)
 		}
 		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
-			{"mkdir", tgt},
+			{"mkdir", "-p", tgt}, // Add -p flag for better error handling
 			untarCmd,
 		}...)
 
 		if dep.Type != DockerPackage {
 			continue
 		}
+
+		depLogger.Debug("extracting image name from docker dependency")
 		depimg, err := extractImageNameFromCache(dep.Name, fn)
 		if err != nil {
-			return nil, err
+			return nil, xerrors.Errorf("failed to extract image name for dependency %s: %w", dep.FullName(), err)
 		}
-		imageDependencies[strings.ToUpper(strings.ReplaceAll(dep.FilesystemSafeName(), "-", "_"))] = depimg
+		if depimg == "" {
+			depLogger.Warn("no image name found in dependency")
+		} else {
+			depLogger.WithField("image", depimg).Debug("found image name in dependency")
+		}
+
+		// Use a more reliable key format that's less likely to have collisions
+		depKey := fmt.Sprintf("DEP_%s", strings.ToUpper(strings.ReplaceAll(dep.FilesystemSafeName(), "-", "_")))
+		imageDependencies[depKey] = depimg
 	}
 
 	commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], p.PreparationCommands...)
@@ -1543,34 +1522,63 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		return nil, err
 	}
 
+	// Build the Docker image
 	buildcmd := []string{"docker", "build", "--pull", "-t", version}
+
+	// Track all build args for logging
+	buildArgs := make(map[string]string)
+
+	// Add build args
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
+		buildArgs[arg] = val
 	}
+
+	// Add dependency image tags as build args
 	for arg, val := range imageDependencies {
-		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("DEP_%s=%s", arg, val))
+		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
+		buildArgs[arg] = val
 	}
-	buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("__GIT_COMMIT=%s", p.C.Git().Commit))
+
+	// Add git commit as build arg
+	gitCommit := p.C.Git().Commit
+	buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("__GIT_COMMIT=%s", gitCommit))
+	buildArgs["__GIT_COMMIT"] = gitCommit
+
 	if cfg.Squash {
 		buildcmd = append(buildcmd, "--squash")
 	}
+
+	// Add custom docker build options
 	if buildctx.DockerBuildOptions != nil {
 		for opt, v := range *buildctx.DockerBuildOptions {
 			buildcmd = append(buildcmd, fmt.Sprintf("--%s=%s", opt, v))
 		}
 	}
+
 	buildcmd = append(buildcmd, ".")
+
+	// Log build configuration
+	logger.WithFields(log.Fields{
+		"buildArgs": buildArgs,
+		"squash":    cfg.Squash,
+		"imageTag":  version,
+	}).Debug("configured docker build")
+
 	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], buildcmd)
 
 	var pkgCommands [][]string
 
 	if len(cfg.Image) == 0 {
-		// we don't push the image, let's export it
-		// Create a temp directory for extraction and set up extraction of container files
-		containerDir := filepath.Join(wd, "container-files")
+		// we don't push the image, let's extract it into a standard format
+		// Create a content directory for better organization
+		containerDir := filepath.Join(wd, "container")
+		// Create a subdirectory specifically for the filesystem content
+		contentDir := filepath.Join(containerDir, "content")
+
 		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], [][]string{
-			// Create container files directory
-			{"mkdir", "-p", containerDir},
+			// Create container files directories with parents
+			{"mkdir", "-p", contentDir},
 		}...)
 
 		res = &packageBuild{
@@ -1580,50 +1588,65 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// Add a post-processing hook to extract the container filesystem
 		// This will run after all build phases but before packaging
 		res.PostProcess = func(buildCtx *buildContext, pkg *Package, buildDir string) error {
-			log.WithFields(log.Fields{
+			extractLogger := logger.WithFields(log.Fields{
 				"image":   version,
-				"destDir": containerDir,
-			}).Debug("Extracting container filesystem")
+				"destDir": contentDir,
+			})
+			extractLogger.Debug("Extracting container filesystem")
 
-			// Use the OCI libraries for extraction
-			if err := ExtractImageWithOCILibs(containerDir, version); err != nil {
+			// First, verify the image exists
+			imageExists, err := checkImageExists(version)
+			if err != nil {
+				return xerrors.Errorf("failed to check if image exists: %w", err)
+			}
+			if !imageExists {
+				return xerrors.Errorf("image %s not found - build may have failed silently", version)
+			}
+
+			// Use the OCI libraries for extraction with more robust error handling
+			if err := ExtractImageWithOCILibs(contentDir, version); err != nil {
 				return xerrors.Errorf("failed to extract container files: %w", err)
 			}
 
-			// Create metadata files
+			// Verify extraction was successful
+			if isEmpty(contentDir) {
+				return xerrors.Errorf("container extraction resulted in empty directory - extraction may have failed")
+			}
+
+			// Create metadata files at the container root level
 			if err := createDockerMetadataFiles(containerDir, version, cfg.Metadata); err != nil {
 				return xerrors.Errorf("failed to create metadata files: %w", err)
 			}
 
-			// Log the resulting directory contents for diagnostic purposes
-			entries, err := os.ReadDir(containerDir)
-			if err == nil {
-				fileList := make([]string, 0, len(entries))
-				for _, entry := range entries {
-					fileList = append(fileList, entry.Name())
+			// Log the resulting directory structure for diagnostic purposes
+			if log.IsLevelEnabled(log.DebugLevel) {
+				if err := logDirectoryStructure(containerDir, extractLogger); err != nil {
+					extractLogger.WithError(err).Warn("Failed to log directory structure")
 				}
-				log.WithField("files", fileList).Debug("Container files extracted successfully")
 			}
 
 			return nil
 		}
 
-		// Keep the PostBuild for provenance to ensure backward compatibility
+		// Keep the PostBuild function for provenance to ensure backward compatibility
 		res.PostBuild = func(sources fileset) (subj []in_toto.Subject, absResultDir string, err error) {
-			// Calculate subjects for provenance - we do this based on the extracted filesystem
+			// Calculate subjects for provenance based on the entire container directory
 			postBuild, err := computeFileset(containerDir)
 			if err != nil {
-				return nil, containerDir, err
+				return nil, containerDir, xerrors.Errorf("failed to compute fileset: %w", err)
 			}
 			subjects, err := postBuild.Sub(sources).Subjects(containerDir)
-			return subjects, containerDir, err
+			if err != nil {
+				return nil, containerDir, xerrors.Errorf("failed to compute subjects: %w", err)
+			}
+			return subjects, containerDir, nil
 		}
 
+		// Create package with improved diagnostic logging
 		var pkgcmds [][]string
-		// No need to copy the provenance file - it's already generated in the correct location
 
-		// Add a diagnostic command to see what we're actually packaging
-		pkgcmds = append(pkgcmds, []string{"sh", "-c", fmt.Sprintf("find %s -type f | sort", containerDir)})
+		// Add a diagnostic command to generate a manifest of what we're packaging
+		pkgcmds = append(pkgcmds, []string{"sh", "-c", fmt.Sprintf("find %s -type f | sort > %s/files-manifest.txt", containerDir, containerDir)})
 
 		// Create final tar with container files and metadata
 		pkgcmds = append(pkgcmds, BuildTarCommand(
@@ -1634,6 +1657,9 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 		commands[PackageBuildPhasePackage] = pkgcmds
 	} else if len(cfg.Image) > 0 {
+		// Image push workflow
+		logger.WithField("images", cfg.Image).Debug("configuring image push")
+
 		for _, img := range cfg.Image {
 			pkgCommands = append(pkgCommands, [][]string{
 				{"docker", "tag", version, img},
@@ -1647,21 +1673,25 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		for _, img := range cfg.Image {
 			pkgCommands = append(pkgCommands,
 				[]string{"sh", "-c", fmt.Sprintf("echo %s >> %s", img, dockerImageNamesFiles)},
-				[]string{"sh", "-c", fmt.Sprintf("echo built image: %s", img)},
+				[]string{"sh", "-c", fmt.Sprintf("echo built and pushed image: %s", img)},
 			)
 		}
-		// In addition to the imgnames.txt we also produce a file that contains the configured metadata,
-		// which provides a sensible way to add metadata to the image names.
-		consts, err := yaml.Marshal(cfg.Metadata)
-		if err != nil {
-			return nil, err
-		}
-		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", base64.StdEncoding.EncodeToString(consts), dockerMetadataFile)})
 
+		// Add metadata file with improved error handling
+		metadataContent, err := yaml.Marshal(cfg.Metadata)
+		if err != nil {
+			return nil, xerrors.Errorf("failed to marshal metadata: %w", err)
+		}
+
+		encodedMetadata := base64.StdEncoding.EncodeToString(metadataContent)
+		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", encodedMetadata, dockerMetadataFile)})
+
+		// Prepare for packaging
 		sourcePaths := []string{fmt.Sprintf("./%s", dockerImageNamesFiles), fmt.Sprintf("./%s", dockerMetadataFile)}
 		if p.C.W.Provenance.Enabled {
 			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
 		}
+
 		archiveCmd := BuildTarCommand(
 			WithOutputFile(result),
 			WithSourcePaths(sourcePaths...),
@@ -1671,52 +1701,112 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 		commands[PackageBuildPhasePackage] = pkgCommands
 
-		// Initialize res to avoid nil pointer dereference
+		// Initialize res with commands
 		res = &packageBuild{
 			Commands: commands,
 		}
 
-		res.Subjects = func() (res []in_toto.Subject, err error) {
-			defer func() {
-				if err != nil {
-					err = xerrors.Errorf("provenance get subjects: %w", err)
-				}
-			}()
+		// Enhanced subjects function with better error handling and logging
+		res.Subjects = func() ([]in_toto.Subject, error) {
+			subjectLogger := logger.WithField("operation", "provenance-subjects")
+			subjectLogger.Debug("Calculating provenance subjects for pushed images")
+
+			// Get image digest with improved error handling
 			out, err := exec.Command("docker", "inspect", version).CombinedOutput()
 			if err != nil {
-				return nil, xerrors.Errorf("cannot determine ID of the image we just built")
-			}
-			var inspectRes []struct {
-				ID string `json:"Id"`
-			}
-			err = json.Unmarshal(out, &inspectRes)
-			if err != nil {
-				return nil, xerrors.Errorf("cannot unmarshal Docker inspect response \"%s\": %w", string(out), err)
-			}
-			if len(inspectRes) == 0 {
-				return nil, xerrors.Errorf("did not receive a proper Docker inspect response")
-			}
-			segs := strings.Split(inspectRes[0].ID, ":")
-			if len(segs) != 2 {
-				return nil, xerrors.Errorf("docker inspect returned invalid digest: %s", inspectRes[0].ID)
-			}
-			digest := common.DigestSet{
-				segs[0]: segs[1],
+				return nil, xerrors.Errorf("failed to inspect image %s: %w\nOutput: %s",
+					version, err, string(out))
 			}
 
-			res = make([]in_toto.Subject, 0, len(cfg.Image))
+			var inspectRes []struct {
+				ID          string   `json:"Id"`
+				RepoDigests []string `json:"RepoDigests"`
+			}
+
+			if err := json.Unmarshal(out, &inspectRes); err != nil {
+				return nil, xerrors.Errorf("cannot unmarshal Docker inspect response: %w", err)
+			}
+
+			if len(inspectRes) == 0 {
+				return nil, xerrors.Errorf("docker inspect returned empty result for image %s", version)
+			}
+
+			// Try to get digest from ID first (most reliable)
+			var digest common.DigestSet
+			if inspectRes[0].ID != "" {
+				segs := strings.Split(inspectRes[0].ID, ":")
+				if len(segs) == 2 {
+					digest = common.DigestSet{
+						segs[0]: segs[1],
+					}
+				}
+			}
+
+			// If we couldn't get digest from ID, try RepoDigests as fallback
+			if len(digest) == 0 && len(inspectRes[0].RepoDigests) > 0 {
+				for _, repoDigest := range inspectRes[0].RepoDigests {
+					parts := strings.Split(repoDigest, "@")
+					if len(parts) == 2 {
+						digestParts := strings.Split(parts[1], ":")
+						if len(digestParts) == 2 {
+							digest = common.DigestSet{
+								digestParts[0]: digestParts[1],
+							}
+							break
+						}
+					}
+				}
+			}
+
+			if len(digest) == 0 {
+				return nil, xerrors.Errorf("could not determine digest for image %s", version)
+			}
+
+			subjectLogger.WithField("digest", digest).Debug("Found image digest")
+
+			// Create subjects for each image
+			result := make([]in_toto.Subject, 0, len(cfg.Image))
 			for _, tag := range cfg.Image {
-				res = append(res, in_toto.Subject{
+				result = append(result, in_toto.Subject{
 					Name:   tag,
 					Digest: digest,
 				})
 			}
 
-			return res, nil
+			return result, nil
 		}
 	}
 
 	return res, nil
+}
+
+// Helper functions for buildDocker
+
+// checkImageExists verifies if a Docker image exists locally
+func checkImageExists(imageName string) (bool, error) {
+	cmd := exec.Command("docker", "image", "inspect", imageName)
+	err := cmd.Run()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			// Exit code 1 means the image doesn't exist
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// logDirectoryStructure logs the directory structure for debugging
+func logDirectoryStructure(dir string, logger *log.Entry) error {
+	cmd := exec.Command("find", dir, "-type", "f", "-o", "-type", "d", "|", "sort")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return err
+	}
+
+	logger.WithField("structure", string(output)).Debug("Directory structure")
+	return nil
 }
 
 // Check if directory is empty (indicating a failed or scratch container export)
