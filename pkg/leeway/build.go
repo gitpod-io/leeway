@@ -2,7 +2,6 @@ package leeway
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -17,7 +16,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -95,23 +93,12 @@ const (
 	dockerMetadataFile = "metadata.yaml"
 )
 
-var (
-	compressor = "gzip"
-)
-
-func init() {
-	pigz, err := exec.LookPath("pigz")
-	if err == nil {
-		compressor = pigz
-	}
-}
-
 // buildProcessVersions contain the current version of the respective build processes.
 // Increment this value if you change any of the build procedures.
 var buildProcessVersions = map[PackageType]int{
 	YarnPackage:    7,
 	GoPackage:      2,
-	DockerPackage:  3,
+	DockerPackage:  5,
 	GenericPackage: 1,
 }
 
@@ -772,6 +759,14 @@ func (p *Package) build(buildctx *buildContext) error {
 		}
 	}
 
+	// Execute post-processing hook if available - this should run regardless of provenance settings
+	if bld.PostProcess != nil {
+		log.WithField("package", p.FullName()).Debug("running post-processing hook")
+		if err := bld.PostProcess(buildctx, p, builddir); err != nil {
+			return xerrors.Errorf("post-processing failed: %w", err)
+		}
+	}
+
 	// Handle provenance subjects
 	if p.C.W.Provenance.Enabled {
 		if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
@@ -960,6 +955,11 @@ type packageBuild struct {
 	// If the package build has tests but the test coverage cannot be computed, this function must return an error.
 	// This function is guaranteed to be called after the test phase has finished.
 	TestCoverage testCoverageFunc
+
+	// PostProcess is called after all build phases complete but before packaging.
+	// It's used for post-build processing that needs to happen regardless of provenance settings,
+	// such as Docker image extraction.
+	PostProcess func(buildCtx *buildContext, pkg *Package, buildDir string) error
 }
 
 type testCoverageFunc func() (coverage, funcsWithoutTest, funcsWithTest int, err error)
@@ -1484,6 +1484,8 @@ func parseGoCoverOutput(input string) (coverage, funcsWithoutTest, funcsWithTest
 
 // buildDocker implements the build process for Docker packages.
 // If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
+// Version 4: Added PostProcess hook for reliable Docker image extraction regardless of provenance settings
+// Version 5: Changed Docker image extraction to place filesystem content in a "content" subdirectory
 func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
 	cfg, ok := p.Config.(DockerPkgConfig)
 	if !ok {
@@ -1560,51 +1562,60 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	buildcmd = append(buildcmd, ".")
 	commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], buildcmd)
 
+	var pkgCommands [][]string
+
 	if len(cfg.Image) == 0 {
 		// we don't push the image, let's export it
-		ef := strings.TrimSuffix(result, ".gz")
 		// Create a temp directory for extraction and set up extraction of container files
 		containerDir := filepath.Join(wd, "container-files")
 		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], [][]string{
-			// Save image for metadata extraction
-			{"docker", "save", "-o", ef, version},
 			// Create container files directory
 			{"mkdir", "-p", containerDir},
 		}...)
-	}
 
-	res = &packageBuild{
-		Commands: commands,
-	}
+		res = &packageBuild{
+			Commands: commands,
+		}
 
-	var pkgCommands [][]string
-	if len(cfg.Image) == 0 {
-		// We need to:
-		// 1. Extract container files from the docker image
-		// 2. Preserve the metadata files
-		// 3. Create the final tarball with both container files and metadata
-		ef := strings.TrimSuffix(result, ".gz")
-		containerDir := filepath.Join(wd, "container-files")
+		// Add a post-processing hook to extract the container filesystem
+		// This will run after all build phases but before packaging
+		res.PostProcess = func(buildCtx *buildContext, pkg *Package, buildDir string) error {
+			log.WithFields(log.Fields{
+				"image":   version,
+				"destDir": containerDir,
+			}).Info("Extracting container filesystem")
 
-		// Custom post-build function that combines container files with metadata files
+			// Use the OCI libraries for extraction
+			if err := ExtractImageWithOCILibs(containerDir, version); err != nil {
+				return xerrors.Errorf("failed to extract container files: %w", err)
+			}
+
+			// Create metadata files
+			if err := createDockerMetadataFiles(containerDir, version, cfg.Metadata); err != nil {
+				return xerrors.Errorf("failed to create metadata files: %w", err)
+			}
+
+			// Log the resulting directory contents for diagnostic purposes
+			entries, err := os.ReadDir(containerDir)
+			if err == nil {
+				fileList := make([]string, 0, len(entries))
+				for _, entry := range entries {
+					fileList = append(fileList, entry.Name())
+				}
+				log.WithField("files", fileList).Info("Container files extracted successfully")
+			}
+
+			return nil
+		}
+
+		// Keep the PostBuild for provenance to ensure backward compatibility
 		res.PostBuild = func(sources fileset) (subj []in_toto.Subject, absResultDir string, err error) {
-			// Extract container files from the saved Docker image
-			if err := extractDockerImageFiles(ef, containerDir, version); err != nil {
-				return nil, containerDir, err
-			}
-
-			// Preserve the required metadata files
-			if err := preserveDockerMetadataFiles(ef, containerDir, version); err != nil {
-				return nil, containerDir, err
-			}
-
-			// Calculate subjects for provenance
+			// Calculate subjects for provenance - we do this based on the extracted filesystem
 			postBuild, err := computeFileset(containerDir)
 			if err != nil {
 				return nil, containerDir, err
 			}
 			subjects, err := postBuild.Sub(sources).Subjects(containerDir)
-
 			return subjects, containerDir, err
 		}
 
@@ -1612,6 +1623,9 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		if p.C.W.Provenance.Enabled {
 			pkgcmds = append(pkgcmds, []string{"cp", "./" + provenanceBundleFilename, containerDir + "/"})
 		}
+
+		// Add a diagnostic command to see what we're actually packaging
+		pkgcmds = append(pkgcmds, []string{"sh", "-c", fmt.Sprintf("find %s -type f | sort", containerDir)})
 
 		// Create final tar with container files and metadata
 		pkgcmds = append(pkgcmds, BuildTarCommand(
@@ -1658,6 +1672,12 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		pkgCommands = append(pkgCommands, archiveCmd)
 
 		commands[PackageBuildPhasePackage] = pkgCommands
+
+		// Initialize res to avoid nil pointer dereference
+		res = &packageBuild{
+			Commands: commands,
+		}
+
 		res.Subjects = func() (res []in_toto.Subject, err error) {
 			defer func() {
 				if err != nil {
@@ -1699,255 +1719,6 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	}
 
 	return res, nil
-}
-
-// extractDockerImageFiles extracts the actual files from a Docker image
-// It handles both regular images and FROM scratch images correctly
-func extractDockerImageFiles(dockerTar, destDir, imgTag string) error {
-	// Try using docker export first as it's more efficient for regular images
-	containerName := fmt.Sprintf("extract-%s", strings.Replace(filepath.Base(destDir), "/", "-", -1))
-
-	cmd := exec.Command("docker", "create", "--name", containerName, imgTag)
-	if err := cmd.Run(); err == nil {
-		// Container created successfully, use docker export
-		defer exec.Command("docker", "rm", containerName).Run() // Cleanup container
-
-		// Use docker export to get container files
-		exportCmd := exec.Command("docker", "export", containerName)
-		exportPipe, err := exportCmd.StdoutPipe()
-		if err != nil {
-			return fmt.Errorf("failed to create stdout pipe: %w", err)
-		}
-
-		if err := exportCmd.Start(); err != nil {
-			return fmt.Errorf("failed to start docker export: %w", err)
-		}
-
-		// Create a tar reader from the export pipe
-		exportReader := tar.NewReader(exportPipe)
-
-		// Extract files
-		if err := extractTarArchive(exportReader, destDir); err != nil {
-			exportCmd.Process.Kill() // Cleanup if extraction fails
-			return fmt.Errorf("failed to extract container files: %w", err)
-		}
-
-		if err := exportCmd.Wait(); err != nil {
-			return fmt.Errorf("docker export command failed: %w", err)
-		}
-
-		// Check if we got a proper filesystem
-		// If not (likely FROM scratch image), fall back to layer extraction
-		if isEmpty(destDir) {
-			log.Info("Container export produced empty filesystem, falling back to layer extraction")
-		} else {
-			return nil // Successfully extracted using docker export
-		}
-	}
-
-	// If docker export failed or produced empty filesystem, extract layers directly
-	log.Info("Extracting container files directly from image layers")
-
-	// Open the saved Docker image
-	dockerTarFile, err := os.Open(dockerTar)
-	if err != nil {
-		return fmt.Errorf("failed to open docker tar: %w", err)
-	}
-	defer dockerTarFile.Close()
-
-	// Create tar reader for the docker save output
-	dockerTarReader := tar.NewReader(dockerTarFile)
-
-	// First extract the manifest to find all layers
-	var manifests []struct {
-		Layers []string `json:"Layers"`
-	}
-
-	var layersExtracted bool
-
-	for {
-		header, err := dockerTarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("failed to read docker tar: %w", err)
-		}
-
-		if header.Name == "manifest.json" {
-			// Read the manifest file
-			var manifestData bytes.Buffer
-			if _, err := io.Copy(&manifestData, dockerTarReader); err != nil {
-				return fmt.Errorf("failed to read manifest.json: %w", err)
-			}
-
-			// Parse manifest to get layers
-			if err := json.Unmarshal(manifestData.Bytes(), &manifests); err != nil {
-				return fmt.Errorf("failed to parse manifest.json: %w", err)
-			}
-
-			// We found the manifest, can stop looking
-			break
-		}
-	}
-
-	// Extract layers
-	if len(manifests) > 0 {
-		for _, manifest := range manifests {
-			for _, layerFile := range manifest.Layers {
-				// Reset the reader to the beginning of the tar
-				dockerTarFile.Seek(0, 0)
-				dockerTarReader = tar.NewReader(dockerTarFile)
-
-				// Find the layer file
-				for {
-					header, err := dockerTarReader.Next()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						return fmt.Errorf("failed to read docker tar looking for layer %s: %w", layerFile, err)
-					}
-
-					if header.Name == layerFile {
-						// Create a temporary file for the layer
-						tmpFile, err := os.CreateTemp("", "docker-layer-*.tar")
-						if err != nil {
-							return fmt.Errorf("failed to create temp file: %w", err)
-						}
-						tmpFileName := tmpFile.Name()
-						defer os.Remove(tmpFileName)
-
-						// Copy the layer to the temporary file
-						if _, err := io.Copy(tmpFile, dockerTarReader); err != nil {
-							tmpFile.Close()
-							return fmt.Errorf("failed to copy layer to temp file: %w", err)
-						}
-						tmpFile.Close()
-
-						// Open the layer file
-						layerFile, err := os.Open(tmpFileName)
-						if err != nil {
-							return fmt.Errorf("failed to open layer file: %w", err)
-						}
-
-						// Extract the layer
-						layerReader := tar.NewReader(layerFile)
-						if err := extractTarArchive(layerReader, destDir); err != nil {
-							layerFile.Close()
-							return fmt.Errorf("failed to extract layer: %w", err)
-						}
-
-						layerFile.Close()
-						layersExtracted = true
-						break
-					}
-				}
-			}
-		}
-	}
-
-	if !layersExtracted {
-		return fmt.Errorf("no layers were extracted from the docker image")
-	}
-
-	return nil
-}
-
-// preserveDockerMetadataFiles creates/preserves the required metadata files in the destination directory
-func preserveDockerMetadataFiles(dockerTar, destDir, imgTag string) error {
-	// Create imgnames.txt with the image tag
-	if err := os.WriteFile(filepath.Join(destDir, dockerImageNamesFiles), []byte(imgTag+"\n"), 0644); err != nil {
-		return fmt.Errorf("failed to create imgnames.txt: %w", err)
-	}
-
-	// If metadata.yaml exists in the image, preserve it
-	// If not, create an empty one
-	metadataPath := filepath.Join(destDir, dockerMetadataFile)
-	if _, err := os.Stat(metadataPath); os.IsNotExist(err) {
-		if err := os.WriteFile(metadataPath, []byte("{}"), 0644); err != nil {
-			return fmt.Errorf("failed to create metadata.yaml: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// Helper function to extract a tar archive to a destination directory
-func extractTarArchive(tr *tar.Reader, destDir string) error {
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-
-		// Skip whiteout files which are used by Docker to remove files
-		if strings.Contains(header.Name, ".wh.") {
-			continue
-		}
-
-		// Get the target path, with safety checks
-		target := filepath.Join(destDir, header.Name)
-
-		// Prevent directory traversal attacks
-		if !strings.HasPrefix(target, destDir) {
-			continue
-		}
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			// Create directory
-			if err := os.MkdirAll(target, 0755); err != nil {
-				return err
-			}
-
-		case tar.TypeReg:
-			// Create containing directory
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return err
-			}
-
-			// Create file
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode))
-			if err != nil {
-				return err
-			}
-
-			if _, err := io.Copy(f, tr); err != nil {
-				f.Close()
-				return err
-			}
-			f.Close()
-
-		case tar.TypeSymlink:
-			// Create containing directory
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return err
-			}
-
-			// Create symlink (with safety check)
-			linkTarget := header.Linkname
-			if filepath.IsAbs(linkTarget) {
-				// Convert absolute symlinks to relative ones contained within the extract directory
-				linkTarget = filepath.Join(destDir, linkTarget)
-				if !strings.HasPrefix(linkTarget, destDir) {
-					// Skip symlinks that point outside the destination directory
-					continue
-				}
-				linkTarget, _ = filepath.Rel(filepath.Dir(target), linkTarget)
-			}
-
-			if err := os.Symlink(linkTarget, target); err != nil {
-				// Ignore errors on symlinks, which are common in cross-platform extraction
-				log.WithError(err).Debugf("Failed to create symlink %s -> %s", target, linkTarget)
-			}
-		}
-	}
-
-	return nil
 }
 
 // Check if directory is empty (indicating a failed or scratch container export)
@@ -2372,223 +2143,4 @@ func toPackageMap(in map[cache.Package]struct{}) map[*Package]struct{} {
 		log.WithField("package", pkg.FullName()).Debug("Successfully converted package in map")
 	}
 	return result
-}
-
-// TarOptions represents configuration options for creating tar archives
-type TarOptions struct {
-	// OutputFile is the path to the output .tar or .tar.gz file
-	OutputFile string
-
-	// SourcePaths are the files/directories to include in the archive
-	SourcePaths []string
-
-	// WorkingDir changes to this directory before archiving (-C flag)
-	WorkingDir string
-
-	// UseCompression determines whether to apply compression
-	UseCompression bool
-
-	// FilesFrom specifies a file containing a list of files to include
-	FilesFrom string
-}
-
-// WithOutputFile sets the output file path for the tar archive
-func WithOutputFile(path string) func(*TarOptions) {
-	return func(opts *TarOptions) {
-		opts.OutputFile = path
-	}
-}
-
-// WithSourcePaths adds files or directories to include in the archive
-func WithSourcePaths(paths ...string) func(*TarOptions) {
-	return func(opts *TarOptions) {
-		opts.SourcePaths = append(opts.SourcePaths, paths...)
-	}
-}
-
-// WithWorkingDir sets the working directory for the tar command
-func WithWorkingDir(dir string) func(*TarOptions) {
-	return func(opts *TarOptions) {
-		opts.WorkingDir = dir
-	}
-}
-
-// WithCompression enables compression for the tar archive
-func WithCompression(enabled bool) func(*TarOptions) {
-	return func(opts *TarOptions) {
-		opts.UseCompression = enabled
-	}
-}
-
-// WithFilesFrom specifies a file containing the list of files to archive
-func WithFilesFrom(filePath string) func(*TarOptions) {
-	return func(opts *TarOptions) {
-		opts.FilesFrom = filePath
-	}
-}
-
-// BuildTarCommand creates a platform-optimized tar command with the given options
-func BuildTarCommand(options ...func(*TarOptions)) []string {
-	// Initialize default options
-	opts := &TarOptions{
-		UseCompression: true, // Default to using compression
-	}
-
-	// Apply all option functions
-	for _, option := range options {
-		option(opts)
-	}
-
-	// Start building the command
-	cmd := []string{"tar"}
-
-	// Add Linux-specific optimizations
-	if runtime.GOOS == "linux" {
-		cmd = append(cmd, "--sparse")
-	}
-
-	// Handle files-from case specially
-	if opts.FilesFrom != "" {
-		return append(cmd, "--files-from", opts.FilesFrom)
-	}
-
-	// Basic create command
-	if opts.UseCompression {
-		if !strings.HasSuffix(opts.OutputFile, ".gz") {
-			opts.OutputFile = opts.OutputFile + ".gz"
-		}
-	}
-
-	cmd = append(cmd, "-cf", opts.OutputFile)
-
-	// Add working directory if specified
-	if opts.WorkingDir != "" {
-		cmd = append(cmd, "-C", opts.WorkingDir)
-	}
-
-	// Add compression if needed
-	if opts.UseCompression {
-		cmd = append(cmd, fmt.Sprintf("--use-compress-program=%v", compressor))
-	}
-
-	// Add source paths (or "." if none specified)
-	if len(opts.SourcePaths) > 0 {
-		cmd = append(cmd, opts.SourcePaths...)
-	} else {
-		cmd = append(cmd, ".")
-	}
-
-	return cmd
-}
-
-// UnTarOptions represents configuration options for extracting tar archives
-type UnTarOptions struct {
-	// InputFile is the path to the .tar or .tar.gz file to extract
-	InputFile string
-
-	// TargetDir is the directory where files should be extracted
-	TargetDir string
-
-	// PreserveSameOwner determines whether to preserve file ownership
-	PreserveSameOwner bool
-
-	// AutoDetectCompression will check if the file is compressed
-	AutoDetectCompression bool
-}
-
-// WithInputFile sets the input archive file path
-func WithInputFile(path string) func(*UnTarOptions) {
-	return func(opts *UnTarOptions) {
-		opts.InputFile = path
-	}
-}
-
-// WithTargetDir sets the directory where files will be extracted
-func WithTargetDir(dir string) func(*UnTarOptions) {
-	return func(opts *UnTarOptions) {
-		opts.TargetDir = dir
-	}
-}
-
-// WithPreserveSameOwner enables preserving file ownership
-func WithPreserveSameOwner(preserve bool) func(*UnTarOptions) {
-	return func(opts *UnTarOptions) {
-		opts.PreserveSameOwner = preserve
-	}
-}
-
-// WithAutoDetectCompression enables automatic detection of file compression
-func WithAutoDetectCompression(detect bool) func(*UnTarOptions) {
-	return func(opts *UnTarOptions) {
-		opts.AutoDetectCompression = detect
-	}
-}
-
-// isCompressedFile checks if a file is compressed by examining its header
-func isCompressedFile(filepath string) (bool, error) {
-	file, err := os.Open(filepath)
-	if err != nil {
-		return false, fmt.Errorf("failed to open file for compression detection: %w", err)
-	}
-	defer file.Close()
-
-	// Read the first few bytes to check for gzip magic number (1F 8B)
-	header := make([]byte, 2)
-	_, err = file.Read(header)
-	if err != nil {
-		return false, fmt.Errorf("failed to read file header: %w", err)
-	}
-
-	// Check for gzip magic number
-	return header[0] == 0x1F && header[1] == 0x8B, nil
-}
-
-// BuildUnTarCommand creates a command to extract tar archives
-func BuildUnTarCommand(options ...func(*UnTarOptions)) ([]string, error) {
-	// Initialize default options
-	opts := &UnTarOptions{
-		PreserveSameOwner:     false, // Default to not preserving ownership
-		AutoDetectCompression: true,  // Default to auto-detecting compression
-	}
-
-	// Apply all option functions
-	for _, option := range options {
-		option(opts)
-	}
-
-	// Start building the command
-	cmd := []string{"tar"}
-
-	// Add Linux-specific optimizations
-	if runtime.GOOS == "linux" {
-		cmd = append(cmd, "--sparse")
-	}
-
-	// Basic extraction command
-	cmd = append(cmd, "-xf", opts.InputFile)
-
-	// Add ownership flag if needed
-	if !opts.PreserveSameOwner {
-		cmd = append(cmd, "--no-same-owner")
-	}
-
-	// Add target directory if specified
-	if opts.TargetDir != "" {
-		cmd = append(cmd, "-C", opts.TargetDir)
-	}
-
-	// Handle compression if needed
-	if opts.AutoDetectCompression {
-		isCompressed, err := isCompressedFile(opts.InputFile)
-		if err != nil {
-			return nil, err
-		}
-		if isCompressed {
-			// Use the same compressor as in BuildTarCommand but with decompression flag
-			decompressFlag := fmt.Sprintf("--use-compress-program=%v -d", compressor)
-			cmd = append(cmd, decompressFlag)
-		}
-	}
-
-	return cmd, nil
 }
