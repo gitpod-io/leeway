@@ -360,9 +360,7 @@ func BuildUnTarCommand(options ...func(*UnTarOptions)) ([]string, error) {
 	}
 
 	// Add include patterns if any
-	for _, pattern := range opts.IncludePatterns {
-		cmd = append(cmd, pattern)
-	}
+	cmd = append(cmd, opts.IncludePatterns...)
 
 	// Handle compression if needed
 	if opts.AutoDetectCompression {
