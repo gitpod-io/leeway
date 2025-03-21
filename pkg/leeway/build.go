@@ -1583,7 +1583,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			log.WithFields(log.Fields{
 				"image":   version,
 				"destDir": containerDir,
-			}).Info("Extracting container filesystem")
+			}).Debug("Extracting container filesystem")
 
 			// Use the OCI libraries for extraction
 			if err := ExtractImageWithOCILibs(containerDir, version); err != nil {
@@ -1602,7 +1602,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 				for _, entry := range entries {
 					fileList = append(fileList, entry.Name())
 				}
-				log.WithField("files", fileList).Info("Container files extracted successfully")
+				log.WithField("files", fileList).Debug("Container files extracted successfully")
 			}
 
 			return nil
