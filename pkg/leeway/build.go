@@ -2,6 +2,7 @@ package leeway
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -1519,8 +1520,13 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	if len(cfg.Image) == 0 {
 		// we don't push the image, let's export it
 		ef := strings.TrimSuffix(result, ".gz")
+		// Create a temp directory for extraction and set up extraction of container files
+		containerDir := filepath.Join(wd, "container-files")
 		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], [][]string{
+			// Save image for metadata extraction
 			{"docker", "save", "-o", ef, version},
+			// Create container files directory
+			{"mkdir", "-p", containerDir},
 		}...)
 	}
 
@@ -1530,17 +1536,47 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 	var pkgCommands [][]string
 	if len(cfg.Image) == 0 {
-		// We've already built the build artifact by exporting the archive using "docker save"
-		// At the very least we need to add the provenance bundle to that archive.
+		// We need to:
+		// 1. Extract container files from the docker image
+		// 2. Preserve the metadata files
+		// 3. Create the final tarball with both container files and metadata
 		ef := strings.TrimSuffix(result, ".gz")
-		res.PostBuild = dockerExportPostBuild(wd, ef)
+		containerDir := filepath.Join(wd, "container-files")
+
+		// Custom post-build function that combines container files with metadata files
+		res.PostBuild = func(sources fileset) (subj []in_toto.Subject, absResultDir string, err error) {
+			// Extract container files from the saved Docker image
+			if err := extractDockerImageFiles(ef, containerDir, version); err != nil {
+				return nil, containerDir, err
+			}
+
+			// Preserve the required metadata files
+			if err := preserveDockerMetadataFiles(ef, containerDir, version); err != nil {
+				return nil, containerDir, err
+			}
+
+			// Calculate subjects for provenance
+			postBuild, err := computeFileset(containerDir)
+			if err != nil {
+				return nil, containerDir, err
+			}
+			subjects, err := postBuild.Sub(sources).Subjects(containerDir)
+
+			return subjects, containerDir, err
+		}
 
 		var pkgcmds [][]string
 		if p.C.W.Provenance.Enabled {
-			pkgcmds = append(pkgcmds, []string{"tar", "fr", ef, "./" + provenanceBundleFilename})
+			pkgcmds = append(pkgcmds, []string{"cp", "./" + provenanceBundleFilename, containerDir + "/"})
 		}
 
-		pkgcmds = append(pkgcmds, []string{compressor, ef})
+		// Create final tar with container files and metadata
+		pkgcmds = append(pkgcmds, BuildTarCommand(
+			WithOutputFile(result),
+			WithWorkingDir(containerDir),
+			WithCompression(!buildctx.DontCompress),
+		))
+
 		commands[PackageBuildPhasePackage] = pkgcmds
 	} else if len(cfg.Image) > 0 {
 		for _, img := range cfg.Image {
@@ -1620,6 +1656,372 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 	}
 
 	return res, nil
+}
+
+// extractDockerImageFiles extracts the actual files from a Docker image
+// It handles both regular images and FROM scratch images correctly
+func extractDockerImageFiles(dockerTar, destDir, imgTag string) error {
+	// Try using docker export first as it's more efficient for regular images
+	containerName := fmt.Sprintf("extract-%s", strings.Replace(filepath.Base(destDir), "/", "-", -1))
+
+	cmd := exec.Command("docker", "create", "--name", containerName, imgTag)
+	if err := cmd.Run(); err == nil {
+		// Container created successfully, use docker export
+		defer exec.Command("docker", "rm", containerName).Run() // Cleanup container
+
+		// Use docker export to get container files
+		exportCmd := exec.Command("docker", "export", containerName)
+		exportPipe, err := exportCmd.StdoutPipe()
+		if err != nil {
+			return fmt.Errorf("failed to create stdout pipe: %w", err)
+		}
+
+		if err := exportCmd.Start(); err != nil {
+			return fmt.Errorf("failed to start docker export: %w", err)
+		}
+
+		// Create a tar reader from the export pipe
+		exportReader := tar.NewReader(exportPipe)
+
+		// Extract files
+		if err := extractTarArchive(exportReader, destDir); err != nil {
+			exportCmd.Process.Kill() // Cleanup if extraction fails
+			return fmt.Errorf("failed to extract container files: %w", err)
+		}
+
+		if err := exportCmd.Wait(); err != nil {
+			return fmt.Errorf("docker export command failed: %w", err)
+		}
+
+		// Check if we got a proper filesystem
+		// If not (likely FROM scratch image), fall back to layer extraction
+		if isEmpty(destDir) {
+			log.Info("Container export produced empty filesystem, falling back to layer extraction")
+		} else {
+			return nil // Successfully extracted using docker export
+		}
+	}
+
+	// If docker export failed or produced empty filesystem, extract layers directly
+	log.Info("Extracting container files directly from image layers")
+
+	// Open the saved Docker image
+	dockerTarFile, err := os.Open(dockerTar)
+	if err != nil {
+		return fmt.Errorf("failed to open docker tar: %w", err)
+	}
+	defer dockerTarFile.Close()
+
+	// Create tar reader for the docker save output
+	dockerTarReader := tar.NewReader(dockerTarFile)
+
+	// First extract the manifest to find all layers
+	var manifests []struct {
+		Layers []string `json:"Layers"`
+	}
+
+	var layersExtracted bool
+
+	for {
+		header, err := dockerTarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read docker tar: %w", err)
+		}
+
+		if header.Name == "manifest.json" {
+			// Read the manifest file
+			var manifestData bytes.Buffer
+			if _, err := io.Copy(&manifestData, dockerTarReader); err != nil {
+				return fmt.Errorf("failed to read manifest.json: %w", err)
+			}
+
+			// Parse manifest to get layers
+			if err := json.Unmarshal(manifestData.Bytes(), &manifests); err != nil {
+				return fmt.Errorf("failed to parse manifest.json: %w", err)
+			}
+
+			// We found the manifest, can stop looking
+			break
+		}
+	}
+
+	// Extract layers
+	if len(manifests) > 0 {
+		for _, manifest := range manifests {
+			for _, layerFile := range manifest.Layers {
+				// Reset the reader to the beginning of the tar
+				dockerTarFile.Seek(0, 0)
+				dockerTarReader = tar.NewReader(dockerTarFile)
+
+				// Find the layer file
+				for {
+					header, err := dockerTarReader.Next()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						return fmt.Errorf("failed to read docker tar looking for layer %s: %w", layerFile, err)
+					}
+
+					if header.Name == layerFile {
+						// Create a temporary file for the layer
+						tmpFile, err := os.CreateTemp("", "docker-layer-*.tar")
+						if err != nil {
+							return fmt.Errorf("failed to create temp file: %w", err)
+						}
+						tmpFileName := tmpFile.Name()
+						defer os.Remove(tmpFileName)
+
+						// Copy the layer to the temporary file
+						if _, err := io.Copy(tmpFile, dockerTarReader); err != nil {
+							tmpFile.Close()
+							return fmt.Errorf("failed to copy layer to temp file: %w", err)
+						}
+						tmpFile.Close()
+
+						// Open the layer file
+						layerFile, err := os.Open(tmpFileName)
+						if err != nil {
+							return fmt.Errorf("failed to open layer file: %w", err)
+						}
+
+						// Extract the layer
+						layerReader := tar.NewReader(layerFile)
+						if err := extractTarArchive(layerReader, destDir); err != nil {
+							layerFile.Close()
+							return fmt.Errorf("failed to extract layer: %w", err)
+						}
+
+						layerFile.Close()
+						layersExtracted = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if !layersExtracted {
+		return fmt.Errorf("no layers were extracted from the docker image")
+	}
+
+	return nil
+}
+
+// preserveDockerMetadataFiles creates/preserves the required metadata files in the destination directory
+func preserveDockerMetadataFiles(dockerTar, destDir, imgTag string) error {
+	// Create imgnames.txt with the image tag
+	if err := os.WriteFile(filepath.Join(destDir, dockerImageNamesFiles), []byte(imgTag+"\n"), 0644); err != nil {
+		return fmt.Errorf("failed to create imgnames.txt: %w", err)
+	}
+
+	// If metadata.yaml exists in the image, preserve it
+	// If not, create an empty one
+	metadataPath := filepath.Join(destDir, dockerMetadataFile)
+	if _, err := os.Stat(metadataPath); os.IsNotExist(err) {
+		if err := os.WriteFile(metadataPath, []byte("{}"), 0644); err != nil {
+			return fmt.Errorf("failed to create metadata.yaml: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// Helper function to extract a tar archive to a destination directory
+func extractTarArchive(tr *tar.Reader, destDir string) error {
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		// Skip whiteout files which are used by Docker to remove files
+		if strings.Contains(header.Name, ".wh.") {
+			continue
+		}
+
+		// Get the target path, with safety checks
+		target := filepath.Join(destDir, header.Name)
+
+		// Prevent directory traversal attacks
+		if !strings.HasPrefix(target, destDir) {
+			continue
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			// Create directory
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+
+		case tar.TypeReg:
+			// Create containing directory
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+
+			// Create file
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return err
+			}
+			f.Close()
+
+		case tar.TypeSymlink:
+			// Create containing directory
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+
+			// Create symlink (with safety check)
+			linkTarget := header.Linkname
+			if filepath.IsAbs(linkTarget) {
+				// Convert absolute symlinks to relative ones contained within the extract directory
+				linkTarget = filepath.Join(destDir, linkTarget)
+				if !strings.HasPrefix(linkTarget, destDir) {
+					// Skip symlinks that point outside the destination directory
+					continue
+				}
+				linkTarget, _ = filepath.Rel(filepath.Dir(target), linkTarget)
+			}
+
+			if err := os.Symlink(linkTarget, target); err != nil {
+				// Ignore errors on symlinks, which are common in cross-platform extraction
+				log.WithError(err).Debugf("Failed to create symlink %s -> %s", target, linkTarget)
+			}
+		}
+	}
+
+	return nil
+}
+
+// Check if directory is empty (indicating a failed or scratch container export)
+func isEmpty(dir string) bool {
+	// Check for common directories that would indicate a real filesystem
+	commonDirs := []string{"bin", "usr", "etc", "var", "lib"}
+	for _, d := range commonDirs {
+		if _, err := os.Stat(filepath.Join(dir, d)); err == nil {
+			return false
+		}
+	}
+
+	// Also check if there are any files at all
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return true
+	}
+	return len(entries) == 0
+}
+
+// extractDockerMetadataFiles extracts the imgnames.txt and metadata.yaml from a Docker image tar
+// and places them in the destination directory.
+func extractDockerMetadataFiles(dockerTar, destDir string) error {
+	// Create imgnames.txt with the image name
+	imgName, err := extractImageNameFromDockerSave(dockerTar)
+	if err != nil {
+		return err
+	}
+
+	if imgName != "" {
+		if err := os.WriteFile(filepath.Join(destDir, dockerImageNamesFiles), []byte(imgName+"\n"), 0644); err != nil {
+			return err
+		}
+	}
+
+	// Extract metadata.yaml if it exists in the image
+	f, err := os.Open(dockerTar)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	tr := tar.NewReader(f)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		// Look for metadata files
+		if hdr.Name == dockerMetadataFile || filepath.Base(hdr.Name) == dockerMetadataFile {
+			data := make([]byte, hdr.Size)
+			if _, err := io.ReadFull(tr, data); err != nil {
+				return err
+			}
+
+			if err := os.WriteFile(filepath.Join(destDir, dockerMetadataFile), data, 0644); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// extractImageNameFromDockerSave extracts the image name from a docker save tarball
+func extractImageNameFromDockerSave(dockerTar string) (string, error) {
+	f, err := os.Open(dockerTar)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	tr := tar.NewReader(f)
+	var manifestFile []byte
+
+	// First, find and read the manifest.json file
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+
+		if hdr.Name == "manifest.json" {
+			manifestFile = make([]byte, hdr.Size)
+			if _, err := io.ReadFull(tr, manifestFile); err != nil {
+				return "", err
+			}
+			break
+		}
+	}
+
+	if len(manifestFile) == 0 {
+		return "", fmt.Errorf("manifest.json not found in docker save tarball")
+	}
+
+	// Parse the manifest to get image tags
+	var manifests []struct {
+		RepoTags []string `json:"RepoTags"`
+	}
+
+	if err := json.Unmarshal(manifestFile, &manifests); err != nil {
+		return "", err
+	}
+
+	// Return the first tag if available
+	if len(manifests) > 0 && len(manifests[0].RepoTags) > 0 {
+		return manifests[0].RepoTags[0], nil
+	}
+
+	return "", nil
 }
 
 func dockerExportPostBuild(builddir, result string) func(sources fileset) (subj []in_toto.Subject, absResultDir string, err error) {
