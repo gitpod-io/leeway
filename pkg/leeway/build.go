@@ -27,7 +27,6 @@ import (
 	"github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/common"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/mod/modfile"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
@@ -188,20 +187,35 @@ func (c *buildContext) ObtainBuildLock(p *Package) (haveLock bool) {
 	key := p.FullName()
 
 	c.pkgLockCond.L.Lock()
+	defer c.pkgLockCond.L.Unlock()
+
 	if _, ok := c.pkgLocks[key]; !ok {
 		// no one's holding the lock at the moment
 		c.pkgLocks[key] = struct{}{}
-		c.pkgLockCond.L.Unlock()
+		log.WithField("package", key).Debug("obtained build lock for package")
 		return true
 	}
 
 	// someone else has the lock - wait for that to finish
+	log.WithField("package", key).Debug("waiting for package lock - another build is in progress")
+	waitStart := time.Now()
 	for _, ok := c.pkgLocks[key]; ok; _, ok = c.pkgLocks[key] {
-		log.WithField("package", key).Debug("waiting for package to be built")
 		c.pkgLockCond.Wait()
 	}
-	c.pkgLockCond.L.Unlock()
-	return false
+	waitDuration := time.Since(waitStart)
+
+	// When we get here, the package has been built by another goroutine
+	// Check to see if it was successful by verifying it exists in the cache
+	if _, exists := c.LocalCache.Location(p); !p.Ephemeral && exists {
+		log.WithField("package", key).WithField("waitDuration", waitDuration).Debug("package was built by another goroutine")
+		return false
+	}
+
+	// The package was being built but isn't in the cache - this suggests
+	// the other build failed or was incomplete. We should attempt to build it again.
+	log.WithField("package", key).WithField("waitDuration", waitDuration).Warn("package was being built but not found in cache, acquiring lock again")
+	c.pkgLocks[key] = struct{}{}
+	return true
 }
 
 // ReleaseBuildLock signals the end of a package build
@@ -209,6 +223,18 @@ func (c *buildContext) ReleaseBuildLock(p *Package) {
 	key := p.FullName()
 
 	c.pkgLockCond.L.Lock()
+
+	// Check if package is in cache to log build status
+	_, exists := c.LocalCache.Location(p)
+	if !p.Ephemeral && exists {
+		log.WithField("package", key).Debug("releasing lock for successfully built package")
+	} else if !p.Ephemeral {
+		log.WithField("package", key).Warn("releasing lock for package that failed to build or was not cached")
+	} else {
+		// Ephemeral packages are never cached
+		log.WithField("package", key).Debug("releasing lock for ephemeral package")
+	}
+
 	delete(c.pkgLocks, key)
 	c.pkgLockCond.Broadcast()
 	c.pkgLockCond.L.Unlock()
@@ -613,28 +639,47 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 		return nil
 	}
 
-	// Use errgroup to simplify error handling and synchronization
-	g := new(errgroup.Group)
+	// Log dependency build start
+	log.WithField("package", p.FullName()).WithField("dependencyCount", len(deps)).Debug("building dependencies sequentially")
 
-	for _, dep := range deps {
-		// Capture the dependency in a local variable to avoid closure issues
-		d := dep
-		g.Go(func() error {
-			return d.build(buildctx)
-		})
+	// Build dependencies sequentially in a deterministic order
+	// This is more conservative but avoids dependency race conditions
+	for i, dep := range deps {
+		log.WithField("parent", p.FullName()).WithField("dependency", dep.FullName()).WithField("index", i+1).WithField("total", len(deps)).Debug("building dependency")
+
+		if err := dep.build(buildctx); err != nil {
+			return xerrors.Errorf("failed to build dependency %s for %s: %w",
+				dep.FullName(), p.FullName(), err)
+		}
+
+		log.WithField("parent", p.FullName()).WithField("dependency", dep.FullName()).Debug("dependency built successfully")
 	}
 
-	// Wait for all goroutines to complete, returning the first error encountered
-	return g.Wait()
+	log.WithField("package", p.FullName()).Debug("all dependencies built successfully")
+	return nil
 }
 
 func (p *Package) build(buildctx *buildContext) error {
+	// Skip building if the package is already in the cache
+	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
+		log.WithField("package", p.FullName()).Debug("already built")
+		return nil
+	}
+
+	// Build dependencies first - we need to do this BEFORE obtaining the lock
+	// to prevent deadlocks and ensure correct build order
+	if err := p.buildDependencies(buildctx); err != nil {
+		return err
+	}
+
 	// Try to obtain lock for building this package
 	doBuild := buildctx.ObtainBuildLock(p)
 	if !doBuild {
-		// Another goroutine is already building this package
+		// Another goroutine already built this package successfully
 		return nil
 	}
+
+	// Release lock when we're done
 	defer buildctx.ReleaseBuildLock(p)
 
 	// Get package version
@@ -643,14 +688,10 @@ func (p *Package) build(buildctx *buildContext) error {
 		return err
 	}
 
-	// Build dependencies first
-	if err := p.buildDependencies(buildctx); err != nil {
-		return err
-	}
-
-	// Skip if package is already built (except for ephemeral packages)
+	// Check again if package is already built - could have been built by another goroutine
+	// while we were building dependencies
 	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
-		log.WithField("package", p.FullName()).Debug("already built")
+		log.WithField("package", p.FullName()).Debug("already built by another process")
 		return nil
 	}
 
@@ -758,7 +799,9 @@ func (p *Package) build(buildctx *buildContext) error {
 	}
 
 	// Register newly built package
-	return buildctx.RegisterNewlyBuilt(p)
+	err = buildctx.RegisterNewlyBuilt(p)
+
+	return err
 }
 
 func prepareDirectory(dir string) error {
