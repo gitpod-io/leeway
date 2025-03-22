@@ -208,12 +208,12 @@ func (c *buildContext) ReleaseBuildLock(p *Package) {
 // once all dependencies have been built.
 //
 // All callers must release the build limiter using ReleaseConcurrentBuild()
-func (c *buildContext) LimitConcurrentBuilds() {
+func (c *buildContext) LimitConcurrentBuilds(ctx context.Context) error {
 	if c.buildLimit == nil {
-		return
+		return nil
 	}
 
-	_ = c.buildLimit.Acquire(context.Background(), 1)
+	return c.buildLimit.Acquire(ctx, 1)
 }
 
 // ReleaseConcurrentBuild releases a previously acquired concurrent build limiting token
@@ -409,6 +409,10 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return err
 	}
 
+	// Create a cancel context to allow clean shutdown
+	buildContext, cancel := context.WithCancel(context.Background())
+	defer cancel() // Ensure resources are cleaned up
+
 	requirements := pkg.GetTransitiveDependencies()
 	allpkg := append(requirements, pkg)
 
@@ -429,7 +433,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	}
 
 	pkgsToCheckRemoteCacheCache := toPackageInterface(pkgsToCheckRemoteCache)
-	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(context.Background(), pkgsToCheckRemoteCacheCache)
+	pkgsInRemoteCache, err := ctx.RemoteCache.ExistingPackages(buildContext, pkgsToCheckRemoteCacheCache)
 	if err != nil {
 		return err
 	}
@@ -487,7 +491,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToDownloadCache[i] = p
 	}
 
-	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, pkgsToDownloadCache)
+	err = ctx.RemoteCache.Download(buildContext, ctx.LocalCache, pkgsToDownloadCache)
 	if err != nil {
 		return err
 	}
@@ -535,7 +539,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToUploadCache[i] = p
 	}
 
-	cacheErr := ctx.RemoteCache.Upload(context.Background(), ctx.LocalCache, pkgsToUploadCache)
+	cacheErr := ctx.RemoteCache.Upload(buildContext, ctx.LocalCache, pkgsToUploadCache)
 	if cacheErr != nil {
 		return cacheErr
 	}
@@ -600,6 +604,9 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 		return nil
 	}
 
+	// Track visited packages to detect circular dependencies
+	visited := make(map[string]bool)
+
 	// Use errgroup to simplify error handling and synchronization
 	g := new(errgroup.Group)
 
@@ -607,6 +614,12 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 		// Capture the dependency in a local variable to avoid closure issues
 		d := dep
 		g.Go(func() error {
+			// Check for circular dependencies
+			if visited[d.FullName()] {
+				return xerrors.Errorf("circular dependency detected for package %s", d.FullName())
+			}
+			visited[d.FullName()] = true
+
 			return d.build(buildctx)
 		})
 	}
@@ -622,6 +635,7 @@ func (p *Package) build(buildctx *buildContext) error {
 		// Another goroutine is already building this package
 		return nil
 	}
+	// Ensure lock is always released even on error paths
 	defer buildctx.ReleaseBuildLock(p)
 
 	// Get package version
@@ -670,7 +684,9 @@ func (p *Package) build(buildctx *buildContext) error {
 	}
 
 	// Acquire build resources
-	buildctx.LimitConcurrentBuilds()
+	if err := buildctx.LimitConcurrentBuilds(context.Background()); err != nil {
+		return fmt.Errorf("failed to acquire build resources: %w", err)
+	}
 	defer buildctx.ReleaseConcurrentBuild()
 
 	// Build the package based on its type
