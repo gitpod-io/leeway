@@ -1625,6 +1625,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 				}
 			}
 
+			extractLogger.Debug("Container files extracted successfully")
+
 			return nil
 		}
 
@@ -1779,8 +1781,6 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 	return res, nil
 }
-
-// Helper functions for buildDocker
 
 // checkImageExists verifies if a Docker image exists locally
 func checkImageExists(imageName string) (bool, error) {
