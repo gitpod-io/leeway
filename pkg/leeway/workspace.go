@@ -39,6 +39,7 @@ type Workspace struct {
 	Variants            []*PackageVariant   `yaml:"variants,omitempty"`
 	EnvironmentManifest EnvironmentManifest `yaml:"environmentManifest,omitempty"`
 	Provenance          WorkspaceProvenance `yaml:"provenance,omitempty"`
+	Security            SecurityConfig      `yaml:"security,omitempty"`
 
 	Origin          string                `yaml:"-"`
 	Components      map[string]*Component `yaml:"-"`

@@ -726,6 +726,14 @@ func (p *Package) build(buildctx *buildContext) error {
 		}
 	}
 
+	// Run security scanning if enabled
+	if (p.C.W.Security.Enabled || p.Security.Enabled) && bld.SecurityScan != nil {
+		log.WithField("package", p.FullName()).Debug("running security scan")
+		if err := bld.SecurityScan(buildctx, p, builddir); err != nil {
+			return xerrors.Errorf("security scan failed: %w", err)
+		}
+	}
+
 	// Handle provenance subjects
 	if p.C.W.Provenance.Enabled {
 		if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
@@ -917,6 +925,9 @@ type packageBuild struct {
 	// It's used for post-build processing that needs to happen regardless of provenance settings,
 	// such as Docker image extraction.
 	PostProcess func(buildCtx *buildContext, pkg *Package, buildDir string) error
+
+	// SecurityScan performs security scanning on the build result
+	SecurityScan func(buildCtx *buildContext, pkg *Package, buildDir string) error
 }
 
 type testCoverageFunc func() (coverage, funcsWithoutTest, funcsWithTest int, err error)
@@ -1129,6 +1140,9 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 
 	res := &packageBuild{
 		Commands: commands,
+		SecurityScan: func(buildCtx *buildContext, pkg *Package, buildDir string) error {
+			return RunSecurityScan(buildCtx, pkg, buildDir)
+		},
 	}
 
 	// let's prepare for packaging
@@ -1384,6 +1398,9 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	return &packageBuild{
 		Commands:     commands,
 		TestCoverage: reportCoverage,
+		SecurityScan: func(buildCtx *buildContext, pkg *Package, buildDir string) error {
+			return RunSecurityScan(buildCtx, pkg, buildDir)
+		},
 	}, nil
 }
 
@@ -1533,6 +1550,9 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 		res = &packageBuild{
 			Commands: commands,
+			SecurityScan: func(buildCtx *buildContext, pkg *Package, buildDir string) error {
+				return RunSecurityScan(buildCtx, pkg, buildDir)
+			},
 		}
 
 		// Add a post-processing hook to extract the container filesystem
@@ -1656,6 +1676,9 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// Initialize res with commands
 		res = &packageBuild{
 			Commands: commands,
+			SecurityScan: func(buildCtx *buildContext, pkg *Package, buildDir string) error {
+				return RunSecurityScan(buildCtx, pkg, buildDir)
+			},
 		}
 
 		// Enhanced subjects function with better error handling and logging
@@ -1898,6 +1921,9 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 					WithCompression(!buildctx.DontCompress),
 				),
 			},
+		},
+		SecurityScan: func(buildCtx *buildContext, pkg *Package, buildDir string) error {
+			return RunSecurityScan(buildCtx, pkg, buildDir)
 		},
 	}, nil
 }

@@ -160,6 +160,8 @@ type Package struct {
 	Config          PackageConfig `yaml:"config,omitempty"`
 	// Definition is the raw package definition YAML
 	Definition []byte `yaml:"-"`
+	// Security configuration for this package
+	Security SecurityConfig `yaml:"security,omitempty"`
 
 	dependencies     []*Package
 	layout           map[*Package]string
