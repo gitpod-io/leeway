@@ -85,9 +85,9 @@ const (
 	// Defaults to "network".
 	EnvvarYarnMutex = "LEEWAY_YARN_MUTEX"
 
-	// dockerImageNamesFiles is the name of the file store in poushed Docker build artifacts
+	// DockerImageNamesFiles is the name of the file store in poushed Docker build artifacts
 	// which contains the names of the Docker images we just pushed
-	dockerImageNamesFiles = "imgnames.txt"
+	DockerImageNamesFiles = "imgnames.txt"
 
 	// dockerMetadataFile is the name of the file we YAML seralize the DockerPkgConfig.Metadata field to
 	// when building Docker images. We use this mechanism to produce the version manifest as part of the Gitpod build.
@@ -264,6 +264,12 @@ type buildOptions struct {
 	CoverageOutputPath     string
 	DockerBuildOptions     *DockerBuildOptions
 	JailedExecution        bool
+
+	// SBOM and CVE scanning options
+	GenerateSBOM bool
+	SBOMOptions  *SBOMOptions
+	ScanCVE      bool
+	CVEOptions   *CVEOptions
 
 	context *buildContext
 }
@@ -749,6 +755,27 @@ func (p *Package) build(buildctx *buildContext) error {
 	if len(bld.Commands[PackageBuildPhasePackage]) > 0 {
 		if err := executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage]); err != nil {
 			return err
+		}
+	}
+
+	// Generate SBOM if enabled
+	if buildctx.GenerateSBOM {
+		log.WithField("package", p.FullName()).Info("Generating SBOM")
+		if err := sbom.GenerateSBOMForPackage(p, builddir, buildctx.SBOMOptions); err != nil {
+			log.WithError(err).Warn("Failed to generate SBOM")
+		}
+	}
+
+	// Scan for vulnerabilities if enabled
+	if buildctx.ScanCVE {
+		log.WithField("package", p.FullName()).Info("Scanning for vulnerabilities")
+		if err := sbom.ScanPackageForVulnerabilities(p, builddir, buildctx.SBOMOptions, buildctx.CVEOptions); err != nil {
+			// If the error is due to vulnerabilities found, fail the build
+			if strings.Contains(err.Error(), "vulnerabilities found with severity levels") {
+				return xerrors.Errorf("CVE scan failed: %w", err)
+			}
+			// Otherwise, just log the error
+			log.WithError(err).Warn("Failed to scan for vulnerabilities")
 		}
 	}
 

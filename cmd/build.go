@@ -185,6 +185,14 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
 	cmd.Flags().String("report-segment", os.Getenv("LEEWAY_SEGMENT_KEY"), "Report build events to segment using the segment key (defaults to $LEEWAY_SEGMENT_KEY)")
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
+	
+	// SBOM and CVE scanning options
+	cmd.Flags().Bool("generate-sbom", false, "Generate Software Bill of Materials (SBOM) for the package")
+	cmd.Flags().String("sbom-format", "cyclonedx", "SBOM format (cyclonedx, spdx)")
+	cmd.Flags().String("sbom-output", "", "Path to write the SBOM file (defaults to <package>-sbom.json in the build directory)")
+	cmd.Flags().Bool("scan-cve", false, "Scan for vulnerabilities after building")
+	cmd.Flags().StringSlice("cve-fail-on", []string{"CRITICAL"}, "Severity levels to fail the build on (CRITICAL, HIGH, MEDIUM, LOW, NEGLIGIBLE)")
+	cmd.Flags().String("cve-ignore-file", "", "Path to a YAML file containing CVE ignore rules")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
@@ -307,7 +315,47 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		log.Fatal(err)
 	}
 
-	return []leeway.BuildOption{
+	// Get SBOM and CVE scanning options
+	generateSBOM, err := cmd.Flags().GetBool("generate-sbom")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sbomFormat, err := cmd.Flags().GetString("sbom-format")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sbomOutput, err := cmd.Flags().GetString("sbom-output")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	scanCVE, err := cmd.Flags().GetBool("scan-cve")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cveFailOn, err := cmd.Flags().GetStringSlice("cve-fail-on")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cveIgnoreFile, err := cmd.Flags().GetString("cve-ignore-file")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Read ignore rules from file if specified
+	var ignoreRules []leeway.IgnoreRule
+	if cveIgnoreFile != "" && scanCVE {
+		ignoreRules, err = leeway.ReadIgnoreRulesFromFile(cveIgnoreFile)
+		if err != nil {
+			log.WithError(err).Fatal("failed to read CVE ignore rules")
+		}
+	}
+
+	buildOpts := []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
 		leeway.WithDryRun(dryrun),
@@ -319,7 +367,25 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		leeway.WithDockerBuildOptions(&dockerBuildOptions),
 		leeway.WithJailedExecution(jailedExecution),
 		leeway.WithCompressionDisabled(dontCompress),
-	}, localCache
+	}
+
+	// Add SBOM and CVE scanning options
+	if generateSBOM {
+		buildOpts = append(buildOpts, leeway.WithSBOMGeneration(&leeway.SBOMOptions{
+			Format:     sbomFormat,
+			OutputPath: sbomOutput,
+		}))
+	}
+
+	if scanCVE {
+		buildOpts = append(buildOpts, leeway.WithCVEScanning(&leeway.CVEOptions{
+			FailOn:      cveFailOn,
+			IgnoreRules: ignoreRules,
+			OutputPath:  "", // Use default
+		}))
+	}
+
+	return buildOpts, localCache
 }
 
 type pushOnlyRemoteCache struct {
