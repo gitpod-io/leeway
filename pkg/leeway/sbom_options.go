@@ -1,6 +1,7 @@
 package leeway
 
 import (
+	"github.com/gitpod-io/leeway/pkg/leeway/common"
 	"github.com/gitpod-io/leeway/pkg/leeway/sbom"
 	"golang.org/x/xerrors"
 )
@@ -76,6 +77,20 @@ func WithCVEScanning(options *CVEOptions) BuildOption {
 		opts.CVEOptions = options
 		return nil
 	}
+}
+
+// GetPackageInfo returns a common.PackageInfo for a package
+func (p *Package) GetPackageInfo() (*common.PackageInfo, error) {
+	version, err := p.Version()
+	if err != nil {
+		return nil, xerrors.Errorf("failed to get package version: %w", err)
+	}
+
+	return &common.PackageInfo{
+		FullName:          p.FullName(),
+		Version:           version,
+		FilesystemSafeName: p.FilesystemSafeName(),
+	}, nil
 }
 
 // ReadIgnoreRulesFromFile reads CVE ignore rules from a YAML file

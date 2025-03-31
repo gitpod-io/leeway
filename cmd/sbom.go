@@ -37,8 +37,14 @@ var sbomCmd = &cobra.Command{
 			OutputPath: output,
 		}
 
+		// Get package info
+		pkgInfo, err := pkg.GetPackageInfo()
+		if err != nil {
+			log.WithError(err).Fatal("failed to get package info")
+		}
+
 		// Generate SBOM
-		sbomDoc, err := sbom.GenerateSBOM(pkg, buildDir, options)
+		sbomDoc, err := sbom.GenerateSBOM(pkgInfo, buildDir, options)
 		if err != nil {
 			log.WithError(err).Fatal("failed to generate SBOM")
 		}
@@ -109,8 +115,14 @@ var cveCmd = &cobra.Command{
 			cveOptions.IgnoreRules = ignoreRules
 		}
 
+		// Get package info
+		pkgInfo, err := pkg.GetPackageInfo()
+		if err != nil {
+			log.WithError(err).Fatal("failed to get package info")
+		}
+
 		// Generate SBOM
-		sbomDoc, err := sbom.GenerateSBOM(pkg, buildDir, sbomOptions)
+		sbomDoc, err := sbom.GenerateSBOM(pkgInfo, buildDir, sbomOptions)
 		if err != nil {
 			log.WithError(err).Fatal("failed to generate SBOM")
 		}

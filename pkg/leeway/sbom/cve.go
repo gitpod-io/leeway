@@ -15,7 +15,7 @@ import (
 	"github.com/anchore/grype/grype/presenter"
 	"github.com/anchore/grype/grype/vulnerability"
 	"github.com/anchore/syft/syft/sbom"
-	"github.com/gitpod-io/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway/common"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
@@ -313,18 +313,12 @@ func (r *VulnerabilityReport) HasFailureLevelVulnerabilities(failOn []string) bo
 }
 
 // GenerateScanMetadata generates metadata for a CVE scan
-func GenerateScanMetadata(pkg *leeway.Package, sbomOptions *SBOMOptions, cveOptions *CVEOptions) (*ScanMetadata, error) {
-	// Get package version
-	version, err := pkg.Version()
-	if err != nil {
-		return nil, xerrors.Errorf("failed to get package version: %w", err)
-	}
-
+func GenerateScanMetadata(pkgInfo *common.PackageInfo, sbomOptions *SBOMOptions, cveOptions *CVEOptions) (*ScanMetadata, error) {
 	// Create metadata
 	metadata := &ScanMetadata{
 		Timestamp:  time.Now().Format(time.RFC3339),
-		Package:    pkg.FullName(),
-		Version:    version,
+		Package:    pkgInfo.FullName,
+		Version:    pkgInfo.Version,
 		SBOMFormat: sbomOptions.Format,
 		FailOn:     cveOptions.FailOn,
 	}

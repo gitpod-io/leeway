@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gitpod-io/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway/common"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 	"gopkg.in/yaml.v3"
@@ -41,7 +41,7 @@ func ReadIgnoreRulesFromFile(path string) ([]IgnoreRule, error) {
 }
 
 // GenerateSBOMForPackage generates an SBOM for a package
-func GenerateSBOMForPackage(pkg *leeway.Package, buildDir string, options *SBOMOptions) error {
+func GenerateSBOMForPackage(pkgInfo *common.PackageInfo, buildDir string, options *SBOMOptions) error {
 	if options == nil {
 		options = DefaultSBOMOptions()
 	}
@@ -50,15 +50,11 @@ func GenerateSBOMForPackage(pkg *leeway.Package, buildDir string, options *SBOMO
 	outputPath := options.OutputPath
 	if outputPath == "" {
 		// Use default path in build directory
-		version, err := pkg.Version()
-		if err != nil {
-			return xerrors.Errorf("failed to get package version: %w", err)
-		}
-		outputPath = filepath.Join(buildDir, fmt.Sprintf("%s-sbom.json", pkg.FilesystemSafeName()))
+		outputPath = filepath.Join(buildDir, fmt.Sprintf("%s-sbom.json", pkgInfo.FilesystemSafeName))
 	}
 
 	// Generate SBOM
-	sbomDoc, err := GenerateSBOM(pkg, buildDir, options)
+	sbomDoc, err := GenerateSBOM(pkgInfo, buildDir, options)
 	if err != nil {
 		return xerrors.Errorf("failed to generate SBOM: %w", err)
 	}
@@ -69,7 +65,7 @@ func GenerateSBOMForPackage(pkg *leeway.Package, buildDir string, options *SBOMO
 	}
 
 	log.WithFields(log.Fields{
-		"package": pkg.FullName(),
+		"package": pkgInfo.FullName,
 		"path":    outputPath,
 	}).Info("Generated SBOM")
 
@@ -77,7 +73,7 @@ func GenerateSBOMForPackage(pkg *leeway.Package, buildDir string, options *SBOMO
 }
 
 // ScanPackageForVulnerabilities scans a package for vulnerabilities
-func ScanPackageForVulnerabilities(pkg *leeway.Package, buildDir string, sbomOptions *SBOMOptions, cveOptions *CVEOptions) error {
+func ScanPackageForVulnerabilities(pkgInfo *common.PackageInfo, buildDir string, sbomOptions *SBOMOptions, cveOptions *CVEOptions) error {
 	if sbomOptions == nil {
 		sbomOptions = DefaultSBOMOptions()
 	}
@@ -86,7 +82,7 @@ func ScanPackageForVulnerabilities(pkg *leeway.Package, buildDir string, sbomOpt
 	}
 
 	// Generate SBOM
-	sbomDoc, err := GenerateSBOM(pkg, buildDir, sbomOptions)
+	sbomDoc, err := GenerateSBOM(pkgInfo, buildDir, sbomOptions)
 	if err != nil {
 		return xerrors.Errorf("failed to generate SBOM: %w", err)
 	}
@@ -101,11 +97,7 @@ func ScanPackageForVulnerabilities(pkg *leeway.Package, buildDir string, sbomOpt
 	outputPath := cveOptions.OutputPath
 	if outputPath == "" {
 		// Use default path in build directory
-		version, err := pkg.Version()
-		if err != nil {
-			return xerrors.Errorf("failed to get package version: %w", err)
-		}
-		outputPath = filepath.Join(buildDir, fmt.Sprintf("%s-vulnerabilities.json", pkg.FilesystemSafeName()))
+		outputPath = filepath.Join(buildDir, fmt.Sprintf("%s-vulnerabilities.json", pkgInfo.FilesystemSafeName))
 	}
 
 	// Write report to file
@@ -114,7 +106,7 @@ func ScanPackageForVulnerabilities(pkg *leeway.Package, buildDir string, sbomOpt
 	}
 
 	// Generate metadata
-	metadata, err := GenerateScanMetadata(pkg, sbomOptions, cveOptions)
+	metadata, err := GenerateScanMetadata(pkgInfo, sbomOptions, cveOptions)
 	if err != nil {
 		return xerrors.Errorf("failed to generate scan metadata: %w", err)
 	}
@@ -143,7 +135,7 @@ func ScanPackageForVulnerabilities(pkg *leeway.Package, buildDir string, sbomOpt
 	}
 
 	log.WithFields(log.Fields{
-		"package": pkg.FullName(),
+		"package": pkgInfo.FullName,
 		"path":    outputPath,
 	}).Info("Scanned for vulnerabilities")
 
