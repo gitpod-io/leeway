@@ -30,7 +30,7 @@ RUN . /tmp/go_platform.env && \
 # Set Go environment variables
 ENV GOROOT=/usr/local/go
 ENV PATH=$GOROOT/bin:$PATH
-ENV GOPATH=/root/go
+ENV GOPATH=/home/gitpod/go
 ENV PATH=$GOPATH/bin:$PATH
 
 # install VS Code Go tools for use with gopls as per https://github.com/golang/vscode-go/blob/master/docs/tools.md
