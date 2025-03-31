@@ -10,6 +10,7 @@ RUN install-packages \
     ca-certificates \
     file \
     git \
+    sudo \
     node.js
 
 ENV GO_VERSION=1.24.0
@@ -26,6 +27,12 @@ RUN echo "TARGETPLATFORM=${TARGETPLATFORM:-linux/amd64}" && \
 # Install Go and add it to PATH
 RUN . /tmp/go_platform.env && \
     curl -fsSL https://dl.google.com/go/go$GO_VERSION.$GO_PLATFORM.tar.gz | tar -C /usr/local -xzs
+
+ENV SHFMT_VERSION=3.10.0
+RUN curl -sSL -o /usr/local/bin/shfmt "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64" && \
+    chmod 755 /usr/local/bin/shfmt
+
+USER gitpod
 
 # Set Go environment variables
 ENV GOROOT=/usr/local/go
@@ -44,9 +51,4 @@ RUN go install -v github.com/uudashr/gopkgs/cmd/gopkgs@v2 \
     && go install -v github.com/go-delve/delve/cmd/dlv@latest \
     && go install -v github.com/golangci/golangci-lint/cmd/golangci-lint@latest \
     && go install -v golang.org/x/tools/gopls@latest \
-    && go install -v honnef.co/go/tools/cmd/staticcheck@latest \
-    && rm -rf /root/.cache
-
-ENV SHFMT_VERSION=3.10.0
-RUN curl -sSL -o /usr/local/bin/shfmt "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64" && \
-    chmod 755 /usr/local/bin/shfmt
+    && go install -v honnef.co/go/tools/cmd/staticcheck@latest
