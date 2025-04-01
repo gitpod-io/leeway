@@ -14,10 +14,9 @@
 			"installZsh": false,
 			"configureZshAsDefaultShell": false,
 			"username": "root",
-			"upgradePackages": true
+			"upgradePackages": true,
+			"additionalPackages": "jq curl"
 		},
-		"ghcr.io/devcontainers-contrib/features/curl-apt-get:1": {},
-		"ghcr.io/devcontainers-contrib/features/jq-apt-get:1": {},
 		"ghcr.io/devcontainers-contrib/features/shfmt:1": {
 			"version": "3.10.0"
 		}
