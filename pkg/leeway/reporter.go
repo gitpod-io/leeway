@@ -154,13 +154,14 @@ func (r *ConsoleReporter) BuildStarted(pkg *Package, status map[*Package]Package
 		}
 
 		format := "%s\t%s\t%s\n"
-		if status == PackageBuilt {
+		switch status {
+		case PackageBuilt:
 			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📦\tcached locally"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
-		} else if status == PackageInRemoteCache {
+		case PackageInRemoteCache:
 			lines[i] = fmt.Sprintf(format, color.Green.Sprint("🌎\tcached remotely (ignored)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
-		} else if status == PackageDownloaded {
+		case PackageDownloaded:
 			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📥\tcached remotely (downloaded)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
-		} else {
+		default:
 			lines[i] = fmt.Sprintf(format, color.Yellow.Sprint("🔧\tbuild"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
 		}
 		i++

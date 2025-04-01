@@ -65,7 +65,7 @@ func LinkGoWorkspace(workspace *leeway.Workspace) error {
 			continue
 		}
 		use.Syntax.InBlock = true
-		use.Syntax.Comments.Suffix = []modfile.Comment{{Token: "// leeway", Suffix: true}}
+		use.Syntax.Suffix = []modfile.Comment{{Token: "// leeway", Suffix: true}}
 	}
 	workFile.SortBlocks()
 	workFile.Cleanup()
@@ -253,7 +253,7 @@ func addReplace(gomod *modfile.File, old, new module.Version, direct bool, sourc
 	for _, rep := range gomod.Replace {
 		if rep.Old.Path == old.Path && rep.Old.Version == old.Version {
 			rep.Syntax.InBlock = true
-			rep.Syntax.Comments.Suffix = []modfile.Comment{{Token: comment, Suffix: true}}
+			rep.Syntax.Suffix = []modfile.Comment{{Token: comment, Suffix: true}}
 		}
 	}
 	return nil
