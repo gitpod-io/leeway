@@ -2,7 +2,7 @@
 	"name": "leeway",
 	"build": {
 		"context": "..",
-		"dockerfile": "../.gitpod.Dockerfile"
+		"dockerfile": "Dockerfile"
 	},
 	"runArgs": [
 		"--privileged",
