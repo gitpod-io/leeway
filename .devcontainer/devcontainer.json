@@ -1,9 +1,5 @@
 {
 	"name": "leeway",
-	"build": {
-		"context": "..",
-		"dockerfile": "Dockerfile"
-	},
 	"features": {
 		"ghcr.io/devcontainers/features/node:1": {
 			"version": "lts",
@@ -31,5 +27,6 @@
 		"--network=host"
 	],
 	"containerUser": "root",
-	"postCreateCommand": "go install -v github.com/uudashr/gopkgs/cmd/gopkgs@v2 && go install -v github.com/ramya-rao-a/go-outline@latest && go install -v github.com/cweill/gotests/gotests@latest && go install -v github.com/fatih/gomodifytags@latest && go install -v github.com/josharian/impl@latest && go install -v github.com/haya14busa/goplay/cmd/goplay@latest && go install -v github.com/go-delve/delve/cmd/dlv@latest && go install -v github.com/golangci/golangci-lint/cmd/golangci-lint@latest && go install -v golang.org/x/tools/gopls@latest && go install -v honnef.co/go/tools/cmd/staticcheck@latest"
+	"postCreateCommand": "go install -v github.com/uudashr/gopkgs/cmd/gopkgs@v2 && go install -v github.com/ramya-rao-a/go-outline@latest && go install -v github.com/cweill/gotests/gotests@latest && go install -v github.com/fatih/gomodifytags@latest && go install -v github.com/josharian/impl@latest && go install -v github.com/haya14busa/goplay/cmd/goplay@latest && go install -v github.com/go-delve/delve/cmd/dlv@latest && go install -v github.com/golangci/golangci-lint/cmd/golangci-lint@latest && go install -v golang.org/x/tools/gopls@latest && go install -v honnef.co/go/tools/cmd/staticcheck@latest",
+	"postStartCommand": "LATEST_LEEWAY_VERSION=$(curl -s https://api.github.com/repos/gitpod-io/leeway/releases/latest | grep '\"tag_name\"' | sed 's/.*\"tag_name\": \"v\\([^\"]*\\)\".*/\\1/') && curl -L -o /tmp/leeway.tar.gz https://github.com/gitpod-io/leeway/releases/download/v${LATEST_LEEWAY_VERSION}/leeway_Linux_amd64.tar.gz && tar -xzf /tmp/leeway.tar.gz -C /tmp && sudo install -m 755 /tmp/leeway /usr/local/bin/ && rm /tmp/leeway.tar.gz"
 }
