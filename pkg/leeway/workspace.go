@@ -561,7 +561,7 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 	}
 
 	// replace build args
-	var rfc []byte = fc
+	rfc := fc
 	if len(args) > 0 {
 		rfc = replaceBuildArguments(fc, compargs)
 	}

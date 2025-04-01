@@ -457,13 +457,19 @@ func (s *S3Storage) GetObject(ctx context.Context, key string, dest string) (int
 	if err != nil {
 		return 0, fmt.Errorf("failed to create destination file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.WithError(err).Warn("failed to close file")
+		}
+	}()
 
 	// Set up cleanup in case of error
 	var downloadErr error
 	defer func() {
 		if downloadErr != nil {
-			os.Remove(dest)
+			if err := os.Remove(dest); err != nil {
+				log.WithError(err).Warn("failed to remove destination file after download error")
+			}
 		}
 	}()
 
@@ -504,7 +510,11 @@ func (s *S3Storage) UploadObject(ctx context.Context, key string, src string) er
 		log.WithError(err).WithField("key", key).Warn("failed to open source file for upload")
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.WithError(err).Warn("failed to close file")
+		}
+	}()
 
 	uploader := manager.NewUploader(s.client, func(u *manager.Uploader) {
 		u.PartSize = defaultS3PartSize

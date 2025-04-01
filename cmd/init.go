@@ -55,14 +55,18 @@ var initCmd = &cobra.Command{
 		err = yaml.Unmarshal(tpl, &pkg)
 		if err != nil {
 			log.WithField("template", string(tpl)).Warn("broken package template")
-			return fmt.Errorf("This is a leeway bug. Cannot parse package template: %w", err)
+			return fmt.Errorf("this is a leeway bug, cannot parse package template: %w", err)
 		}
 
 		f, err := os.OpenFile("BUILD.yaml", os.O_CREATE|os.O_RDWR, 0644)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() {
+			if err := f.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to close BUILD.yaml file: %v\n", err)
+			}
+		}()
 
 		var cmp yaml.Node
 		err = yaml.NewDecoder(f).Decode(&cmp)
@@ -75,7 +79,7 @@ var initCmd = &cobra.Command{
 
 		cmps := cmp.Content[0].Content
 		for i, nde := range cmps {
-			if !(nde.Value == "packages" && i < len(cmps)-1 && cmps[i+1].Kind == yaml.SequenceNode) {
+			if nde.Value != "packages" || i >= len(cmps)-1 || cmps[i+1].Kind != yaml.SequenceNode {
 				continue
 			}
 

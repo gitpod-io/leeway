@@ -100,7 +100,9 @@ func LinkYarnPackagesWithYarn2(workspace *leeway.Workspace) error {
 		enc.SetEscapeHTML(false)
 		enc.SetIndent("", "  ")
 		err = enc.Encode(pkgjson)
-		fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close package.json file")
+		}
 		if err != nil {
 			return err
 		}

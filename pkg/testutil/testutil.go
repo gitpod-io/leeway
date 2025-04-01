@@ -164,7 +164,9 @@ func (ft *CommandFixtureTest) Run() {
 				t.Fatalf("cannot load fixture from %s: %v", ft.FixturePath, err)
 			}
 			ft.Fixture, err = LoadFromYAML(fp)
-			fp.Close()
+			if closeErr := fp.Close(); closeErr != nil {
+				t.Logf("warning: failed to close fixture file: %v", closeErr)
+			}
 			if err != nil {
 				t.Fatalf("cannot load fixture from %s: %v", ft.FixturePath, err)
 			}
@@ -176,7 +178,11 @@ func (ft *CommandFixtureTest) Run() {
 				t.Fatalf("cannot materialize fixture: %v", err)
 			}
 			t.Logf("materialized fixture workspace: %s", loc)
-			t.Cleanup(func() { os.RemoveAll(loc) })
+			t.Cleanup(func() {
+				if err := os.RemoveAll(loc); err != nil {
+					t.Logf("warning: failed to remove temporary directory: %v", err)
+				}
+			})
 		}
 
 		env := os.Environ()

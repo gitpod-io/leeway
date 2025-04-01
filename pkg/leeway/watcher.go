@@ -93,7 +93,11 @@ func WatchSources(ctx context.Context, pkgs []*Package, debounceDuration time.Du
 	}
 
 	go func() {
-		defer watcher.Close()
+		defer func() {
+			if err := watcher.Close(); err != nil {
+				log.WithError(err).Warn("failed to close file watcher")
+			}
+		}()
 		for {
 			select {
 			case evt := <-watcher.Events:

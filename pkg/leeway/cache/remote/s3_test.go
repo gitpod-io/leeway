@@ -188,7 +188,11 @@ func TestS3Cache_Download(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp directory: %v", err)
+		}
+	}()
 
 	// Create test directories
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
@@ -275,7 +279,9 @@ func TestS3Cache_Download(t *testing.T) {
 			// Clean up any existing files
 			files, _ := filepath.Glob(filepath.Join(tmpDir, "*"))
 			for _, f := range files {
-				os.Remove(f)
+				if err := os.Remove(f); err != nil {
+					t.Logf("Failed to remove test file %s: %v", f, err)
+				}
 			}
 
 			mockClient := &mockS3Client{
@@ -340,7 +346,11 @@ func TestS3Cache_Upload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp directory: %v", err)
+		}
+	}()
 
 	// Create test directories
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {

@@ -138,7 +138,11 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 	if err != nil {
 		return nil, xerrors.Errorf("cannot compute hash of myself: %w", err)
 	}
-	defer self.Close()
+	defer func() {
+		if err := self.Close(); err != nil {
+			log.WithError(err).Warn("failed to close self")
+		}
+	}()
 	leewayHash := sha256.New()
 	_, err = io.Copy(leewayHash, self)
 	if err != nil {
@@ -1745,13 +1749,21 @@ func extractImageNameFromCache(pkgName, cacheBundleFN string) (imgname string, e
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.WithError(err).Warn("failed to close file")
+		}
+	}()
 
 	gzin, err := gzip.NewReader(f)
 	if err != nil {
 		return "", err
 	}
-	defer gzin.Close()
+	defer func() {
+		if err := gzin.Close(); err != nil {
+			log.WithError(err).Warn("failed to close gzip reader")
+		}
+	}()
 
 	tarin := tar.NewReader(gzin)
 	for {

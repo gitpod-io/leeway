@@ -42,7 +42,11 @@ func extractImageWithOCILibsImpl(destDir, imgTag string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temporary extraction directory: %w", err)
 	}
-	defer os.RemoveAll(tempExtractDir) // Clean up temp dir after we're done
+	defer func() {
+		if err := os.RemoveAll(tempExtractDir); err != nil {
+			log.WithError(err).Warn("failed to remove temporary extraction directory")
+		}
+	}() // Clean up temp dir after we're done
 
 	// Parse the image reference
 	ref, err := name.ParseReference(imgTag)
@@ -89,7 +93,11 @@ func extractImageWithOCILibsImpl(destDir, imgTag string) error {
 
 	// Extract the filesystem by flattening the layers to the temp directory
 	fs := mutate.Extract(img)
-	defer fs.Close()
+	defer func() {
+		if err := fs.Close(); err != nil {
+			log.WithError(err).Warn("failed to close filesystem reader")
+		}
+	}()
 
 	// Extract the tar contents to the temporary directory
 	if err := extractTarToDir(fs, tempExtractDir); err != nil {
@@ -243,10 +251,14 @@ func extractTarToDir(r io.Reader, destDir string) error {
 			}
 
 			if _, err := io.Copy(f, tr); err != nil {
-				f.Close()
+				if closeErr := f.Close(); closeErr != nil {
+					log.WithError(closeErr).Warn("failed to close file after copy error")
+				}
 				return err
 			}
-			f.Close()
+			if err := f.Close(); err != nil {
+				log.WithError(err).Warn("failed to close file after copy")
+			}
 
 		case tar.TypeSymlink:
 			// Create containing directory
@@ -347,7 +359,9 @@ func organizeContainerContent(sourceDir, contentDir string) error {
 					if err := copyFileOrDirectory(sourceItemPath, targetItemPath); err != nil {
 						return fmt.Errorf("copying %s to %s: %w", sourceItemPath, targetItemPath, err)
 					}
-					os.RemoveAll(sourceItemPath)
+					if err := os.RemoveAll(sourceItemPath); err != nil {
+						log.WithError(err).Warn("failed to remove source item after copy")
+					}
 				}
 			}
 		} else {
@@ -357,7 +371,9 @@ func organizeContainerContent(sourceDir, contentDir string) error {
 				if err := copyFileOrDirectory(sourcePath, targetPath); err != nil {
 					return fmt.Errorf("copying %s to %s: %w", sourcePath, targetPath, err)
 				}
-				os.Remove(sourcePath)
+				if err := os.Remove(sourcePath); err != nil {
+					log.WithError(err).Warn("failed to remove source file after copy")
+				}
 			}
 		}
 	}
@@ -400,14 +416,22 @@ func copyFileOrDirectory(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer source.Close()
+	defer func() {
+		if err := source.Close(); err != nil {
+			log.WithError(err).Warn("failed to close source file")
+		}
+	}()
 
 	// Create destination file
 	destination, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, sourceInfo.Mode())
 	if err != nil {
 		return err
 	}
-	defer destination.Close()
+	defer func() {
+		if err := destination.Close(); err != nil {
+			log.WithError(err).Warn("failed to close destination file")
+		}
+	}()
 
 	_, err = io.Copy(destination, source)
 	return err

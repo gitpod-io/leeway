@@ -134,7 +134,11 @@ func TestMaterialise(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { os.RemoveAll(loc) })
+			t.Cleanup(func() {
+				if err := os.RemoveAll(loc); err != nil {
+					t.Logf("warning: failed to remove temporary directory: %v", err)
+				}
+			})
 			t.Logf("materialized at %s", loc)
 
 			for _, f := range test.Expectation {
@@ -159,7 +163,9 @@ func TestMaterialise(t *testing.T) {
 					continue
 				}
 				_, err = io.Copy(hash, fp)
-				fp.Close()
+				if closeErr := fp.Close(); closeErr != nil {
+					t.Logf("warning: failed to close file: %v", closeErr)
+				}
 				if err != nil {
 					t.Errorf("cannot hash %s: %v", fn, err)
 					continue

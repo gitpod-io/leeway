@@ -297,7 +297,12 @@ func isCompressedFile(filepath string) (CompressionAlgorithm, error) {
 	if err != nil {
 		return NoCompr, fmt.Errorf("failed to open file for compression detection: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			// Just log the error since we're in a detection function
+			fmt.Printf("Warning: failed to close file during compression detection: %v\n", err)
+		}
+	}()
 
 	// Read the first few bytes to check for magic numbers
 	header := make([]byte, 4)

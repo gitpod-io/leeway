@@ -80,13 +80,21 @@ var unmountCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			defer src.Close()
+			defer func() {
+				if err := src.Close(); err != nil {
+					logrus.WithError(err).Warn("failed to close source file")
+				}
+			}()
 
 			f, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
 			if err != nil {
 				return err
 			}
-			defer f.Close()
+			defer func() {
+				if err := f.Close(); err != nil {
+					logrus.WithError(err).Warn("failed to close destination file")
+				}
+			}()
 
 			logrus.WithField("dest", dst).Debug("applying change: copying content")
 			_, err = io.Copy(f, src)
