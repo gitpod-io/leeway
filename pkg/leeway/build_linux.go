@@ -36,7 +36,11 @@ func executeCommandsForPackageSafe(buildctx *buildContext, p *Package, wd string
 	}
 
 	if !log.IsLevelEnabled(log.DebugLevel) {
-		defer os.RemoveAll(tmpdir)
+		defer func() {
+			if err := os.RemoveAll(tmpdir); err != nil {
+				log.WithError(err).Warn("failed to remove temporary build directory")
+			}
+		}()
 	}
 
 	log.WithField("tmpdir", tmpdir).WithField("package", p.FullName()).Debug("preparing build runc environment")

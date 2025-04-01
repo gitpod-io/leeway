@@ -273,7 +273,11 @@ func executeCommandInLocations(rawExecCmd []string, locs []commandExecLocation, 
 			return fmt.Errorf("execution failed in %s (%s): %w", loc.Name, loc.Dir, err)
 		}
 		_ = pty.InheritSize(ptmx, os.Stdin)
-		defer ptmx.Close()
+		defer func() {
+			if err := ptmx.Close(); err != nil {
+				log.WithError(err).Warn("failed to close pty")
+			}
+		}()
 
 		//nolint:errcheck
 		go io.Copy(textio.NewPrefixWriter(os.Stdout, prefix), ptmx)
@@ -358,7 +362,9 @@ func (c filesystemExecCache) MarkExecuted(ctx context.Context, loc commandExecLo
 	if err != nil {
 		return err
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		log.WithError(err).Warn("failed to close file")
+	}
 	log.WithField("name", fn).Debug("marked executed")
 	return nil
 }

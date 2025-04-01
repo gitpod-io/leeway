@@ -48,7 +48,11 @@ func formatBuildYaml(fn string, inPlace, fix bool) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close file: %v\n", err)
+		}
+	}()
 
 	var out io.Writer = os.Stdout
 	if inPlace {

@@ -92,9 +92,15 @@ func TestBuildDockerDeps(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { os.RemoveAll(pth) })
+		t.Cleanup(func() {
+			if err := os.RemoveAll(pth); err != nil {
+				t.Logf("warning: failed to remove temporary directory: %v", err)
+			}
+		})
 
-		os.Setenv("PATH", pth+":"+os.Getenv("PATH"))
+		if err := os.Setenv("PATH", pth+":"+os.Getenv("PATH")); err != nil {
+			t.Fatalf("failed to set PATH: %v", err)
+		}
 		log.WithField("path", os.Getenv("PATH")).Debug("modified path to use dummy docker")
 	}
 	testutil.RunDUT()
@@ -160,9 +166,15 @@ func TestDockerPostProcessing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { os.RemoveAll(pth) })
+		t.Cleanup(func() {
+			if err := os.RemoveAll(pth); err != nil {
+				t.Logf("warning: failed to remove temporary directory: %v", err)
+			}
+		})
 
-		os.Setenv("PATH", pth+":"+os.Getenv("PATH"))
+		if err := os.Setenv("PATH", pth+":"+os.Getenv("PATH")); err != nil {
+			t.Fatalf("failed to set PATH: %v", err)
+		}
 		log.WithField("path", os.Getenv("PATH")).Debug("modified path to use dummy docker")
 	}
 	testutil.RunDUT()

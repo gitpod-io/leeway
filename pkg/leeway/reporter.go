@@ -154,21 +154,26 @@ func (r *ConsoleReporter) BuildStarted(pkg *Package, status map[*Package]Package
 		}
 
 		format := "%s\t%s\t%s\n"
-		if status == PackageBuilt {
+		switch status {
+		case PackageBuilt:
 			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📦\tcached locally"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
-		} else if status == PackageInRemoteCache {
+		case PackageInRemoteCache:
 			lines[i] = fmt.Sprintf(format, color.Green.Sprint("🌎\tcached remotely (ignored)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
-		} else if status == PackageDownloaded {
+		case PackageDownloaded:
 			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📥\tcached remotely (downloaded)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
-		} else {
+		default:
 			lines[i] = fmt.Sprintf(format, color.Yellow.Sprint("🔧\tbuild"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
 		}
 		i++
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i] < lines[j] })
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, strings.Join(lines, ""))
-	tw.Flush()
+	if _, err := fmt.Fprintln(tw, strings.Join(lines, "")); err != nil {
+		log.WithError(err).Warn("failed to write to tabwriter")
+	}
+	if err := tw.Flush(); err != nil {
+		log.WithError(err).Warn("failed to flush tabwriter")
+	}
 }
 
 // BuildFinished is called when the build of a package which was started by the user has finished.
@@ -216,7 +221,7 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRe
 	r.mu.Unlock()
 
 	var msg string
-  if rep.Error != nil {
+	if rep.Error != nil {
 		msg = color.Sprintf("<red>package build failed while %sing</>\n<white>Reason:</> %s\n", rep.LastPhase(), rep.Error)
 	} else {
 		var coverage string
@@ -468,7 +473,11 @@ func (r *HTMLReporter) Report() {
 	tmpl, _ := template.New("Report").Parse(strings.ReplaceAll(tmplString, "'", "`"))
 
 	file, _ := os.Create(r.filename)
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close GITHUB_OUTPUT file")
+		}
+	}()
 
 	err := tmpl.Execute(file, vars)
 	if err != nil {
@@ -576,7 +585,9 @@ func (sr *SegmentReporter) BuildFinished(pkg *Package, err error) {
 	addPackageToSegmentEventProps(props, pkg)
 	sr.track("build_finished", props)
 
-	sr.client.Close()
+	if err := sr.client.Close(); err != nil {
+		log.WithError(err).Warn("failed to close segment client")
+	}
 	sr.client = nil
 }
 
@@ -651,11 +662,17 @@ func (sr *GitHubActionReporter) PackageBuildFinished(pkg *Package, rep *PackageB
 		log.WithField("fn", fn).WithError(err).Warn("cannot open GITHUB_OUTPUT file")
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close GITHUB_OUTPUT file")
+		}
+	}()
 
 	var success bool
 	if rep.Error == nil {
 		success = true
 	}
-	fmt.Fprintf(f, "%s=%v\n", pkg.FilesystemSafeName(), success)
+	if _, err := fmt.Fprintf(f, "%s=%v\n", pkg.FilesystemSafeName(), success); err != nil {
+		log.WithError(err).Warn("failed to write to GITHUB_OUTPUT file")
+	}
 }

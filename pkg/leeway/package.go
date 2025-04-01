@@ -777,8 +777,8 @@ func (p *Package) FilesystemSafeName() string {
 }
 
 func FilesystemSafeName(fn string) string {
-	res := strings.Replace(fn, "/", "-", -1)
-	res = strings.Replace(res, ":", "--", -1)
+	res := strings.ReplaceAll(fn, "/", "-")
+	res = strings.ReplaceAll(res, ":", "--")
 	// components in the workspace root would otherwise start with - which breaks a lot of shell commands
 	res = strings.TrimLeft(res, "-")
 	return res
@@ -888,18 +888,21 @@ func (p *Package) ContentManifest() ([]string, error) {
 
 		hash, err := highwayhash.New(key)
 		if err != nil {
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil {
+				log.WithError(closeErr).Warn("failed to close file after hash error")
+			}
 			return nil, err
 		}
 
 		_, err = io.Copy(hash, file)
 		if err != nil {
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil {
+				log.WithError(closeErr).Warn("failed to close file after copy error")
+			}
 			return nil, err
 		}
 
-		err = file.Close()
-		if err != nil {
+		if err = file.Close(); err != nil {
 			return nil, err
 		}
 

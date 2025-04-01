@@ -97,7 +97,11 @@ func (c *checkImplicitTransitiveDependencies) grepInFile(fn string, pat *regexp.
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.WithError(err).Warn("failed to close file")
+		}
+	}()
 
 	r := bufio.NewReader(f)
 	for {

@@ -138,7 +138,11 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 	if err != nil {
 		return nil, xerrors.Errorf("cannot compute hash of myself: %w", err)
 	}
-	defer self.Close()
+	defer func() {
+		if err := self.Close(); err != nil {
+			log.WithError(err).Warn("failed to close self")
+		}
+	}()
 	leewayHash := sha256.New()
 	_, err = io.Copy(leewayHash, self)
 	if err != nil {
@@ -974,7 +978,8 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 	}
 
 	var commands = make(map[PackageBuildPhase][][]string)
-	if cfg.Packaging == YarnOfflineMirror {
+	switch cfg.Packaging {
+	case YarnOfflineMirror:
 		err := os.Mkdir(filepath.Join(wd, "_mirror"), 0755)
 		if err != nil {
 			return nil, err
@@ -1007,7 +1012,8 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		}
 
 		tgt := p.BuildLayoutLocation(deppkg)
-		if cfg.Packaging == YarnOfflineMirror {
+		switch cfg.Packaging {
+		case YarnOfflineMirror:
 			fn := fmt.Sprintf("%s.tar.gz", tgt)
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"cp", builtpkg, filepath.Join("_mirror", fn)})
 			builtpkg = filepath.Join(wd, "_mirror", fn)
@@ -1136,7 +1142,8 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		pkgCommands [][]string
 		resultDir   string
 	)
-	if cfg.Packaging == YarnOfflineMirror {
+	switch cfg.Packaging {
+	case YarnOfflineMirror:
 		builtinScripts := map[string]string{
 			"get_yarn_lock.sh":       getYarnLockScript,
 			"install.sh":             installScript,
@@ -1161,12 +1168,12 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			),
 		}...)
 		resultDir = "_mirror"
-	} else if cfg.Packaging == YarnLibrary {
+	case YarnLibrary:
 		pkgCommands = append(pkgCommands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://%s > %s", result, pkgYarnLock)},
 			{"yarn", "pack", "--filename", result},
 		}...)
-	} else if cfg.Packaging == YarnApp {
+	case YarnApp:
 		err := os.Mkdir(filepath.Join(wd, "_pkg"), 0755)
 		if err != nil {
 			return nil, err
@@ -1189,12 +1196,12 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			),
 		}...)
 		resultDir = "_pkg"
-	} else if cfg.Packaging == YarnArchive {
+	case YarnArchive:
 		pkgCommands = append(pkgCommands, BuildTarCommand(
 			WithOutputFile(result),
 			WithCompression(!buildctx.DontCompress),
 		))
-	} else {
+	default:
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
 	}
 	res.Commands[PackageBuildPhasePackage] = pkgCommands
@@ -1345,7 +1352,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			testCommand = append(testCommand, "-v")
 		}
 
-		if buildctx.buildOptions.CoverageOutputPath != "" {
+		if buildctx.CoverageOutputPath != "" {
 			testCommand = append(testCommand, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
 		} else {
 			testCommand = append(testCommand, "-coverprofile=testcoverage.out")
@@ -1377,7 +1384,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	)
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], [][]string{
-			{"sh", "-c", fmt.Sprintf(`if [ -f "%v" ]; then cp -f %v %v; fi`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.buildOptions.CoverageOutputPath)},
+			{"sh", "-c", fmt.Sprintf(`if [ -f "%v" ]; then cp -f %v %v; fi`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.CoverageOutputPath)},
 		}...)
 	}
 
@@ -1745,13 +1752,21 @@ func extractImageNameFromCache(pkgName, cacheBundleFN string) (imgname string, e
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.WithError(err).Warn("failed to close file")
+		}
+	}()
 
 	gzin, err := gzip.NewReader(f)
 	if err != nil {
 		return "", err
 	}
-	defer gzin.Close()
+	defer func() {
+		if err := gzin.Close(); err != nil {
+			log.WithError(err).Warn("failed to close gzip reader")
+		}
+	}()
 
 	tarin := tar.NewReader(gzin)
 	for {

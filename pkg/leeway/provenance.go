@@ -54,7 +54,11 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 	if err != nil {
 		return fmt.Errorf("cannot write provenance for %s: %w", p.FullName(), err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close provenance file")
+		}
+	}()
 
 	bundle := newAttestationBundle(f)
 	err = p.getDependenciesProvenanceBundles(buildctx, bundle)
@@ -115,13 +119,21 @@ func AccessAttestationBundleInCachedArchive(fn string, handler func(bundle io.Re
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close file during hash computation")
+		}
+	}()
 
 	g, err := gzip.NewReader(f)
 	if err != nil {
 		return err
 	}
-	defer g.Close()
+	defer func() {
+		if closeErr := g.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close gzip reader")
+		}
+	}()
 
 	var bundleFound bool
 	a := tar.NewReader(g)
@@ -310,7 +322,11 @@ func sha256Hash(fn string) (res string, err error) {
 		return "", xerrors.Errorf("cannot compute hash of %s: %w", fn, err)
 	}
 
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close file during hash computation")
+		}
+	}()
 
 	hash := sha256.New()
 	_, err = io.Copy(hash, f)
@@ -380,7 +396,9 @@ func (fset fileset) Subjects(base string) ([]in_toto.Subject, error) {
 		if err != nil {
 			return nil, xerrors.Errorf("cannot compute hash of %s: %w", src, err)
 		}
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close file during subject hash computation")
+		}
 
 		res = append(res, in_toto.Subject{
 			Name: src,

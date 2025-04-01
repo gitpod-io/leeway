@@ -163,7 +163,9 @@ func TestS3CacheDownload(t *testing.T) {
 			// Clean up the temp directory
 			files, _ := filepath.Glob(filepath.Join(tmpDir, "*"))
 			for _, f := range files {
-				os.Remove(f)
+				if err := os.Remove(f); err != nil {
+					t.Logf("Failed to remove test file %s: %v", f, err)
+				}
 			}
 
 			mockStorage := &mockS3Storage{

@@ -51,7 +51,12 @@ func writeTemplate(out io.Writer, in interface{}, tplc string) error {
 	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	defer w.Flush()
+	defer func() {
+		if err := w.Flush(); err != nil {
+			// We can't do much if this fails too, but at least try to report it
+			_, _ = fmt.Fprintf(out, "warning: failed to flush tabwriter: %v\n", err)
+		}
+	}()
 
 	return tpl.Execute(w, in)
 }

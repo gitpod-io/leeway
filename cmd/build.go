@@ -136,13 +136,19 @@ func saveBuildResult(ctx context.Context, loc string, localCache cache.LocalCach
 	}
 	fin, err := os.OpenFile(br, os.O_RDONLY, 0644)
 	if err != nil {
-		fout.Close()
+		if closeErr := fout.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close output file")
+		}
 		log.WithError(err).Fatal("cannot copy build result")
 	}
 
 	_, err = io.Copy(fout, fin)
-	fout.Close()
-	fin.Close()
+	if err := fout.Close(); err != nil {
+		log.WithError(err).Warn("failed to close output file")
+	}
+	if err := fin.Close(); err != nil {
+		log.WithError(err).Warn("failed to close input file")
+	}
 	if err != nil {
 		log.WithError(err).Fatal("cannot copy build result")
 	}
@@ -246,7 +252,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			defer f.Close()
+			defer func() {
+				if err := f.Close(); err != nil {
+					log.WithError(err).Warn("failed to close plan file")
+				}
+			}()
 
 			planOutlet = f
 		}
