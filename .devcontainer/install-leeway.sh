@@ -24,4 +24,4 @@ tar -xzf /tmp/leeway.tar.gz -C /tmp
 sudo install -m 755 /tmp/leeway /usr/local/bin/
 
 # Clean up temporary files
-rm /tmp/leeway.tar.gz
+rm /tmp/leeway.tar.gz /tmp/leeway
