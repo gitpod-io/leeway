@@ -175,9 +175,36 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	}
 
 	// Process the results
+
+	// Count vulnerabilities by severity
+	severityCounts := make(map[string]int)
+
+	// Process matches to count by severity
+	for _, m := range matches.Sorted() {
+		metadata, err := vulnProvider.VulnerabilityMetadata(m.Vulnerability.Reference)
+		if err != nil {
+			return xerrors.Errorf("failed to get vulnerability metadata: %w", err)
+		}
+
+		severity := strings.ToUpper(metadata.Severity)
+		severityCounts[severity]++
+	}
+
+	// Build severity counts string for logging
+	var severityDetails []string
+	for _, severity := range []string{"CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "UNKNOWN"} {
+		if count, exists := severityCounts[severity]; exists && count > 0 {
+			severityDetails = append(severityDetails, fmt.Sprintf("%s: %d", strings.ToLower(severity), count))
+		}
+	}
+
 	// Use the reporter to log the message with consistent formatting
-	buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Vulnerability scan completed (vulnerabilities: %d, ignored: %d)\n",
-		matches.Count(), len(ignoredMatches))))
+	severityInfo := ""
+	if len(severityDetails) > 0 {
+		severityInfo = ", " + strings.Join(severityDetails, ", ")
+	}
+	buildctx.Reporter.PackageBuildLog(p, true, fmt.Appendf(nil, "Vulnerability scan completed (total: %d, ignored: %d%s)\n",
+		matches.Count(), len(ignoredMatches), severityInfo))
 
 	// Write vulnerability results to files
 	err = writeVulnerabilityResults(p, buildctx, builddir, packages, context, matches, ignoredMatches, vulnProvider)
@@ -187,25 +214,7 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 
 	// Let build fail when vulnerabilities are found
 	if len(p.C.W.SBOM.FailOn) > 0 {
-		// Count vulnerabilities by severity
-		severityCounts := make(map[string]int)
 		var failedSeverities []string
-
-		// Process matches to count by severity
-		for _, m := range matches.Sorted() {
-			metadata, err := vulnProvider.VulnerabilityMetadata(m.Vulnerability.Reference)
-			if err != nil {
-				return xerrors.Errorf("failed to get vulnerability metadata: %w", err)
-			}
-
-			severity := strings.ToUpper(metadata.Severity)
-
-			// Log the vulnerability for debugging
-			buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Processing vulnerability: %s (Severity: %s)\n",
-				m.Vulnerability.ID, severity))
-
-			severityCounts[severity]++
-		}
 
 		// Check if any severity level in FailOn has vulnerabilities
 		for _, failOnSeverity := range p.C.W.SBOM.FailOn {
@@ -217,8 +226,10 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 
 		// If we have any failing severities, return an error
 		if len(failedSeverities) > 0 {
-			return xerrors.Errorf("build failed due to vulnerabilities with severity levels [%s] - see vulnerability reports for details",
+			errorMsg := fmt.Sprintf("build failed due to vulnerabilities with severity levels [%s] - see vulnerability reports for details",
 				strings.Join(failedSeverities, ", "))
+			buildctx.Reporter.PackageBuildLog(p, false, []byte(errorMsg+"\n"))
+			return xerrors.Errorf(errorMsg)
 		}
 
 		// Log that we checked but found no vulnerabilities at the specified severity levels
