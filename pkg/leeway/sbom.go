@@ -149,7 +149,7 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	}
 
 	// Load the vulnerability database
-	vulnProvider, status, err := loadVulnerabilityDB(p, buildctx)
+	vulnProvider, vulnProviderStatus, err := loadVulnerabilityDB(p, buildctx)
 	if err != nil {
 		return xerrors.Errorf("failed to load vulnerability database: %w", err)
 	}
@@ -161,7 +161,7 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 
 	// Use the reporter to log the message with consistent formatting
 	buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Using vulnerability database (path: %s, built on: %s)\n",
-		status.Path, status.Built.Format("2006-01-02")))
+		vulnProviderStatus.Path, vulnProviderStatus.Built.Format("2006-01-02")))
 
 	// Parse the SBOM file to get packages
 	packages, context, err := parseSBOMFile(sbomFile)
@@ -211,7 +211,7 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 		matches.Count(), len(ignoredMatches), severityInfo))
 
 	// Write vulnerability results to files
-	err = writeVulnerabilityResults(p, buildctx, builddir, packages, context, matches, ignoredMatches, vulnProvider)
+	err = writeVulnerabilityResults(p, buildctx, builddir, packages, context, matches, ignoredMatches, vulnProvider, vulnProviderStatus)
 	if err != nil {
 		return xerrors.Errorf("failed to write vulnerability results: %w", err)
 	}
@@ -291,6 +291,7 @@ func writeVulnerabilityResults(
 	matches *match.Matches,
 	ignoredMatches []match.IgnoredMatch,
 	vulnProvider vulnerability.Provider,
+	dbStatus *vulnerability.ProviderStatus,
 ) error {
 	// Create a document model
 	model, err := models.NewDocument(
@@ -301,7 +302,7 @@ func writeVulnerabilityResults(
 		ignoredMatches,
 		vulnProvider,
 		nil, // options
-		nil, // dbInfo
+		dbStatus,
 		models.SortByPackage,
 	)
 	if err != nil {
