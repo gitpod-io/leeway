@@ -161,6 +161,9 @@ type Package struct {
 	// Definition is the raw package definition YAML
 	Definition []byte `yaml:"-"`
 
+	// SBOM configuration for this package
+	SBOM PackageSBOM `yaml:"sbom,omitempty"`
+
 	dependencies     []*Package
 	layout           map[*Package]string
 	originalSources  []string
@@ -959,6 +962,25 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 		if len(p.C.W.SBOM.FailOn) > 0 {
 			bundle = append(bundle, fmt.Sprintf(" failOn=%v", p.C.W.SBOM.FailOn))
 		}
+
+		// Add workspace-level ignore rules
+		if len(p.C.W.SBOM.IgnoreVulnerabilities) > 0 {
+			ignoreData, err := yaml.Marshal(p.C.W.SBOM.IgnoreVulnerabilities)
+			if err != nil {
+				return err
+			}
+			bundle = append(bundle, fmt.Sprintf(" ignoreVulnerabilities=%s", ignoreData))
+		}
+
+		// Add package-level ignore rules
+		if len(p.SBOM.IgnoreVulnerabilities) > 0 {
+			ignoreData, err := yaml.Marshal(p.SBOM.IgnoreVulnerabilities)
+			if err != nil {
+				return err
+			}
+			bundle = append(bundle, fmt.Sprintf(" packageIgnoreVulnerabilities=%s", ignoreData))
+		}
+
 		bundle = append(bundle, "\n")
 	}
 

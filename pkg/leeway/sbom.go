@@ -20,7 +20,7 @@ import (
 	"github.com/anchore/grype/grype/matcher"
 	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/grype/grype/presenter/cyclonedx"
-	"github.com/anchore/grype/grype/presenter/json"
+	grypeJSON "github.com/anchore/grype/grype/presenter/json"
 	"github.com/anchore/grype/grype/presenter/models"
 	"github.com/anchore/grype/grype/presenter/sarif"
 	"github.com/anchore/grype/grype/presenter/table"
@@ -34,13 +34,60 @@ import (
 	"github.com/anchore/syft/syft/source"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
+	"slices"
 )
+
+// IgnoreRule is an alias for match.IgnoreRule with YAML tags matching Grype's structure.
+// It allows specifying criteria for ignoring vulnerabilities during SBOM scanning.
+// Available fields:
+// - vulnerability: The vulnerability ID to ignore (e.g., "CVE-2023-1234")
+// - reason: The reason for ignoring this vulnerability
+// - namespace: The vulnerability namespace (e.g., "github:golang")
+// - fix-state: The fix state to match (e.g., "fixed", "not-fixed", "unknown")
+// - package: Package-specific criteria (see below)
+// - vex-status: VEX status (e.g., "affected", "fixed", "not_affected")
+// - vex-justification: Justification for the VEX status
+// - match-type: The type of match to ignore (e.g., "exact-direct-dependency")
+//
+// The package field can contain:
+// - name: Package name (supports regex)
+// - version: Package version
+// - language: Package language
+// - type: Package type
+// - location: Package location (supports glob patterns)
+// - upstream-name: Upstream package name (supports regex)
+// IgnoreRulePackage describes package-specific fields for ignore rules
+type IgnoreRulePackage struct {
+	Name         string `yaml:"name,omitempty"`          // Package name (supports regex)
+	Version      string `yaml:"version,omitempty"`       // Package version
+	Language     string `yaml:"language,omitempty"`      // Package language
+	Type         string `yaml:"type,omitempty"`          // Package type
+	Location     string `yaml:"location,omitempty"`      // Package location (supports glob patterns)
+	UpstreamName string `yaml:"upstream-name,omitempty"` // Upstream package name (supports regex)
+}
+
+type IgnoreRule struct {
+	Vulnerability    string            `yaml:"vulnerability"`               // Vulnerability ID (CVE, GHSA, package URL)
+	Reason           string            `yaml:"reason"`                      // Reason for ignoring this vulnerability
+	Namespace        string            `yaml:"namespace,omitempty"`         // Optional namespace specification
+	FixState         string            `yaml:"fix-state,omitempty"`         // Optional fix state
+	Package          IgnoreRulePackage `yaml:"package,omitempty"`           // Optional package details
+	VexStatus        string            `yaml:"vex-status,omitempty"`        // Optional VEX status
+	VexJustification string            `yaml:"vex-justification,omitempty"` // Optional VEX justification
+	MatchType        match.Type        `yaml:"match-type,omitempty"`        // Optional match type
+}
 
 // WorkspaceSBOM configures SBOM generation for a workspace
 type WorkspaceSBOM struct {
-	Enabled bool     `yaml:"enabled"`
-	ScanCVE bool     `yaml:"scanCVE"`
-	FailOn  []string `yaml:"failOn,omitempty"` // e.g., ["CRITICAL", "HIGH"]
+	Enabled               bool         `yaml:"enabled"`
+	ScanCVE               bool         `yaml:"scanCVE"`
+	FailOn                []string     `yaml:"failOn,omitempty"`                // e.g., ["CRITICAL", "HIGH"]
+	IgnoreVulnerabilities []IgnoreRule `yaml:"ignoreVulnerabilities,omitempty"` // Workspace-level ignore rules
+}
+
+// PackageSBOM configures SBOM generation for a package
+type PackageSBOM struct {
+	IgnoreVulnerabilities []IgnoreRule `yaml:"ignoreVulnerabilities,omitempty"` // Package-level ignore rules
 }
 
 // writeSBOM produces SBOMs for a package in all supported formats and writes them to the build directory.
@@ -163,8 +210,12 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	// Use the reporter to log the message with consistent formatting
 	buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Found packages in SBOM (count: %d)\n", len(packages)))
 
+	// Combine workspace-level and package-level ignore rules
+	ignoreRules := slices.Clone(p.C.W.SBOM.IgnoreVulnerabilities)
+	ignoreRules = append(ignoreRules, p.SBOM.IgnoreVulnerabilities...)
+
 	// Find vulnerability matches
-	matches, ignoredMatches, err := findVulnerabilities(packages, context, vulnProvider)
+	matches, ignoredMatches, err := findVulnerabilities(packages, context, vulnProvider, ignoreRules)
 	if err != nil {
 		return xerrors.Errorf("failed to find vulnerabilities: %w", err)
 	}
@@ -200,7 +251,7 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 		matches.Count(), len(ignoredMatches), severityInfo))
 
 	// Write vulnerability results to files
-	err = writeVulnerabilityResults(p, buildctx, builddir, packages, context, matches, ignoredMatches, vulnProvider, vulnProviderStatus)
+	err = writeVulnerabilityResults(p, buildctx, builddir, packages, context, matches, ignoredMatches, vulnProvider, vulnProviderStatus, ignoreRules)
 	if err != nil {
 		return xerrors.Errorf("failed to write vulnerability results: %w", err)
 	}
@@ -253,12 +304,39 @@ func parseSBOMFile(sbomFile string) ([]pkg.Package, pkg.Context, error) {
 }
 
 // findVulnerabilities finds vulnerabilities in the given packages
-func findVulnerabilities(packages []pkg.Package, context pkg.Context, vulnProvider vulnerability.Provider) (*match.Matches, []match.IgnoredMatch, error) {
+func findVulnerabilities(packages []pkg.Package, context pkg.Context, vulnProvider vulnerability.Provider, ignoreRules []IgnoreRule) (*match.Matches, []match.IgnoredMatch, error) {
+	// Convert our IgnoreRule type to match.IgnoreRule
+	matchIgnoreRules := make([]match.IgnoreRule, len(ignoreRules))
+	for i, rule := range ignoreRules {
+		// Convert our IgnoreRulePackage to match.IgnoreRulePackage
+		pkg := match.IgnoreRulePackage{
+			Name:         rule.Package.Name,
+			Version:      rule.Package.Version,
+			Language:     rule.Package.Language,
+			Type:         rule.Package.Type,
+			Location:     rule.Package.Location,
+			UpstreamName: rule.Package.UpstreamName,
+		}
+
+		// Create a match.IgnoreRule with our values
+		matchIgnoreRules[i] = match.IgnoreRule{
+			Vulnerability:    rule.Vulnerability,
+			Reason:           rule.Reason,
+			Namespace:        rule.Namespace,
+			FixState:         rule.FixState,
+			Package:          pkg,
+			VexStatus:        rule.VexStatus,
+			VexJustification: rule.VexJustification,
+			MatchType:        rule.MatchType,
+		}
+	}
+
 	// Create a vulnerability matcher
 	matchers := matcher.NewDefaultMatchers(matcher.Config{})
 	vulnMatcher := grype.VulnerabilityMatcher{
 		VulnerabilityProvider: vulnProvider,
 		Matchers:              matchers,
+		IgnoreRules:           matchIgnoreRules,
 	}
 
 	// Find vulnerability matches
@@ -281,6 +359,7 @@ func writeVulnerabilityResults(
 	ignoredMatches []match.IgnoredMatch,
 	vulnProvider vulnerability.Provider,
 	dbStatus *vulnerability.ProviderStatus,
+	ignoredRules []IgnoreRule,
 ) error {
 	// Create a document model
 	model, err := models.NewDocument(
@@ -290,7 +369,7 @@ func writeVulnerabilityResults(
 		*matches,
 		ignoredMatches,
 		vulnProvider,
-		nil, // options
+		ignoredRules,
 		dbStatus,
 		models.SortByPackage,
 	)
@@ -332,7 +411,7 @@ func writeVulnerabilityResults(
 			name:     "JSON",
 			fileName: "vulnerabilities.json",
 			presenter: func(file *os.File) error {
-				presenter := json.NewPresenter(presenterConfig)
+				presenter := grypeJSON.NewPresenter(presenterConfig)
 				return presenter.Present(file)
 			},
 		},

@@ -13,6 +13,9 @@ sbom:
   enabled: true
   scanCVE: true
   failOn: ["critical"]
+  ignoreVulnerabilities:
+    - vulnerability: CVE-2024-40635
+      reason: "false positive"
 variants:
 - name: nogit
   srcs:
