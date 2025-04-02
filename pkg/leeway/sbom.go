@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -63,7 +64,7 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted
 	}
 
 	logger := log.WithField("package", p.FullName())
-	logger.Debug("Generating SBOM")
+	logger.Info("Generating SBOM")
 
 	// Get the source for SBOM generation
 	src, err := syft.GetSource(context.Background(), builddir, nil)
@@ -133,7 +134,6 @@ func getSBOMEncoder(format string, logger *log.Entry) (encoder sbom.FormatEncode
 	default:
 		logger.WithField("requested_format", requestedFormat).
 			Debug("Requested SBOM format not supported, using cyclonedx format")
-		requestedFormat = defaultSBOMFormat
 		encoder, err = cyclonedxjson.NewFormatEncoderWithConfig(cyclonedxjson.DefaultEncoderConfig())
 		if err != nil {
 			return nil, "", xerrors.Errorf("failed to create CycloneDX encoder: %w", err)
@@ -148,7 +148,7 @@ func getSBOMEncoder(format string, logger *log.Entry) (encoder sbom.FormatEncode
 // and fails the build if vulnerabilities matching the FailOn configuration are found
 func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir string) (err error) {
 	logger := log.WithField("package", p.FullName())
-	logger.Debug("Scanning SBOM for vulnerabilities")
+	logger.Info("Scanning SBOM for vulnerabilities")
 
 	// Skip if SBOM scanning is disabled
 	if !p.C.W.SBOM.Enabled || !p.C.W.SBOM.ScanCVE {
@@ -168,7 +168,11 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	if err != nil {
 		return xerrors.Errorf("failed to load vulnerability database: %w", err)
 	}
-	defer vulnProvider.Close()
+	defer func() {
+		if closeErr := vulnProvider.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close vulnerability provider")
+		}
+	}()
 
 	logger.WithFields(log.Fields{
 		"db_path":     status.Path,
@@ -327,7 +331,7 @@ var ErrNoSBOM = xerrors.Errorf("no SBOM found")
 // If no such SBOM exists, ErrNoSBOM is returned.
 func AccessSBOMInCachedArchive(fn string, handler func(sbom io.Reader) error) (err error) {
 	defer func() {
-		if err != nil && !xerrors.Is(err, ErrNoSBOM) {
+		if err != nil && !errors.Is(err, ErrNoSBOM) {
 			err = xerrors.Errorf("error extracting SBOM from %s: %w", fn, err)
 		}
 	}()

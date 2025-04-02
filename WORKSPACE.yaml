@@ -12,6 +12,7 @@ provenance:
 sbom:
   enabled: true
   format: "cyclonedx"
+  scanCVE: true
 variants:
 - name: nogit
   srcs:
