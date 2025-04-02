@@ -9,6 +9,9 @@ environmentManifest:
 provenance:
   enabled: true
   slsa: true
+sbom:
+  enabled: true
+  format: "cyclonedx"
 variants:
 - name: nogit
   srcs:

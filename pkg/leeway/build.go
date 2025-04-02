@@ -737,6 +737,13 @@ func (p *Package) build(buildctx *buildContext) error {
 		}
 	}
 
+	// Generate SBOM if enabled
+	if p.C.W.SBOM.Enabled {
+		if err := writeSBOM(p, buildctx, builddir, now); err != nil {
+			return err
+		}
+	}
+
 	// Handle test coverage if available
 	if bld.TestCoverage != nil {
 		coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
@@ -752,6 +759,13 @@ func (p *Package) build(buildctx *buildContext) error {
 	// Package the build results
 	if len(bld.Commands[PackageBuildPhasePackage]) > 0 {
 		if err := executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage]); err != nil {
+			return err
+		}
+	}
+
+	// Generate SBOM if enabled
+	if p.C.W.SBOM.Enabled && p.C.W.SBOM.ScanCVE {
+		if err := scanSBOMForVulnerabilities(p, buildctx, builddir); err != nil {
 			return err
 		}
 	}

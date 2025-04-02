@@ -950,6 +950,21 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 		bundle = append(bundle, "\n")
 	}
 
+	// Include SBOM configuration in the version calculation
+	if p.C.W.SBOM.Enabled {
+		bundle = append(bundle, fmt.Sprintf("sbom: enabled=%v", p.C.W.SBOM.Enabled))
+		if p.C.W.SBOM.Format != "" {
+			bundle = append(bundle, fmt.Sprintf(" format=%s", p.C.W.SBOM.Format))
+		}
+		if p.C.W.SBOM.ScanCVE {
+			bundle = append(bundle, " scanCVE=true")
+		}
+		if len(p.C.W.SBOM.FailOn) > 0 {
+			bundle = append(bundle, fmt.Sprintf(" failOn=%v", p.C.W.SBOM.FailOn))
+		}
+		bundle = append(bundle, "\n")
+	}
+
 	bundle = append(bundle, fmt.Sprintf("environment: %s\n", envhash))
 	bundle = append(bundle, fmt.Sprintf("definition: %s\n", defhash))
 	for _, argdep := range p.ArgumentDependencies {
