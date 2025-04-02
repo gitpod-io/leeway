@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/anchore/clio"
 	"github.com/anchore/grype/grype"
@@ -37,14 +36,6 @@ import (
 	"golang.org/x/xerrors"
 )
 
-const (
-	// sbomFilename is the base name of the SBOM file we store in the build artifacts
-	sbomFilename = "sbom"
-
-	// filePermissions is the permission used for writing SBOM files
-	filePermissions = 0644
-)
-
 // WorkspaceSBOM configures SBOM generation for a workspace
 type WorkspaceSBOM struct {
 	Enabled bool     `yaml:"enabled"`
@@ -53,7 +44,7 @@ type WorkspaceSBOM struct {
 }
 
 // writeSBOM produces SBOMs for a package in all supported formats and writes them to the build directory.
-func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted time.Time) (err error) {
+func writeSBOM(p *Package, buildctx *buildContext, builddir string) (err error) {
 	// Skip if SBOM generation is disabled
 	if !p.C.W.SBOM.Enabled {
 		return nil
@@ -93,8 +84,8 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted
 		data := buf.Bytes()
 
 		// Write the SBOM to file
-		fn := filepath.Join(builddir, sbomFilename+"."+fileExtension)
-		err = os.WriteFile(fn, data, filePermissions)
+		fn := filepath.Join(builddir, "sbom"+"."+fileExtension)
+		err = os.WriteFile(fn, data, 0644)
 		if err != nil {
 			return xerrors.Errorf("failed to write SBOM to file %s: %w", fn, err)
 		}
@@ -142,7 +133,7 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 
 	// Always use CycloneDX format for vulnerability scanning
 	fileExtension := "cdx.json"
-	sbomFile := filepath.Join(builddir, sbomFilename+"."+fileExtension)
+	sbomFile := filepath.Join(builddir, "sbom"+"."+fileExtension)
 
 	if _, err := os.Stat(sbomFile); os.IsNotExist(err) {
 		return xerrors.Errorf("SBOM file not found: %s", sbomFile)
@@ -177,8 +168,6 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	if err != nil {
 		return xerrors.Errorf("failed to find vulnerabilities: %w", err)
 	}
-
-	// Process the results
 
 	// Count vulnerabilities by severity
 	severityCounts := make(map[string]int)
@@ -475,8 +464,8 @@ func AccessSBOMInCachedArchive(fn string, handler func(sbom io.Reader) error) (e
 		}
 
 		// Look for SBOM files with any extension
-		if !strings.HasPrefix(hdr.Name, "./"+sbomFilename+".") &&
-			!strings.HasPrefix(hdr.Name, "package/"+sbomFilename+".") {
+		if !strings.HasPrefix(hdr.Name, "./"+"sbom"+".") &&
+			!strings.HasPrefix(hdr.Name, "package/"+"sbom"+".") {
 			continue
 		}
 

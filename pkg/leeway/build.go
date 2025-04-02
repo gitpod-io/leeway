@@ -739,7 +739,7 @@ func (p *Package) build(buildctx *buildContext) error {
 
 	// Generate SBOM if enabled
 	if p.C.W.SBOM.Enabled {
-		if err := writeSBOM(p, buildctx, builddir, now); err != nil {
+		if err := writeSBOM(p, buildctx, builddir); err != nil {
 			return err
 		}
 	}
@@ -763,7 +763,7 @@ func (p *Package) build(buildctx *buildContext) error {
 		}
 	}
 
-	// Generate SBOM if enabled
+	// Scan for vulnerabilities if enabled
 	if p.C.W.SBOM.Enabled && p.C.W.SBOM.ScanCVE {
 		if err := scanSBOMForVulnerabilities(p, buildctx, builddir); err != nil {
 			return err
