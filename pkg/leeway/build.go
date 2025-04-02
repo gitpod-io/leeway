@@ -764,7 +764,7 @@ func (p *Package) build(buildctx *buildContext) error {
 	}
 
 	// Scan for vulnerabilities if enabled
-	if p.C.W.SBOM.Enabled && p.C.W.SBOM.ScanCVE {
+	if p.C.W.SBOM.Enabled && p.C.W.SBOM.ScanVulnerabilities {
 		if err := scanSBOMForVulnerabilities(p, buildctx, builddir); err != nil {
 			return err
 		}

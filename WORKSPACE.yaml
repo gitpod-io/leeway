@@ -11,7 +11,7 @@ provenance:
   slsa: true
 sbom:
   enabled: true
-  scanCVE: true
+  scanVulnerabilities: true
   failOn: ["critical"]
   ignoreVulnerabilities:
     - vulnerability: GHSA-265r-hfxg-fhmg

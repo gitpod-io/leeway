@@ -63,7 +63,7 @@ type IgnoreRule = match.IgnoreRule
 // WorkspaceSBOM configures SBOM generation for a workspace
 type WorkspaceSBOM struct {
 	Enabled               bool         `yaml:"enabled"`
-	ScanCVE               bool         `yaml:"scanCVE"`
+	ScanVulnerabilities   bool         `yaml:"scanVulnerabilities"`
 	FailOn                []string     `yaml:"failOn,omitempty"`                // e.g., ["CRITICAL", "HIGH"]
 	IgnoreVulnerabilities []IgnoreRule `yaml:"ignoreVulnerabilities,omitempty"` // Workspace-level ignore rules
 }
@@ -155,7 +155,7 @@ func getSBOMEncoder(format string) (encoder sbom.FormatEncoder, fileExtension st
 // and fails the build if vulnerabilities matching the FailOn configuration are found
 func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir string) (err error) {
 	// Skip if SBOM scanning is disabled
-	if !p.C.W.SBOM.Enabled || !p.C.W.SBOM.ScanCVE {
+	if !p.C.W.SBOM.Enabled || !p.C.W.SBOM.ScanVulnerabilities {
 		return nil
 	}
 

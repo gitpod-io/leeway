@@ -21,7 +21,7 @@ Following this pattern for SBOM generation would involve:
    type WorkspaceSBOM struct {
        Enabled bool `yaml:"enabled"`
        Format  string `yaml:"format,omitempty"` // e.g., "cyclonedx", "spdx"
-       ScanCVE bool `yaml:"scanCVE"`
+       ScanVulnerabilities bool `yaml:"scanVulnerabilities"`
        FailOn  []string `yaml:"failOn,omitempty"` // e.g., ["CRITICAL", "HIGH"]
    }
    ```
@@ -76,7 +76,7 @@ Following this pattern for SBOM generation would involve:
            return err
        }
        
-       if p.C.W.SBOM.ScanCVE {
+       if p.C.W.SBOM.ScanVulnerabilities {
            if err := scanSBOMForVulnerabilities(p, buildctx, builddir); err != nil {
                return err
            }

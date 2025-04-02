@@ -333,7 +333,7 @@ SBOM generation is configured in your `WORKSPACE.yaml` file:
 ```yaml
 sbom:
   enabled: true                # Enable SBOM generation
-  scanCVE: true                # Enable vulnerability scanning
+  scanVulnerabilities: true    # Enable vulnerability scanning
   failOn: ["critical", "high"] # Fail builds with vulnerabilities of these severities
   ignoreVulnerabilities:       # Workspace-level ignore rules
     - vulnerability: "CVE-2023-1234"
@@ -344,7 +344,7 @@ When enabled, Leeway automatically generates SBOMs for each package during the b
 
 ### Vulnerability Scanning
 
-When `scanCVE` is enabled, Leeway scans the generated SBOMs for vulnerabilities using [Grype](https://github.com/anchore/grype). The scan results are written to the build directory in multiple formats:
+When `scanVulnerabilities` is enabled, Leeway scans the generated SBOMs for vulnerabilities using [Grype](https://github.com/anchore/grype). The scan results are written to the build directory in multiple formats:
 
 - `vulnerabilities.txt` - Human-readable table format
 - `vulnerabilities.json` - Detailed JSON format
