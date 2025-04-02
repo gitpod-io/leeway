@@ -63,8 +63,8 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted
 		return nil
 	}
 
-	logger := log.WithField("package", p.FullName())
-	logger.Info("Generating SBOM")
+	// Use the reporter to log the message with consistent formatting
+	buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM\n"))
 
 	// Get the source for SBOM generation
 	src, err := syft.GetSource(context.Background(), builddir, nil)
@@ -82,7 +82,7 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted
 	}
 
 	// Get the encoder and file extension for the requested format
-	encoder, fileExtension, err := getSBOMEncoder(p.C.W.SBOM.Format, logger)
+	encoder, fileExtension, err := getSBOMEncoder(p.C.W.SBOM.Format, log.WithField("package", p.FullName()))
 	if err != nil {
 		return xerrors.Errorf("failed to get SBOM encoder: %w", err)
 	}
@@ -101,9 +101,11 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted
 		return xerrors.Errorf("failed to write SBOM to file: %w", err)
 	}
 
-	logger.WithFields(log.Fields{
-		"format": fileExtension,
-		"file":   fn,
+	// Debug logs can still use logrus since they don't appear in the standard output
+	log.WithFields(log.Fields{
+		"package": p.FullName(),
+		"format":  fileExtension,
+		"file":    fn,
 	}).Debug("SBOM generated successfully")
 	return nil
 }
@@ -147,8 +149,8 @@ func getSBOMEncoder(format string, logger *log.Entry) (encoder sbom.FormatEncode
 // scanSBOMForVulnerabilities scans an SBOM for vulnerabilities using Grype
 // and fails the build if vulnerabilities matching the FailOn configuration are found
 func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir string) (err error) {
-	logger := log.WithField("package", p.FullName())
-	logger.Info("Scanning SBOM for vulnerabilities")
+	// Use the reporter to log the message with consistent formatting
+	buildctx.Reporter.PackageBuildLog(p, false, []byte("Scanning SBOM for vulnerabilities\n"))
 
 	// Skip if SBOM scanning is disabled
 	if !p.C.W.SBOM.Enabled || !p.C.W.SBOM.ScanCVE {
@@ -174,10 +176,9 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 		}
 	}()
 
-	logger.WithFields(log.Fields{
-		"db_path":     status.Path,
-		"db_built_on": status.Built.Format("2006-01-02"),
-	}).Info("Using vulnerability database")
+	// Use the reporter to log the message with consistent formatting
+	buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Using vulnerability database (path: %s, built on: %s)\n",
+		status.Path, status.Built.Format("2006-01-02"))))
 
 	// Parse the SBOM file to get packages
 	packages, context, err := parseSBOMFile(sbomFile)
@@ -185,7 +186,8 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 		return xerrors.Errorf("failed to parse SBOM: %w", err)
 	}
 
-	logger.WithField("package_count", len(packages)).Info("Found packages in SBOM")
+	// Use the reporter to log the message with consistent formatting
+	buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Found packages in SBOM (count: %d)\n", len(packages))))
 
 	// Find vulnerability matches
 	matches, ignoredMatches, err := findVulnerabilities(packages, context, vulnProvider)
@@ -194,10 +196,9 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	}
 
 	// Process the results
-	logger.WithFields(log.Fields{
-		"vulnerability_count": matches.Count(),
-		"ignored_count":       len(ignoredMatches),
-	}).Info("Vulnerability scan completed")
+	// Use the reporter to log the message with consistent formatting
+	buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Vulnerability scan completed (vulnerabilities: %d, ignored: %d)\n",
+		matches.Count(), len(ignoredMatches))))
 
 	// Print vulnerability details
 	printVulnerabilities(matches, vulnProvider)
@@ -257,7 +258,9 @@ func loadVulnerabilityDB() (vulnerability.Provider, *vulnerability.ProviderStatu
 
 	installConfig := installation.DefaultConfig(id)
 
-	log.Info("Loading vulnerability database (this may take a moment on first run)...")
+	// This is a global message not tied to a specific package, so we'll keep using fmt.Println
+	// to maintain the same format as other global messages
+	fmt.Println("Loading vulnerability database (this may take a moment on first run)...")
 
 	// Load the vulnerability database with auto-update enabled
 	// This will download the database if it doesn't exist
