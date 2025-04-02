@@ -34,15 +34,6 @@ const (
 	// sbomFilename is the base name of the SBOM file we store in the build artifacts
 	sbomFilename = "sbom"
 
-	// defaultSBOMFormat is the default format used for SBOM generation
-	defaultSBOMFormat = "cyclonedx"
-
-	// leewayAppName is the name used for identification in vulnerability database
-	leewayAppName = "leeway"
-
-	// leewayAppVersion is the version used for identification in vulnerability database
-	leewayAppVersion = "0.1.0"
-
 	// filePermissions is the permission used for writing SBOM files
 	filePermissions = 0644
 )
@@ -77,7 +68,7 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted
 	}
 
 	// Supported formats
-	formats := []string{"cyclonedx", "spdx", "syft-json"}
+	formats := []string{"cyclonedx", "spdx", "syft"}
 
 	// Generate SBOM in all formats
 	for _, format := range formats {
@@ -109,29 +100,24 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted
 
 // getSBOMEncoder returns the appropriate encoder and file extension for the given SBOM format
 func getSBOMEncoder(format string) (encoder sbom.FormatEncoder, fileExtension string, err error) {
-	requestedFormat := strings.ToLower(format)
-	if requestedFormat == "" {
-		requestedFormat = defaultSBOMFormat
-	}
-
-	switch requestedFormat {
-	case "cyclonedx", "cyclonedx-json":
+	switch format {
+	case "cyclonedx":
 		encoder, err = cyclonedxjson.NewFormatEncoderWithConfig(cyclonedxjson.DefaultEncoderConfig())
 		if err != nil {
 			return nil, "", xerrors.Errorf("failed to create CycloneDX encoder: %w", err)
 		}
 		fileExtension = "cdx.json"
-	case "spdx", "spdx-json":
+	case "spdx":
 		encoder, err = spdxjson.NewFormatEncoderWithConfig(spdxjson.DefaultEncoderConfig())
 		if err != nil {
 			return nil, "", xerrors.Errorf("failed to create SPDX encoder: %w", err)
 		}
 		fileExtension = "spdx.json"
-	case "syft-json", "syft":
+	case "syft":
 		encoder = syftjson.NewFormatEncoder()
 		fileExtension = "json"
 	default:
-		return nil, "", xerrors.Errorf("unsupported SBOM format: %s", requestedFormat)
+		return nil, "", xerrors.Errorf("unsupported SBOM format: %s", format)
 	}
 
 	return encoder, fileExtension, nil
@@ -140,13 +126,12 @@ func getSBOMEncoder(format string) (encoder sbom.FormatEncoder, fileExtension st
 // scanSBOMForVulnerabilities scans an SBOM for vulnerabilities using Grype
 // and fails the build if vulnerabilities matching the FailOn configuration are found
 func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir string) (err error) {
-	// Use the reporter to log the message with consistent formatting
-	buildctx.Reporter.PackageBuildLog(p, false, []byte("Scanning SBOM for vulnerabilities\n"))
-
 	// Skip if SBOM scanning is disabled
 	if !p.C.W.SBOM.Enabled || !p.C.W.SBOM.ScanCVE {
 		return nil
 	}
+
+	buildctx.Reporter.PackageBuildLog(p, false, []byte("Scanning SBOM for vulnerabilities\n"))
 
 	// Always use CycloneDX format for vulnerability scanning
 	fileExtension := "cdx.json"
@@ -243,8 +228,8 @@ func loadVulnerabilityDB(p *Package, buildctx *buildContext) (vulnerability.Prov
 
 	// Create a simple identification for the installation config
 	id := clio.Identification{
-		Name:    leewayAppName,
-		Version: leewayAppVersion,
+		Name:    "leeway",
+		Version: Version,
 	}
 
 	installConfig := installation.DefaultConfig(id)
