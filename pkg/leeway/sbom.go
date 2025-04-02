@@ -20,6 +20,9 @@ import (
 	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/matcher"
 	"github.com/anchore/grype/grype/pkg"
+	"github.com/anchore/grype/grype/presenter/json"
+	"github.com/anchore/grype/grype/presenter/models"
+	"github.com/anchore/grype/grype/presenter/table"
 	"github.com/anchore/grype/grype/vulnerability"
 	"github.com/anchore/syft/syft"
 	"github.com/anchore/syft/syft/format/cyclonedxjson"
@@ -176,10 +179,52 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Vulnerability scan completed (vulnerabilities: %d, ignored: %d)\n",
 		matches.Count(), len(ignoredMatches))))
 
-	// Print vulnerability details
-	printVulnerabilities(matches, vulnProvider)
+	// Write vulnerability results to files
+	err = writeVulnerabilityResults(p, buildctx, builddir, packages, context, matches, ignoredMatches, vulnProvider)
+	if err != nil {
+		return xerrors.Errorf("failed to write vulnerability results: %w", err)
+	}
 
-	// TODO: Implement FailOn logic based on p.C.W.SBOM.FailOn
+	// Let build fail when vulnerabilities are found
+	if len(p.C.W.SBOM.FailOn) > 0 {
+		// Count vulnerabilities by severity
+		severityCounts := make(map[string]int)
+		var failedSeverities []string
+
+		// Process matches to count by severity
+		for _, m := range matches.Sorted() {
+			metadata, err := vulnProvider.VulnerabilityMetadata(m.Vulnerability.Reference)
+			if err != nil {
+				return xerrors.Errorf("failed to get vulnerability metadata: %w", err)
+			}
+
+			severity := strings.ToUpper(metadata.Severity)
+
+			// Log the vulnerability for debugging
+			buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Processing vulnerability: %s (Severity: %s)\n",
+				m.Vulnerability.ID, severity))
+
+			severityCounts[severity]++
+		}
+
+		// Check if any severity level in FailOn has vulnerabilities
+		for _, failOnSeverity := range p.C.W.SBOM.FailOn {
+			failOnSeverity = strings.ToUpper(failOnSeverity)
+			if count, exists := severityCounts[failOnSeverity]; exists && count > 0 {
+				failedSeverities = append(failedSeverities, fmt.Sprintf("%s (%d)", failOnSeverity, count))
+			}
+		}
+
+		// If we have any failing severities, return an error
+		if len(failedSeverities) > 0 {
+			return xerrors.Errorf("build failed due to vulnerabilities with severity levels [%s] - see vulnerability reports for details",
+				strings.Join(failedSeverities, ", "))
+		}
+
+		// Log that we checked but found no vulnerabilities at the specified severity levels
+		buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "No vulnerabilities found at severity levels: %s\n",
+			strings.Join(p.C.W.SBOM.FailOn, ", ")))
+	}
 
 	return nil
 }
@@ -221,6 +266,94 @@ func findVulnerabilities(packages []pkg.Package, context pkg.Context, vulnProvid
 	return matches, ignoredMatches, nil
 }
 
+// writeVulnerabilityResults writes vulnerability results in multiple formats to separate files
+func writeVulnerabilityResults(
+	p *Package,
+	buildctx *buildContext,
+	builddir string,
+	packages []pkg.Package,
+	context pkg.Context,
+	matches *match.Matches,
+	ignoredMatches []match.IgnoredMatch,
+	vulnProvider vulnerability.Provider,
+) error {
+	// Create a document model
+	model, err := models.NewDocument(
+		clio.Identification{Name: "leeway", Version: Version},
+		packages,
+		context,
+		*matches,
+		ignoredMatches,
+		vulnProvider,
+		nil, // options
+		nil, // dbInfo
+		models.SortByPackage,
+	)
+	if err != nil {
+		return xerrors.Errorf("failed to create document model: %w", err)
+	}
+
+	// Common presenter config
+	presenterConfig := models.PresenterConfig{
+		Document: model,
+		Pretty:   true,
+	}
+
+	// Define the formats and their corresponding file names
+	formats := []struct {
+		name      string
+		fileName  string
+		presenter func(file *os.File) error
+	}{
+		{
+			name:     "JSON",
+			fileName: "vulnerabilities.json",
+			presenter: func(file *os.File) error {
+				presenter := json.NewPresenter(presenterConfig)
+				return presenter.Present(file)
+			},
+		},
+		{
+			name:     "Table",
+			fileName: "vulnerabilities.txt",
+			presenter: func(file *os.File) error {
+				presenter := table.NewPresenter(presenterConfig, false) // false = don't show suppressed
+				return presenter.Present(file)
+			},
+		},
+	}
+
+	// Write each format to its file
+	for _, format := range formats {
+		outputPath := filepath.Join(builddir, format.fileName)
+
+		// Create the output file
+		file, err := os.Create(outputPath)
+		if err != nil {
+			return xerrors.Errorf("failed to create %s output file: %w", format.name, err)
+		}
+
+		// Write the results using the appropriate presenter
+		if err := format.presenter(file); err != nil {
+			closeErr := file.Close() // Close the file before returning error
+			if closeErr != nil {
+				log.WithError(closeErr).Warn("failed to close file after presenter error")
+			}
+			return xerrors.Errorf("failed to write %s results: %w", format.name, err)
+		}
+
+		// Close the file
+		if err := file.Close(); err != nil {
+			return xerrors.Errorf("failed to close %s output file: %w", format.name, err)
+		}
+
+		// Log the output path
+		buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Wrote %s vulnerability results to %s\n", format.name, outputPath))
+	}
+
+	return nil
+}
+
 // loadVulnerabilityDB loads the vulnerability database
 func loadVulnerabilityDB(p *Package, buildctx *buildContext) (vulnerability.Provider, *vulnerability.ProviderStatus, error) {
 	// Configure the vulnerability database
@@ -244,41 +377,6 @@ func loadVulnerabilityDB(p *Package, buildctx *buildContext) (vulnerability.Prov
 	}
 
 	return provider, status, nil
-}
-
-// printVulnerabilities prints vulnerability details to the console
-func printVulnerabilities(matches *match.Matches, provider vulnerability.Provider) {
-	if matches.Count() == 0 {
-		fmt.Println("No vulnerabilities found!")
-		return
-	}
-
-	fmt.Println("\nVulnerability Report:")
-	fmt.Println("=====================")
-
-	for match := range matches.Enumerate() {
-		metadata, err := provider.VulnerabilityMetadata(match.Vulnerability.Reference)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"vulnerability_id": match.Vulnerability.ID,
-				"error":            err,
-			}).Warn("Error getting vulnerability metadata")
-			continue
-		}
-
-		fmt.Printf("ID: %s\n", match.Vulnerability.ID)
-		fmt.Printf("Package: %s@%s\n", match.Package.Name, match.Package.Version)
-		fmt.Printf("Severity: %s\n", metadata.Severity)
-		fmt.Printf("Description: %s\n", metadata.Description)
-
-		if len(match.Vulnerability.Fix.Versions) > 0 {
-			fmt.Printf("Fixed in: %v\n", match.Vulnerability.Fix.Versions)
-		} else {
-			fmt.Printf("Fix state: %s\n", match.Vulnerability.Fix.State)
-		}
-
-		fmt.Println("---------------------")
-	}
 }
 
 // ErrNoSBOM is returned when no SBOM is found in a cached archive

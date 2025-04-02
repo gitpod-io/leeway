@@ -12,6 +12,7 @@ provenance:
 sbom:
   enabled: true
   scanCVE: true
+  failOn: ["critical"]
 variants:
 - name: nogit
   srcs:
