@@ -1,7 +1,9 @@
 package leeway
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -25,6 +27,23 @@ import (
 	"github.com/anchore/syft/syft/sbom"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
+)
+
+const (
+	// sbomFilename is the base name of the SBOM file we store in the build artifacts
+	sbomFilename = "sbom"
+
+	// defaultSBOMFormat is the default format used for SBOM generation
+	defaultSBOMFormat = "cyclonedx"
+
+	// leewayAppName is the name used for identification in vulnerability database
+	leewayAppName = "leeway"
+
+	// leewayAppVersion is the version used for identification in vulnerability database
+	leewayAppVersion = "0.1.0"
+
+	// filePermissions is the permission used for writing SBOM files
+	filePermissions = 0644
 )
 
 // WorkspaceSBOM configures SBOM generation for a workspace
@@ -61,41 +80,10 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted
 		return xerrors.Errorf("failed to create SBOM: %w", err)
 	}
 
-	// Encode the SBOM
-	// Get the requested format
-	requestedFormat := strings.ToLower(p.C.W.SBOM.Format)
-	if requestedFormat == "" {
-		requestedFormat = "cyclonedx" // Default format - industry standard for security use cases
-	}
-
-	// Select the appropriate encoder
-	var encoder sbom.FormatEncoder
-	var fileExtension string
-	switch requestedFormat {
-	case "cyclonedx", "cyclonedx-json":
-		encoder, err = cyclonedxjson.NewFormatEncoderWithConfig(cyclonedxjson.DefaultEncoderConfig())
-		if err != nil {
-			return xerrors.Errorf("failed to create CycloneDX encoder: %w", err)
-		}
-		fileExtension = "cdx.json"
-	case "spdx", "spdx-json":
-		encoder, err = spdxjson.NewFormatEncoderWithConfig(spdxjson.DefaultEncoderConfig())
-		if err != nil {
-			return xerrors.Errorf("failed to create SPDX encoder: %w", err)
-		}
-		fileExtension = "spdx.json"
-	case "syft-json", "syft":
-		encoder = syftjson.NewFormatEncoder()
-		fileExtension = "json"
-	default:
-		logger.WithField("requested_format", requestedFormat).
-			Debug("Requested SBOM format not supported, using cyclonedx format")
-		requestedFormat = "cyclonedx"
-		encoder, err = cyclonedxjson.NewFormatEncoderWithConfig(cyclonedxjson.DefaultEncoderConfig())
-		if err != nil {
-			return xerrors.Errorf("failed to create CycloneDX encoder: %w", err)
-		}
-		fileExtension = "cdx.json"
+	// Get the encoder and file extension for the requested format
+	encoder, fileExtension, err := getSBOMEncoder(p.C.W.SBOM.Format, logger)
+	if err != nil {
+		return xerrors.Errorf("failed to get SBOM encoder: %w", err)
 	}
 
 	// Create a buffer to hold the encoded SBOM
@@ -106,14 +94,54 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted
 	data := buf.Bytes()
 
 	// Write the SBOM to file
-	fn := filepath.Join(builddir, "sbom."+fileExtension)
-	err = os.WriteFile(fn, data, 0644)
+	fn := filepath.Join(builddir, sbomFilename+"."+fileExtension)
+	err = os.WriteFile(fn, data, filePermissions)
 	if err != nil {
 		return xerrors.Errorf("failed to write SBOM to file: %w", err)
 	}
 
-	logger.WithField("format", requestedFormat).WithField("file", fn).Debug("SBOM generated successfully")
+	logger.WithFields(log.Fields{
+		"format": fileExtension,
+		"file":   fn,
+	}).Debug("SBOM generated successfully")
 	return nil
+}
+
+// getSBOMEncoder returns the appropriate encoder and file extension for the given SBOM format
+func getSBOMEncoder(format string, logger *log.Entry) (encoder sbom.FormatEncoder, fileExtension string, err error) {
+	requestedFormat := strings.ToLower(format)
+	if requestedFormat == "" {
+		requestedFormat = defaultSBOMFormat
+	}
+
+	switch requestedFormat {
+	case "cyclonedx", "cyclonedx-json":
+		encoder, err = cyclonedxjson.NewFormatEncoderWithConfig(cyclonedxjson.DefaultEncoderConfig())
+		if err != nil {
+			return nil, "", xerrors.Errorf("failed to create CycloneDX encoder: %w", err)
+		}
+		fileExtension = "cdx.json"
+	case "spdx", "spdx-json":
+		encoder, err = spdxjson.NewFormatEncoderWithConfig(spdxjson.DefaultEncoderConfig())
+		if err != nil {
+			return nil, "", xerrors.Errorf("failed to create SPDX encoder: %w", err)
+		}
+		fileExtension = "spdx.json"
+	case "syft-json", "syft":
+		encoder = syftjson.NewFormatEncoder()
+		fileExtension = "json"
+	default:
+		logger.WithField("requested_format", requestedFormat).
+			Debug("Requested SBOM format not supported, using cyclonedx format")
+		requestedFormat = defaultSBOMFormat
+		encoder, err = cyclonedxjson.NewFormatEncoderWithConfig(cyclonedxjson.DefaultEncoderConfig())
+		if err != nil {
+			return nil, "", xerrors.Errorf("failed to create CycloneDX encoder: %w", err)
+		}
+		fileExtension = "cdx.json"
+	}
+
+	return encoder, fileExtension, nil
 }
 
 // scanSBOMForVulnerabilities scans an SBOM for vulnerabilities using Grype
@@ -129,7 +157,7 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 
 	// Determine the SBOM file extension based on format
 	fileExtension := getSBOMFileExtension(p.C.W.SBOM.Format)
-	sbomFile := filepath.Join(builddir, "sbom."+fileExtension)
+	sbomFile := filepath.Join(builddir, sbomFilename+"."+fileExtension)
 
 	if _, err := os.Stat(sbomFile); os.IsNotExist(err) {
 		return xerrors.Errorf("SBOM file not found: %s", sbomFile)
@@ -138,13 +166,45 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	// Load the vulnerability database
 	vulnProvider, status, err := loadVulnerabilityDB()
 	if err != nil {
-		return fmt.Errorf("failed to load vulnerability database: %w", err)
+		return xerrors.Errorf("failed to load vulnerability database: %w", err)
 	}
 	defer vulnProvider.Close()
 
-	fmt.Printf("Using vulnerability database at %s (built on %s)\n",
-		status.Path, status.Built.Format("2006-01-02"))
+	logger.WithFields(log.Fields{
+		"db_path":     status.Path,
+		"db_built_on": status.Built.Format("2006-01-02"),
+	}).Info("Using vulnerability database")
 
+	// Parse the SBOM file to get packages
+	packages, context, err := parseSBOMFile(sbomFile)
+	if err != nil {
+		return xerrors.Errorf("failed to parse SBOM: %w", err)
+	}
+
+	logger.WithField("package_count", len(packages)).Info("Found packages in SBOM")
+
+	// Find vulnerability matches
+	matches, ignoredMatches, err := findVulnerabilities(packages, context, vulnProvider)
+	if err != nil {
+		return xerrors.Errorf("failed to find vulnerabilities: %w", err)
+	}
+
+	// Process the results
+	logger.WithFields(log.Fields{
+		"vulnerability_count": matches.Count(),
+		"ignored_count":       len(ignoredMatches),
+	}).Info("Vulnerability scan completed")
+
+	// Print vulnerability details
+	printVulnerabilities(matches, vulnProvider)
+
+	// TODO: Implement FailOn logic based on p.C.W.SBOM.FailOn
+
+	return nil
+}
+
+// parseSBOMFile parses an SBOM file and returns the packages and context
+func parseSBOMFile(sbomFile string) ([]pkg.Package, pkg.Context, error) {
 	// Create provider config
 	providerConfig := pkg.ProviderConfig{
 		SynthesisConfig: pkg.SynthesisConfig{
@@ -156,11 +216,14 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	sbomInput := "sbom:" + sbomFile
 	packages, context, _, err := pkg.Provide(sbomInput, providerConfig)
 	if err != nil {
-		return fmt.Errorf("failed to parse SBOM: %w", err)
+		return nil, pkg.Context{}, xerrors.Errorf("failed to parse SBOM: %w", err)
 	}
 
-	fmt.Printf("Found %d packages in SBOM\n", len(packages))
+	return packages, context, nil
+}
 
+// findVulnerabilities finds vulnerabilities in the given packages
+func findVulnerabilities(packages []pkg.Package, context pkg.Context, vulnProvider vulnerability.Provider) (*match.Matches, []match.IgnoredMatch, error) {
 	// Create a vulnerability matcher
 	matchers := matcher.NewDefaultMatchers(matcher.Config{})
 	vulnMatcher := grype.VulnerabilityMatcher{
@@ -171,45 +234,42 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	// Find vulnerability matches
 	matches, ignoredMatches, err := vulnMatcher.FindMatches(packages, context)
 	if err != nil {
-		return fmt.Errorf("failed to find vulnerabilities: %w", err)
+		return nil, nil, xerrors.Errorf("failed to find vulnerabilities: %w", err)
 	}
 
-	// Process the results
-	fmt.Printf("Found %d vulnerabilities\n", matches.Count())
-	if len(ignoredMatches) > 0 {
-		fmt.Printf("Ignored %d vulnerabilities\n", len(ignoredMatches))
-	}
-
-	// Print vulnerability details
-	printVulnerabilities(matches, vulnProvider)
-
-	return nil
+	return matches, ignoredMatches, nil
 }
 
+// loadVulnerabilityDB loads the vulnerability database
 func loadVulnerabilityDB() (vulnerability.Provider, *vulnerability.ProviderStatus, error) {
 	// Configure the vulnerability database
 	distConfig := distribution.DefaultConfig()
 
 	// Create a simple identification for the installation config
 	id := clio.Identification{
-		Name:    "leeway",
-		Version: "0.1.0",
+		Name:    leewayAppName,
+		Version: leewayAppVersion,
 	}
 
 	installConfig := installation.DefaultConfig(id)
 
-	fmt.Println("Loading vulnerability database (this may take a moment on first run)...")
+	log.Info("Loading vulnerability database (this may take a moment on first run)...")
 
 	// Load the vulnerability database with auto-update enabled
 	// This will download the database if it doesn't exist
-	return grype.LoadVulnerabilityDB(distConfig, installConfig, true)
+	provider, status, err := grype.LoadVulnerabilityDB(distConfig, installConfig, true)
+	if err != nil {
+		return nil, nil, xerrors.Errorf("failed to load vulnerability database: %w", err)
+	}
+
+	return provider, status, nil
 }
 
 // getSBOMFileExtension returns the file extension for the given SBOM format
 func getSBOMFileExtension(format string) string {
 	format = strings.ToLower(format)
 	if format == "" {
-		format = "cyclonedx" // Default format
+		format = defaultSBOMFormat
 	}
 
 	switch format {
@@ -225,6 +285,7 @@ func getSBOMFileExtension(format string) string {
 	}
 }
 
+// printVulnerabilities prints vulnerability details to the console
 func printVulnerabilities(matches *match.Matches, provider vulnerability.Provider) {
 	if matches.Count() == 0 {
 		fmt.Println("No vulnerabilities found!")
@@ -237,7 +298,10 @@ func printVulnerabilities(matches *match.Matches, provider vulnerability.Provide
 	for match := range matches.Enumerate() {
 		metadata, err := provider.VulnerabilityMetadata(match.Vulnerability.Reference)
 		if err != nil {
-			fmt.Printf("Error getting metadata for %s: %v\n", match.Vulnerability.ID, err)
+			log.WithFields(log.Fields{
+				"vulnerability_id": match.Vulnerability.ID,
+				"error":            err,
+			}).Warn("Error getting vulnerability metadata")
 			continue
 		}
 
@@ -256,11 +320,68 @@ func printVulnerabilities(matches *match.Matches, provider vulnerability.Provide
 	}
 }
 
-// AccessSBOMInCachedArchive provides access to the SBOM in a cached build artifact.
-// If no such SBOM exists, an error is returned.
-func AccessSBOMInCachedArchive(fn string, handler func(sbom io.Reader) error) (err error) {
-	// This is a placeholder for the actual implementation
-	// We'll implement this function later
+// ErrNoSBOM is returned when no SBOM is found in a cached archive
+var ErrNoSBOM = xerrors.Errorf("no SBOM found")
 
-	return xerrors.Errorf("SBOM access is not yet implemented")
+// AccessSBOMInCachedArchive provides access to the SBOM in a cached build artifact.
+// If no such SBOM exists, ErrNoSBOM is returned.
+func AccessSBOMInCachedArchive(fn string, handler func(sbom io.Reader) error) (err error) {
+	defer func() {
+		if err != nil && !xerrors.Is(err, ErrNoSBOM) {
+			err = xerrors.Errorf("error extracting SBOM from %s: %w", fn, err)
+		}
+	}()
+
+	f, err := os.Open(fn)
+	if err != nil {
+		return xerrors.Errorf("cannot open file: %w", err)
+	}
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close file during SBOM extraction")
+		}
+	}()
+
+	g, err := gzip.NewReader(f)
+	if err != nil {
+		return xerrors.Errorf("cannot create gzip reader: %w", err)
+	}
+	defer func() {
+		if closeErr := g.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close gzip reader")
+		}
+	}()
+
+	var sbomFound bool
+	a := tar.NewReader(g)
+	var hdr *tar.Header
+	for {
+		hdr, err = a.Next()
+		if err == io.EOF {
+			err = nil
+			break
+		}
+		if err != nil {
+			return xerrors.Errorf("error reading tar: %w", err)
+		}
+
+		// Look for SBOM files with any extension
+		if !strings.HasPrefix(hdr.Name, "./"+sbomFilename+".") &&
+			!strings.HasPrefix(hdr.Name, "package/"+sbomFilename+".") {
+			continue
+		}
+
+		err = handler(io.LimitReader(a, hdr.Size))
+		if err != nil {
+			return xerrors.Errorf("error handling SBOM: %w", err)
+		}
+		sbomFound = true
+		break
+	}
+
+	if !sbomFound {
+		return ErrNoSBOM
+	}
+
+	return nil
 }
