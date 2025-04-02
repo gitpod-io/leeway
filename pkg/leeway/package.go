@@ -953,9 +953,6 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 	// Include SBOM configuration in the version calculation
 	if p.C.W.SBOM.Enabled {
 		bundle = append(bundle, fmt.Sprintf("sbom: enabled=%v", p.C.W.SBOM.Enabled))
-		if p.C.W.SBOM.Format != "" {
-			bundle = append(bundle, fmt.Sprintf(" format=%s", p.C.W.SBOM.Format))
-		}
 		if p.C.W.SBOM.ScanCVE {
 			bundle = append(bundle, " scanCVE=true")
 		}

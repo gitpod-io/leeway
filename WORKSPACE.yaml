@@ -11,7 +11,6 @@ provenance:
   slsa: true
 sbom:
   enabled: true
-  format: "cyclonedx"
   scanCVE: true
 variants:
 - name: nogit

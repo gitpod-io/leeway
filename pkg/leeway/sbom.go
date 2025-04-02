@@ -50,21 +50,16 @@ const (
 // WorkspaceSBOM configures SBOM generation for a workspace
 type WorkspaceSBOM struct {
 	Enabled bool     `yaml:"enabled"`
-	Format  string   `yaml:"format,omitempty"` // e.g., "cyclonedx", "spdx"
 	ScanCVE bool     `yaml:"scanCVE"`
 	FailOn  []string `yaml:"failOn,omitempty"` // e.g., ["CRITICAL", "HIGH"]
 }
 
-// writeSBOM produces an SBOM for a package and writes it to the build directory.
-// It respects the SBOM configuration in the workspace and supports different SBOM formats.
+// writeSBOM produces SBOMs for a package in all supported formats and writes them to the build directory.
 func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted time.Time) (err error) {
 	// Skip if SBOM generation is disabled
 	if !p.C.W.SBOM.Enabled {
 		return nil
 	}
-
-	// Use the reporter to log the message with consistent formatting
-	buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM\n"))
 
 	// Get the source for SBOM generation
 	src, err := syft.GetSource(context.Background(), builddir, nil)
@@ -81,37 +76,39 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string, buildStarted
 		return xerrors.Errorf("failed to create SBOM: %w", err)
 	}
 
-	// Get the encoder and file extension for the requested format
-	encoder, fileExtension, err := getSBOMEncoder(p.C.W.SBOM.Format, log.WithField("package", p.FullName()))
-	if err != nil {
-		return xerrors.Errorf("failed to get SBOM encoder: %w", err)
+	// Supported formats
+	formats := []string{"cyclonedx", "spdx", "syft-json"}
+
+	// Generate SBOM in all formats
+	for _, format := range formats {
+		// Get the encoder and file extension for the current format
+		encoder, fileExtension, err := getSBOMEncoder(format)
+		if err != nil {
+			return xerrors.Errorf("failed to get SBOM encoder for format %s: %w", format, err)
+		}
+
+		// Create a buffer to hold the encoded SBOM
+		var buf bytes.Buffer
+		if err := encoder.Encode(&buf, *s); err != nil {
+			return xerrors.Errorf("failed to encode SBOM in format %s: %w", format, err)
+		}
+		data := buf.Bytes()
+
+		// Write the SBOM to file
+		fn := filepath.Join(builddir, sbomFilename+"."+fileExtension)
+		err = os.WriteFile(fn, data, filePermissions)
+		if err != nil {
+			return xerrors.Errorf("failed to write SBOM to file %s: %w", fn, err)
+		}
+
+		buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "SBOM generated successfully (format: %s, file: %s)\n", format, fn))
 	}
 
-	// Create a buffer to hold the encoded SBOM
-	var buf bytes.Buffer
-	if err := encoder.Encode(&buf, *s); err != nil {
-		return xerrors.Errorf("failed to encode SBOM: %w", err)
-	}
-	data := buf.Bytes()
-
-	// Write the SBOM to file
-	fn := filepath.Join(builddir, sbomFilename+"."+fileExtension)
-	err = os.WriteFile(fn, data, filePermissions)
-	if err != nil {
-		return xerrors.Errorf("failed to write SBOM to file: %w", err)
-	}
-
-	// Debug logs can still use logrus since they don't appear in the standard output
-	log.WithFields(log.Fields{
-		"package": p.FullName(),
-		"format":  fileExtension,
-		"file":    fn,
-	}).Debug("SBOM generated successfully")
 	return nil
 }
 
 // getSBOMEncoder returns the appropriate encoder and file extension for the given SBOM format
-func getSBOMEncoder(format string, logger *log.Entry) (encoder sbom.FormatEncoder, fileExtension string, err error) {
+func getSBOMEncoder(format string) (encoder sbom.FormatEncoder, fileExtension string, err error) {
 	requestedFormat := strings.ToLower(format)
 	if requestedFormat == "" {
 		requestedFormat = defaultSBOMFormat
@@ -134,13 +131,7 @@ func getSBOMEncoder(format string, logger *log.Entry) (encoder sbom.FormatEncode
 		encoder = syftjson.NewFormatEncoder()
 		fileExtension = "json"
 	default:
-		logger.WithField("requested_format", requestedFormat).
-			Debug("Requested SBOM format not supported, using cyclonedx format")
-		encoder, err = cyclonedxjson.NewFormatEncoderWithConfig(cyclonedxjson.DefaultEncoderConfig())
-		if err != nil {
-			return nil, "", xerrors.Errorf("failed to create CycloneDX encoder: %w", err)
-		}
-		fileExtension = "cdx.json"
+		return nil, "", xerrors.Errorf("unsupported SBOM format: %s", requestedFormat)
 	}
 
 	return encoder, fileExtension, nil
@@ -157,8 +148,8 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 		return nil
 	}
 
-	// Determine the SBOM file extension based on format
-	fileExtension := getSBOMFileExtension(p.C.W.SBOM.Format)
+	// Always use CycloneDX format for vulnerability scanning
+	fileExtension := "cdx.json"
 	sbomFile := filepath.Join(builddir, sbomFilename+"."+fileExtension)
 
 	if _, err := os.Stat(sbomFile); os.IsNotExist(err) {
@@ -166,7 +157,7 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	}
 
 	// Load the vulnerability database
-	vulnProvider, status, err := loadVulnerabilityDB()
+	vulnProvider, status, err := loadVulnerabilityDB(p, buildctx)
 	if err != nil {
 		return xerrors.Errorf("failed to load vulnerability database: %w", err)
 	}
@@ -177,8 +168,8 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	}()
 
 	// Use the reporter to log the message with consistent formatting
-	buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Using vulnerability database (path: %s, built on: %s)\n",
-		status.Path, status.Built.Format("2006-01-02"))))
+	buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Using vulnerability database (path: %s, built on: %s)\n",
+		status.Path, status.Built.Format("2006-01-02")))
 
 	// Parse the SBOM file to get packages
 	packages, context, err := parseSBOMFile(sbomFile)
@@ -187,7 +178,7 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	}
 
 	// Use the reporter to log the message with consistent formatting
-	buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Found packages in SBOM (count: %d)\n", len(packages))))
+	buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Found packages in SBOM (count: %d)\n", len(packages)))
 
 	// Find vulnerability matches
 	matches, ignoredMatches, err := findVulnerabilities(packages, context, vulnProvider)
@@ -246,7 +237,7 @@ func findVulnerabilities(packages []pkg.Package, context pkg.Context, vulnProvid
 }
 
 // loadVulnerabilityDB loads the vulnerability database
-func loadVulnerabilityDB() (vulnerability.Provider, *vulnerability.ProviderStatus, error) {
+func loadVulnerabilityDB(p *Package, buildctx *buildContext) (vulnerability.Provider, *vulnerability.ProviderStatus, error) {
 	// Configure the vulnerability database
 	distConfig := distribution.DefaultConfig()
 
@@ -258,9 +249,7 @@ func loadVulnerabilityDB() (vulnerability.Provider, *vulnerability.ProviderStatu
 
 	installConfig := installation.DefaultConfig(id)
 
-	// This is a global message not tied to a specific package, so we'll keep using fmt.Println
-	// to maintain the same format as other global messages
-	fmt.Println("Loading vulnerability database (this may take a moment on first run)...")
+	buildctx.Reporter.PackageBuildLog(p, false, []byte("Loading vulnerability database (this may take a moment on first run) ...\n"))
 
 	// Load the vulnerability database with auto-update enabled
 	// This will download the database if it doesn't exist
@@ -270,26 +259,6 @@ func loadVulnerabilityDB() (vulnerability.Provider, *vulnerability.ProviderStatu
 	}
 
 	return provider, status, nil
-}
-
-// getSBOMFileExtension returns the file extension for the given SBOM format
-func getSBOMFileExtension(format string) string {
-	format = strings.ToLower(format)
-	if format == "" {
-		format = defaultSBOMFormat
-	}
-
-	switch format {
-	case "cyclonedx", "cyclonedx-json":
-		return "cdx.json"
-	case "spdx", "spdx-json":
-		return "spdx.json"
-	case "syft-json", "syft":
-		return "json"
-	default:
-		// Default to CycloneDX if format is unknown
-		return "cdx.json"
-	}
 }
 
 // printVulnerabilities prints vulnerability details to the console
