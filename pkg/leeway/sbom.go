@@ -37,45 +37,28 @@ import (
 	"slices"
 )
 
-// IgnoreRule is an alias for match.IgnoreRule with YAML tags matching Grype's structure.
-// It allows specifying criteria for ignoring vulnerabilities during SBOM scanning.
-// Available fields:
-// - vulnerability: The vulnerability ID to ignore (e.g., "CVE-2023-1234")
-// - reason: The reason for ignoring this vulnerability
-// - namespace: The vulnerability namespace (e.g., "github:golang")
-// - fix-state: The fix state to match (e.g., "fixed", "not-fixed", "unknown")
-// - package: Package-specific criteria (see below)
-// - vex-status: VEX status (e.g., "affected", "fixed", "not_affected")
-// - vex-justification: Justification for the VEX status
-// - match-type: The type of match to ignore (e.g., "exact-direct-dependency")
-//
-// The package field can contain:
+// IgnoreRulePackage is an alias for match.IgnoreRulePackage
+// It describes package-specific fields for ignore rules:
 // - name: Package name (supports regex)
 // - version: Package version
 // - language: Package language
 // - type: Package type
 // - location: Package location (supports glob patterns)
 // - upstream-name: Upstream package name (supports regex)
-// IgnoreRulePackage describes package-specific fields for ignore rules
-type IgnoreRulePackage struct {
-	Name         string `yaml:"name,omitempty"`          // Package name (supports regex)
-	Version      string `yaml:"version,omitempty"`       // Package version
-	Language     string `yaml:"language,omitempty"`      // Package language
-	Type         string `yaml:"type,omitempty"`          // Package type
-	Location     string `yaml:"location,omitempty"`      // Package location (supports glob patterns)
-	UpstreamName string `yaml:"upstream-name,omitempty"` // Upstream package name (supports regex)
-}
+type IgnoreRulePackage = match.IgnoreRulePackage
 
-type IgnoreRule struct {
-	Vulnerability    string            `yaml:"vulnerability"`               // Vulnerability ID (CVE, GHSA, package URL)
-	Reason           string            `yaml:"reason"`                      // Reason for ignoring this vulnerability
-	Namespace        string            `yaml:"namespace,omitempty"`         // Optional namespace specification
-	FixState         string            `yaml:"fix-state,omitempty"`         // Optional fix state
-	Package          IgnoreRulePackage `yaml:"package,omitempty"`           // Optional package details
-	VexStatus        string            `yaml:"vex-status,omitempty"`        // Optional VEX status
-	VexJustification string            `yaml:"vex-justification,omitempty"` // Optional VEX justification
-	MatchType        match.Type        `yaml:"match-type,omitempty"`        // Optional match type
-}
+// IgnoreRule is an alias for match.IgnoreRule
+// It allows specifying criteria for ignoring vulnerabilities during SBOM scanning.
+// Available fields:
+// - vulnerability: The vulnerability ID to ignore (e.g., "CVE-2023-1234")
+// - reason: The reason for ignoring this vulnerability
+// - namespace: The vulnerability namespace (e.g., "github:golang")
+// - fix-state: The fix state to match (e.g., "fixed", "not-fixed", "unknown")
+// - package: Package-specific criteria (see IgnoreRulePackage)
+// - vex-status: VEX status (e.g., "affected", "fixed", "not_affected")
+// - vex-justification: Justification for the VEX status
+// - match-type: The type of match to ignore (e.g., "exact-direct-dependency")
+type IgnoreRule = match.IgnoreRule
 
 // WorkspaceSBOM configures SBOM generation for a workspace
 type WorkspaceSBOM struct {
@@ -305,38 +288,12 @@ func parseSBOMFile(sbomFile string) ([]pkg.Package, pkg.Context, error) {
 
 // findVulnerabilities finds vulnerabilities in the given packages
 func findVulnerabilities(packages []pkg.Package, context pkg.Context, vulnProvider vulnerability.Provider, ignoreRules []IgnoreRule) (*match.Matches, []match.IgnoredMatch, error) {
-	// Convert our IgnoreRule type to match.IgnoreRule
-	matchIgnoreRules := make([]match.IgnoreRule, len(ignoreRules))
-	for i, rule := range ignoreRules {
-		// Convert our IgnoreRulePackage to match.IgnoreRulePackage
-		pkg := match.IgnoreRulePackage{
-			Name:         rule.Package.Name,
-			Version:      rule.Package.Version,
-			Language:     rule.Package.Language,
-			Type:         rule.Package.Type,
-			Location:     rule.Package.Location,
-			UpstreamName: rule.Package.UpstreamName,
-		}
-
-		// Create a match.IgnoreRule with our values
-		matchIgnoreRules[i] = match.IgnoreRule{
-			Vulnerability:    rule.Vulnerability,
-			Reason:           rule.Reason,
-			Namespace:        rule.Namespace,
-			FixState:         rule.FixState,
-			Package:          pkg,
-			VexStatus:        rule.VexStatus,
-			VexJustification: rule.VexJustification,
-			MatchType:        rule.MatchType,
-		}
-	}
-
-	// Create a vulnerability matcher
+	// Create a vulnerability matcher with the ignore rules
 	matchers := matcher.NewDefaultMatchers(matcher.Config{})
 	vulnMatcher := grype.VulnerabilityMatcher{
 		VulnerabilityProvider: vulnProvider,
 		Matchers:              matchers,
-		IgnoreRules:           matchIgnoreRules,
+		IgnoreRules:           ignoreRules,
 	}
 
 	// Find vulnerability matches
@@ -359,7 +316,7 @@ func writeVulnerabilityResults(
 	ignoredMatches []match.IgnoredMatch,
 	vulnProvider vulnerability.Provider,
 	dbStatus *vulnerability.ProviderStatus,
-	ignoredRules []IgnoreRule,
+	ignoreRules []IgnoreRule,
 ) error {
 	// Create a document model
 	model, err := models.NewDocument(
@@ -369,7 +326,9 @@ func writeVulnerabilityResults(
 		*matches,
 		ignoredMatches,
 		vulnProvider,
-		ignoredRules,
+		struct {
+			Ignore []IgnoreRule `json:"ignore"`
+		}{Ignore: ignoreRules},
 		dbStatus,
 		models.SortByPackage,
 	)
