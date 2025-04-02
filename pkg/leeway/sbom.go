@@ -1,16 +1,14 @@
 package leeway
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"slices"
 
 	"github.com/anchore/clio"
 	"github.com/anchore/grype/grype"
@@ -34,7 +32,6 @@ import (
 	"github.com/anchore/syft/syft/source"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
-	"slices"
 )
 
 // IgnoreRulePackage is an alias for match.IgnoreRulePackage
@@ -454,70 +451,4 @@ func loadVulnerabilityDB(p *Package, buildctx *buildContext) (vulnerability.Prov
 	}
 
 	return provider, status, nil
-}
-
-// ErrNoSBOM is returned when no SBOM is found in a cached archive
-var ErrNoSBOM = xerrors.Errorf("no SBOM found")
-
-// AccessSBOMInCachedArchive provides access to the SBOM in a cached build artifact.
-// If no such SBOM exists, ErrNoSBOM is returned.
-func AccessSBOMInCachedArchive(fn string, handler func(sbom io.Reader) error) (err error) {
-	defer func() {
-		if err != nil && !errors.Is(err, ErrNoSBOM) {
-			err = xerrors.Errorf("error extracting SBOM from %s: %w", fn, err)
-		}
-	}()
-
-	f, err := os.Open(fn)
-	if err != nil {
-		return xerrors.Errorf("cannot open file: %w", err)
-	}
-	defer func() {
-		if closeErr := f.Close(); closeErr != nil {
-			log.WithError(closeErr).Warn("failed to close file during SBOM extraction")
-		}
-	}()
-
-	g, err := gzip.NewReader(f)
-	if err != nil {
-		return xerrors.Errorf("cannot create gzip reader: %w", err)
-	}
-	defer func() {
-		if closeErr := g.Close(); closeErr != nil {
-			log.WithError(closeErr).Warn("failed to close gzip reader")
-		}
-	}()
-
-	var sbomFound bool
-	a := tar.NewReader(g)
-	var hdr *tar.Header
-	for {
-		hdr, err = a.Next()
-		if err == io.EOF {
-			err = nil
-			break
-		}
-		if err != nil {
-			return xerrors.Errorf("error reading tar: %w", err)
-		}
-
-		// Look for SBOM files with any extension
-		if !strings.HasPrefix(hdr.Name, "./"+"sbom"+".") &&
-			!strings.HasPrefix(hdr.Name, "package/"+"sbom"+".") {
-			continue
-		}
-
-		err = handler(io.LimitReader(a, hdr.Size))
-		if err != nil {
-			return xerrors.Errorf("error handling SBOM: %w", err)
-		}
-		sbomFound = true
-		break
-	}
-
-	if !sbomFound {
-		return ErrNoSBOM
-	}
-
-	return nil
 }
