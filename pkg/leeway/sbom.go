@@ -20,15 +20,19 @@ import (
 	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/matcher"
 	"github.com/anchore/grype/grype/pkg"
+	"github.com/anchore/grype/grype/presenter/cyclonedx"
 	"github.com/anchore/grype/grype/presenter/json"
 	"github.com/anchore/grype/grype/presenter/models"
+	"github.com/anchore/grype/grype/presenter/sarif"
 	"github.com/anchore/grype/grype/presenter/table"
 	"github.com/anchore/grype/grype/vulnerability"
 	"github.com/anchore/syft/syft"
+	"github.com/anchore/syft/syft/artifact"
 	"github.com/anchore/syft/syft/format/cyclonedxjson"
 	"github.com/anchore/syft/syft/format/spdxjson"
 	"github.com/anchore/syft/syft/format/syftjson"
 	"github.com/anchore/syft/syft/sbom"
+	"github.com/anchore/syft/syft/source"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 )
@@ -304,9 +308,27 @@ func writeVulnerabilityResults(
 		return xerrors.Errorf("failed to create document model: %w", err)
 	}
 
+	// Create a minimal SBOM object for the presenters that require it
+	sbomObj := &sbom.SBOM{
+		Artifacts: sbom.Artifacts{
+			// We don't need to populate the Packages field for our use case
+			Packages: nil,
+		},
+		Relationships: []artifact.Relationship{},
+		Source: source.Description{
+			Name: "leeway",
+		},
+		Descriptor: sbom.Descriptor{
+			Name:    "leeway",
+			Version: Version,
+		},
+	}
+
 	// Common presenter config
 	presenterConfig := models.PresenterConfig{
+		ID:       clio.Identification{Name: "leeway", Version: Version},
 		Document: model,
+		SBOM:     sbomObj,
 		Pretty:   true,
 	}
 
@@ -329,6 +351,22 @@ func writeVulnerabilityResults(
 			fileName: "vulnerabilities.txt",
 			presenter: func(file *os.File) error {
 				presenter := table.NewPresenter(presenterConfig, false) // false = don't show suppressed
+				return presenter.Present(file)
+			},
+		},
+		{
+			name:     "CycloneDX",
+			fileName: "vulnerabilities.cdx.json",
+			presenter: func(file *os.File) error {
+				presenter := cyclonedx.NewJSONPresenter(presenterConfig)
+				return presenter.Present(file)
+			},
+		},
+		{
+			name:     "SARIF",
+			fileName: "vulnerabilities.sarif",
+			presenter: func(file *os.File) error {
+				presenter := sarif.NewPresenter(presenterConfig)
 				return presenter.Present(file)
 			},
 		},
