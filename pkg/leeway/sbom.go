@@ -442,11 +442,13 @@ func ScanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 
 			if err != nil {
 				if err == ErrNoSBOMFile {
-					buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "SBOM file not found in package archive, skipping vulnerability scan for package %s\n", p.FullName()))
-					continue
+					errMsg := fmt.Sprintf("SBOM file not found in package archive for package %s", p.FullName())
+					buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+					return xerrors.Errorf(errMsg)
 				}
-				buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Failed to extract SBOM from package archive, skipping vulnerability scan for package %s: %s\n", p.FullName(), err.Error()))
-				continue
+				errMsg := fmt.Sprintf("Failed to extract SBOM from package archive, skipping vulnerability scan for package %s: %s\n", p.FullName(), err.Error())
+				buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+				return xerrors.Errorf(errMsg)
 			}
 
 			// Set the SBOM file path to the temporary file
@@ -719,7 +721,7 @@ func AccessSBOMInCachedArchive(fn string, handler func(sbomFile io.Reader) error
 			break
 		}
 
-		if hdr.Name != "./"+sbomCycloneDXFilename && hdr.Name != "package/"+sbomCycloneDXFilename {
+		if !strings.HasSuffix(hdr.Name, sbomCycloneDXFilename) {
 			continue
 		}
 
