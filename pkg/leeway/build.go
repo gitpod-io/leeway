@@ -1863,17 +1863,17 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		var tarCmd []string
 		if p.C.W.Provenance.Enabled || p.C.W.SBOM.Enabled {
 			var sourcePaths []string
-			
+
 			if p.C.W.Provenance.Enabled {
 				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
 			}
-			
+
 			if p.C.W.SBOM.Enabled {
 				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomCycloneDXFilename))
 				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSPDXFilename))
 				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSyftFilename))
 			}
-			
+
 			tarCmd = BuildTarCommand(
 				WithOutputFile(result),
 				WithSourcePaths(sourcePaths...),

@@ -99,25 +99,40 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string) (err error) 
 	cfg := syft.DefaultCreateSBOMConfig()
 
 	// Get the source for SBOM generation based on package type
-	var s *sbom.SBOM
+	var src source.Source
 	if p.Type == DockerPackage {
-		s, err = generateDockerSBOM(p, buildctx, builddir, cfg)
+		// For Docker images, analyze the image directly
+		buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from Docker image\n"))
+
+		// Get the version which is used as the image tag during build
+		version, err := p.Version()
+		if err != nil {
+			return xerrors.Errorf("failed to get package version: %w", err)
+		}
+
+		// Use the daemon source to analyze the Docker image directly
+		src, err = syft.GetSource(context.Background(), version, nil)
+		if err != nil {
+			return xerrors.Errorf("failed to get Docker image source for SBOM generation: %w", err)
+		}
 	} else {
-		// For non-Docker packages, use the standard approach
-		src, err := syft.GetSource(context.Background(), builddir, nil)
+		// For non-Docker packages, scan filesystem
+		buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from filesystem\n"))
+
+		src, err = syft.GetSource(context.Background(), builddir, nil)
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to get source for SBOM generation: %s", err)
 			buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
 			return xerrors.Errorf(errMsg)
 		}
+	}
 
-		// Generate the SBOM
-		s, err = syft.CreateSBOM(context.Background(), src, cfg)
-		if err != nil {
-			errMsg := fmt.Sprintf("failed to create SBOM: %s", err)
-			buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
-			return xerrors.Errorf(errMsg)
-		}
+	// Generate the SBOM
+	s, err := syft.CreateSBOM(context.Background(), src, cfg)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to create SBOM: %s", err)
+		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+		return xerrors.Errorf(errMsg)
 	}
 
 	if err != nil {
@@ -161,54 +176,6 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string) (err error) 
 	}
 
 	return nil
-}
-
-// generateDockerSBOM generates an SBOM specifically for Docker packages
-func generateDockerSBOM(p *Package, buildctx *buildContext, builddir string, cfg *syft.CreateSBOMConfig) (*sbom.SBOM, error) {
-	// Check if this is a Docker package with specified image names (pushed to registry)
-	dockerCfg, ok := p.Config.(DockerPkgConfig)
-	if !ok {
-		return nil, xerrors.Errorf("package should have Docker config")
-	}
-
-	// Get the version which is used as the image tag during build
-	version, err := p.Version()
-	if err != nil {
-		return nil, xerrors.Errorf("failed to get package version: %w", err)
-	}
-
-	if len(dockerCfg.Image) > 0 {
-		// For pushed Docker images, analyze the image directly before it's pushed
-		buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from Docker image\n"))
-
-		// Use the daemon source to analyze the Docker image directly
-		src, err := syft.GetSource(context.Background(), version, nil)
-		if err != nil {
-			return nil, xerrors.Errorf("failed to get Docker image source for SBOM generation: %w", err)
-		}
-
-		// Generate the SBOM from the Docker image
-		return syft.CreateSBOM(context.Background(), src, cfg)
-	} else {
-		// For non-pushed Docker images, use the extracted container filesystem
-		containerDir := filepath.Join(builddir, "container", "content")
-
-		// Check if the container directory exists
-		if _, err := os.Stat(containerDir); os.IsNotExist(err) {
-			return nil, xerrors.Errorf("container directory not found at %s: %w", containerDir, err)
-		}
-
-		buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Generating SBOM from extracted container filesystem at %s\n", containerDir)))
-
-		// Use the directory source to analyze the extracted container filesystem
-		src, err := syft.GetSource(context.Background(), containerDir, nil)
-		if err != nil {
-			return nil, xerrors.Errorf("failed to get container filesystem source for SBOM generation: %w", err)
-		}
-
-		// Generate the SBOM from the extracted container filesystem
-		return syft.CreateSBOM(context.Background(), src, cfg)
-	}
 }
 
 // getSBOMEncoder returns the appropriate encoder and file extension for the given SBOM format
