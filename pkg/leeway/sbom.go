@@ -177,7 +177,7 @@ func generateDockerSBOM(p *Package, buildctx *buildContext, builddir string, cfg
 		buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from Docker image\n"))
 
 		// Use the daemon source to analyze the Docker image directly
-		src, err := syft.GetSource(context.Background(), "docker:"+version, nil)
+		src, err := syft.GetSource(context.Background(), version, nil)
 		if err != nil {
 			return nil, xerrors.Errorf("failed to get Docker image source for SBOM generation: %w", err)
 		}
