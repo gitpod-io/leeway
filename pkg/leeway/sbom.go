@@ -753,11 +753,8 @@ func AccessSBOMInCachedArchive(fn string, handler func(sbomFile io.Reader) error
 		}
 
 		if hdr.Name != "./"+sbomCycloneDXFilename && hdr.Name != "package/"+sbomCycloneDXFilename {
-			fmt.Println(hdr.Name)
 			continue
 		}
-
-		fmt.Println(hdr.Name)
 
 		err = handler(io.LimitReader(a, hdr.Size))
 		if err != nil {
