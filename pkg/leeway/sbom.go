@@ -43,8 +43,13 @@ const (
 	// EnvvarVulnReportsDir names the environment variable we take the vulnerability reports directory location from
 	EnvvarVulnReportsDir = "LEEWAY_VULN_REPORTS_DIR"
 
+	// SBOM file format constants
 	// sbomCycloneDXFilename is the name of the CycloneDX SBOM file we store in the archived build artifacts
 	sbomCycloneDXFilename = "sbom.cdx.json"
+	// sbomSPDXFilename is the name of the SPDX SBOM file we store in the archived build artifacts
+	sbomSPDXFilename = "sbom.spdx.json"
+	// sbomSyftFilename is the name of the Syft SBOM file we store in the archived build artifacts
+	sbomSyftFilename = "sbom.json"
 )
 
 // IgnoreRulePackage is an alias for match.IgnoreRulePackage

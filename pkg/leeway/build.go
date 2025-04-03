@@ -1085,6 +1085,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		if p.C.W.Provenance.Enabled {
 			packageJSONFiles = append(packageJSONFiles, provenanceBundleFilename)
 		}
+		if p.C.W.SBOM.Enabled {
+			packageJSONFiles = append(packageJSONFiles, sbomCycloneDXFilename)
+			packageJSONFiles = append(packageJSONFiles, sbomSPDXFilename)
+			packageJSONFiles = append(packageJSONFiles, sbomSyftFilename)
+		}
 		packageJSON["files"] = packageJSONFiles
 
 		modifiedPackageJSON = true
@@ -1663,6 +1668,11 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		if p.C.W.Provenance.Enabled {
 			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
 		}
+		if p.C.W.SBOM.Enabled {
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomCycloneDXFilename))
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSPDXFilename))
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSyftFilename))
+		}
 
 		archiveCmd := BuildTarCommand(
 			WithOutputFile(result),
@@ -1851,10 +1861,22 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 
 		// Use buildTarCommand directly which will handle compression internally
 		var tarCmd []string
-		if p.C.W.Provenance.Enabled {
+		if p.C.W.Provenance.Enabled || p.C.W.SBOM.Enabled {
+			var sourcePaths []string
+			
+			if p.C.W.Provenance.Enabled {
+				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
+			}
+			
+			if p.C.W.SBOM.Enabled {
+				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomCycloneDXFilename))
+				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSPDXFilename))
+				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSyftFilename))
+			}
+			
 			tarCmd = BuildTarCommand(
 				WithOutputFile(result),
-				WithSourcePaths(fmt.Sprintf("./%s", provenanceBundleFilename)),
+				WithSourcePaths(sourcePaths...),
 				WithCompression(!buildctx.DontCompress),
 			)
 			return &packageBuild{
