@@ -544,6 +544,12 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return cacheErr
 	}
 
+	// Scan all packages for vulnerabilities after the build completes
+	// This ensures we scan even cached packages that weren't rebuilt
+	if err := ScanAllPackagesForVulnerabilities(ctx, allpkg); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -759,13 +765,6 @@ func (p *Package) build(buildctx *buildContext) error {
 	// Package the build results
 	if len(bld.Commands[PackageBuildPhasePackage]) > 0 {
 		if err := executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage]); err != nil {
-			return err
-		}
-	}
-
-	// Scan for vulnerabilities if enabled
-	if p.C.W.SBOM.Enabled && p.C.W.SBOM.ScanVulnerabilities {
-		if err := scanSBOMForVulnerabilities(p, buildctx, builddir); err != nil {
 			return err
 		}
 	}

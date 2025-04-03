@@ -1,12 +1,16 @@
 package leeway
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"slices"
 
@@ -32,6 +36,15 @@ import (
 	"github.com/anchore/syft/syft/source"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
+)
+
+// Constants for SBOM and vulnerability scanning
+const (
+	// EnvvarVulnReportsDir names the environment variable we take the vulnerability reports directory location from
+	EnvvarVulnReportsDir = "LEEWAY_VULN_REPORTS_DIR"
+
+	// sbomCycloneDXFilename is the name of the CycloneDX SBOM file we store in the archived build artifacts
+	sbomCycloneDXFilename = "sbom.cdx.json"
 )
 
 // IgnoreRulePackage is an alias for match.IgnoreRulePackage
@@ -206,19 +219,51 @@ func getSBOMEncoder(format string) (encoder sbom.FormatEncoder, fileExtension st
 	return encoder, fileExtension, nil
 }
 
-// scanSBOMForVulnerabilities scans an SBOM for vulnerabilities using Grype
-// and fails the build if vulnerabilities matching the FailOn configuration are found
-func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir string) (err error) {
-	// Skip if SBOM scanning is disabled
+// VulnerabilityReportLocation represents the location of vulnerability reports
+type VulnerabilityReportLocation struct {
+	// Directory is the base directory for all vulnerability reports
+	Directory string
+	// Timestamp is the timestamp for this scan run
+	Timestamp string
+	// PackageDir is the directory for a specific package's vulnerability reports
+	PackageDir string
+}
+
+// GetVulnerabilityReportsDir returns the directory where vulnerability reports should be stored
+func GetVulnerabilityReportsDir() string {
+	reportsDir := os.Getenv(EnvvarVulnReportsDir)
+	if reportsDir == "" {
+		buildDir := os.Getenv(EnvvarBuildDir)
+		if buildDir == "" {
+			buildDir = filepath.Join(os.TempDir(), "leeway", "build")
+		}
+		reportsDir = filepath.Join(buildDir, "vulnerability-reports")
+	}
+	return reportsDir
+}
+
+// GetVulnerabilityReportLocation returns the location for vulnerability reports for a specific package
+func GetVulnerabilityReportLocation(p *Package, timestamp string) VulnerabilityReportLocation {
+	baseDir := GetVulnerabilityReportsDir()
+	timestampDir := filepath.Join(baseDir, timestamp)
+	packageDir := filepath.Join(timestampDir, p.FilesystemSafeName())
+
+	return VulnerabilityReportLocation{
+		Directory:  baseDir,
+		Timestamp:  timestamp,
+		PackageDir: packageDir,
+	}
+}
+
+// ScanPackageForVulnerabilities scans an SBOM for vulnerabilities and writes the results to the specified output directory
+// This function can be called independently of the build process
+func ScanPackageForVulnerabilities(p *Package, buildctx *buildContext, sbomFile string, outputDir string) (err error) {
+	// Skip if SBOM scanning is disabled at the workspace level
 	if !p.C.W.SBOM.Enabled || !p.C.W.SBOM.ScanVulnerabilities {
 		return nil
 	}
 
 	buildctx.Reporter.PackageBuildLog(p, false, []byte("Scanning SBOM for vulnerabilities\n"))
-
-	// Always use CycloneDX format for vulnerability scanning
-	fileExtension := "cdx.json"
-	sbomFile := filepath.Join(builddir, "sbom"+"."+fileExtension)
 
 	if _, err := os.Stat(sbomFile); os.IsNotExist(err) {
 		return xerrors.Errorf("SBOM file not found: %s", sbomFile)
@@ -231,11 +276,10 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	}
 	defer func() {
 		if closeErr := vulnProvider.Close(); closeErr != nil {
-			log.WithError(closeErr).Warn("failed to close vulnerability provider")
+			buildctx.Reporter.PackageBuildLog(p, true, []byte("failed to close vulnerability provider: "+closeErr.Error()+"\n"))
 		}
 	}()
 
-	// Use the reporter to log the message with consistent formatting
 	buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Using vulnerability database (path: %s, built on: %s)\n",
 		vulnProviderStatus.Path, vulnProviderStatus.Built.Format("2006-01-02")))
 
@@ -245,7 +289,6 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 		return xerrors.Errorf("failed to parse SBOM: %w", err)
 	}
 
-	// Use the reporter to log the message with consistent formatting
 	buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Found packages in SBOM (count: %d)\n", len(packages)))
 
 	// Combine workspace-level and package-level ignore rules
@@ -280,7 +323,6 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 		}
 	}
 
-	// Use the reporter to log the message with consistent formatting
 	severityInfo := ""
 	if len(severityDetails) > 0 {
 		severityInfo = ", " + strings.Join(severityDetails, ", ")
@@ -288,8 +330,13 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 	buildctx.Reporter.PackageBuildLog(p, true, fmt.Appendf(nil, "Vulnerability scan completed (total: %d, ignored: %d%s)\n",
 		matches.Count(), len(ignoredMatches), severityInfo))
 
+	// Ensure the output directory exists
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return xerrors.Errorf("failed to create output directory: %w", err)
+	}
+
 	// Write vulnerability results to files
-	err = writeVulnerabilityResults(p, buildctx, builddir, packages, context, matches, ignoredMatches, vulnProvider, vulnProviderStatus, ignoreRules)
+	err = writeVulnerabilityResults(p, buildctx, outputDir, packages, context, matches, ignoredMatches, vulnProvider, vulnProviderStatus, ignoreRules)
 	if err != nil {
 		return xerrors.Errorf("failed to write vulnerability results: %w", err)
 	}
@@ -317,6 +364,110 @@ func scanSBOMForVulnerabilities(p *Package, buildctx *buildContext, builddir str
 		// Log that we checked but found no vulnerabilities at the specified severity levels
 		buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "No vulnerabilities found at severity levels: %s\n",
 			strings.Join(p.C.W.SBOM.FailOn, ", ")))
+	}
+
+	return nil
+}
+
+// ScanAllPackagesForVulnerabilities scans all packages for vulnerabilities
+// This function is called after the build process completes
+func ScanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Package) error {
+	// Skip if no packages to scan
+	if len(packages) == 0 {
+		return nil
+	}
+
+	// Create a timestamp for this scan run
+	timestamp := time.Now().Format("20060102-150405")
+
+	// Track failed packages
+	var failedPackages []string
+
+	// Scan each package
+	for _, p := range packages {
+		// Skip if SBOM is disabled for this package
+		if !p.C.W.SBOM.Enabled || !p.C.W.SBOM.ScanVulnerabilities {
+			continue
+		}
+
+		// Get the location for this package's vulnerability reports
+		reportLocation := GetVulnerabilityReportLocation(p, timestamp)
+
+		// Create the directory for this package's vulnerability reports
+		if err := os.MkdirAll(reportLocation.PackageDir, 0755); err != nil {
+			return xerrors.Errorf("failed to create vulnerability reports directory for package %s: %w", p.FullName(), err)
+		}
+
+		// Find the SBOM file for this package
+		sbomFile := ""
+
+		// Check if the package is in the local cache
+		if location, exists := buildctx.LocalCache.Location(p); exists {
+			// Create a temporary file to store the SBOM content
+			tempFile, err := os.CreateTemp("", "leeway-sbom-*.cdx.json")
+			if err != nil {
+				return xerrors.Errorf("failed to create temporary file for SBOM: %w", err)
+			}
+			tempFileName := tempFile.Name()
+			if err := tempFile.Close(); err != nil { // Close it now, we'll reopen it for writing
+				buildctx.Reporter.PackageBuildLog(p, true, []byte("failed to close temporary file: "+err.Error()+"\n"))
+			}
+			defer func() {
+				if err := os.Remove(tempFileName); err != nil {
+					buildctx.Reporter.PackageBuildLog(p, true, []byte("failed to remove temporary file: "+err.Error()+"\n"))
+				}
+			}()
+
+			// Extract the SBOM file directly from the package archive
+			err = AccessSBOMInCachedArchive(location, func(sbomReader io.Reader) error {
+				// Copy the SBOM content to the temporary file
+				sbomFile, err := os.OpenFile(tempFileName, os.O_WRONLY, 0644)
+				if err != nil {
+					return xerrors.Errorf("failed to open temporary file for writing: %w", err)
+				}
+				defer func() {
+					if err := sbomFile.Close(); err != nil {
+						buildctx.Reporter.PackageBuildLog(p, false, []byte("failed to close SBOM file: "+err.Error()+"\n"))
+					}
+				}()
+
+				_, err = io.Copy(sbomFile, sbomReader)
+				if err != nil {
+					return xerrors.Errorf("failed to write SBOM content to temporary file: %w", err)
+				}
+				return nil
+			})
+
+			if err != nil {
+				if err == ErrNoSBOMFile {
+					buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("SBOM file not found in package archive, skipping vulnerability scan for package %s\n", p.FullName())))
+					continue
+				}
+				buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Failed to extract SBOM from package archive, skipping vulnerability scan for package %s: %s\n", p.FullName(), err.Error())))
+				continue
+			}
+
+			// Set the SBOM file path to the temporary file
+			sbomFile = tempFileName
+		} else {
+			buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Package %s not found in local cache, skipping vulnerability scan\n", p.FullName())))
+			continue
+		}
+
+		// Scan the package for vulnerabilities
+		if err := ScanPackageForVulnerabilities(p, buildctx, sbomFile, reportLocation.PackageDir); err != nil {
+			buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Failed to scan package %s for vulnerabilities: %s\n", p.FullName(), err.Error())))
+			// Add to failed packages
+			failedPackages = append(failedPackages, p.FullName())
+			continue
+		}
+
+		buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Vulnerability scan completed for package %s (reports: %s)\n", p.FullName(), reportLocation.PackageDir)))
+	}
+
+	// Return error if any packages failed due to vulnerabilities
+	if len(failedPackages) > 0 {
+		return xerrors.Errorf("vulnerability scan failed for packages: %s", strings.Join(failedPackages, ", "))
 	}
 
 	return nil
@@ -469,7 +620,7 @@ func writeVulnerabilityResults(
 		if err := format.presenter(file); err != nil {
 			closeErr := file.Close() // Close the file before returning error
 			if closeErr != nil {
-				log.WithError(closeErr).Warn("failed to close file after presenter error")
+				buildctx.Reporter.PackageBuildLog(p, true, []byte("failed to close file after presenter error: "+closeErr.Error()+"\n"))
 			}
 			return xerrors.Errorf("failed to write %s results: %w", format.name, err)
 		}
@@ -509,4 +660,71 @@ func loadVulnerabilityDB(p *Package, buildctx *buildContext) (vulnerability.Prov
 	}
 
 	return provider, status, nil
+}
+
+// ErrNoSBOMFile is returned when no SBOM file is found in a cached archive
+var ErrNoSBOMFile = fmt.Errorf("no SBOM file found")
+
+// AccessSBOMInCachedArchive provides access to the SBOM file in a cached build artifact.
+// If no such file exists, ErrNoSBOMFile is returned.
+func AccessSBOMInCachedArchive(fn string, handler func(sbomFile io.Reader) error) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("error extracting SBOM from %s: %w", fn, err)
+		}
+	}()
+
+	f, err := os.Open(fn)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close file during SBOM extraction")
+		}
+	}()
+
+	g, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := g.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("failed to close gzip reader")
+		}
+	}()
+
+	var sbomFound bool
+	a := tar.NewReader(g)
+	var hdr *tar.Header
+	for {
+		hdr, err = a.Next()
+		if err == io.EOF {
+			err = nil
+			break
+		}
+		if err != nil {
+			break
+		}
+
+		if hdr.Name != "./"+sbomCycloneDXFilename && hdr.Name != "package/"+sbomCycloneDXFilename {
+			continue
+		}
+
+		err = handler(io.LimitReader(a, hdr.Size))
+		if err != nil {
+			return err
+		}
+		sbomFound = true
+		break
+	}
+	if err != nil {
+		return
+	}
+
+	if !sbomFound {
+		return ErrNoSBOMFile
+	}
+
+	return nil
 }

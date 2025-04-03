@@ -12,7 +12,7 @@ provenance:
 sbom:
   enabled: true
   scanVulnerabilities: true
-  failOn: ["critical"]
+  failOn: ["critical", "high"]
   ignoreVulnerabilities:
     - vulnerability: GHSA-265r-hfxg-fhmg
       reason: "TESTING REMOVE ME"
