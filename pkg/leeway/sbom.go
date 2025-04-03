@@ -101,18 +101,24 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string) (err error) 
 		// For non-Docker packages, use the standard approach
 		src, err := syft.GetSource(context.Background(), builddir, nil)
 		if err != nil {
-			return xerrors.Errorf("failed to get source for SBOM generation: %w", err)
+			errMsg := fmt.Sprintf("failed to get source for SBOM generation: %s", err)
+			buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+			return xerrors.Errorf(errMsg)
 		}
 
 		// Generate the SBOM
 		s, err = syft.CreateSBOM(context.Background(), src, cfg)
 		if err != nil {
-			return xerrors.Errorf("failed to create SBOM: %w", err)
+			errMsg := fmt.Sprintf("failed to create SBOM: %s", err)
+			buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+			return xerrors.Errorf(errMsg)
 		}
 	}
 
 	if err != nil {
-		return xerrors.Errorf("failed to create SBOM: %w", err)
+		errMsg := fmt.Sprintf("failed to create SBOM: %s", err)
+		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+		return xerrors.Errorf(errMsg)
 	}
 
 	// Supported formats
@@ -123,13 +129,17 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string) (err error) 
 		// Get the encoder and file extension for the current format
 		encoder, fileExtension, err := getSBOMEncoder(format)
 		if err != nil {
-			return xerrors.Errorf("failed to get SBOM encoder for format %s: %w", format, err)
+			errMsg := fmt.Sprintf("failed to get SBOM encoder for format %s: %s", format, err)
+			buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+			return xerrors.Errorf(errMsg)
 		}
 
 		// Create a buffer to hold the encoded SBOM
 		var buf bytes.Buffer
 		if err := encoder.Encode(&buf, *s); err != nil {
-			return xerrors.Errorf("failed to encode SBOM in format %s: %w", format, err)
+			errMsg := fmt.Sprintf("failed to encode SBOM in format %s: %s", format, err)
+			buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+			return xerrors.Errorf(errMsg)
 		}
 		data := buf.Bytes()
 
@@ -137,7 +147,9 @@ func writeSBOM(p *Package, buildctx *buildContext, builddir string) (err error) 
 		fn := filepath.Join(builddir, "sbom"+"."+fileExtension)
 		err = os.WriteFile(fn, data, 0644)
 		if err != nil {
-			return xerrors.Errorf("failed to write SBOM to file %s: %w", fn, err)
+			errMsg := fmt.Sprintf("failed to write SBOM to file %s: %s", fn, err)
+			buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+			return xerrors.Errorf(errMsg)
 		}
 
 		buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "SBOM generated successfully (format: %s, file: %s)\n", format, fn))
@@ -266,13 +278,17 @@ func ScanPackageForVulnerabilities(p *Package, buildctx *buildContext, sbomFile 
 	buildctx.Reporter.PackageBuildLog(p, false, []byte("Scanning SBOM for vulnerabilities\n"))
 
 	if _, err := os.Stat(sbomFile); os.IsNotExist(err) {
-		return xerrors.Errorf("SBOM file not found: %s", sbomFile)
+		errMsg := fmt.Sprintf("SBOM file not found: %s", sbomFile)
+		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+		return xerrors.Errorf(errMsg)
 	}
 
 	// Load the vulnerability database
 	vulnProvider, vulnProviderStatus, err := loadVulnerabilityDB(p, buildctx)
 	if err != nil {
-		return xerrors.Errorf("failed to load vulnerability database: %w", err)
+		errMsg := fmt.Sprintf("failed to load vulnerability database: %s", err)
+		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+		return xerrors.Errorf(errMsg)
 	}
 	defer func() {
 		if closeErr := vulnProvider.Close(); closeErr != nil {
@@ -286,7 +302,9 @@ func ScanPackageForVulnerabilities(p *Package, buildctx *buildContext, sbomFile 
 	// Parse the SBOM file to get packages
 	packages, context, err := parseSBOMFile(sbomFile)
 	if err != nil {
-		return xerrors.Errorf("failed to parse SBOM: %w", err)
+		errMsg := fmt.Sprintf("failed to parse SBOM: %s", err)
+		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+		return xerrors.Errorf(errMsg)
 	}
 
 	buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Found packages in SBOM (count: %d)\n", len(packages)))
@@ -298,7 +316,9 @@ func ScanPackageForVulnerabilities(p *Package, buildctx *buildContext, sbomFile 
 	// Find vulnerability matches
 	matches, ignoredMatches, err := findVulnerabilities(packages, context, vulnProvider, ignoreRules)
 	if err != nil {
-		return xerrors.Errorf("failed to find vulnerabilities: %w", err)
+		errMsg := fmt.Sprintf("failed to find vulnerabilities: %s", err)
+		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+		return xerrors.Errorf(errMsg)
 	}
 
 	// Count vulnerabilities by severity
@@ -308,7 +328,9 @@ func ScanPackageForVulnerabilities(p *Package, buildctx *buildContext, sbomFile 
 	for _, m := range matches.Sorted() {
 		metadata, err := vulnProvider.VulnerabilityMetadata(m.Vulnerability.Reference)
 		if err != nil {
-			return xerrors.Errorf("failed to get vulnerability metadata: %w", err)
+			errMsg := fmt.Sprintf("failed to get vulnerability metadata: %s", err)
+			buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+			return xerrors.Errorf(errMsg)
 		}
 
 		severity := strings.ToUpper(metadata.Severity)
@@ -332,13 +354,17 @@ func ScanPackageForVulnerabilities(p *Package, buildctx *buildContext, sbomFile 
 
 	// Ensure the output directory exists
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return xerrors.Errorf("failed to create output directory: %w", err)
+		errMsg := fmt.Sprintf("failed to create output directory: %s", err)
+		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+		return xerrors.Errorf(errMsg)
 	}
 
 	// Write vulnerability results to files
 	err = writeVulnerabilityResults(p, buildctx, outputDir, packages, context, matches, ignoredMatches, vulnProvider, vulnProviderStatus, ignoreRules)
 	if err != nil {
-		return xerrors.Errorf("failed to write vulnerability results: %w", err)
+		errMsg := fmt.Sprintf("failed to write vulnerability results: %s", err)
+		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+		return xerrors.Errorf(errMsg)
 	}
 
 	// Let build fail when vulnerabilities are found
@@ -395,7 +421,9 @@ func ScanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 
 		// Create the directory for this package's vulnerability reports
 		if err := os.MkdirAll(reportLocation.PackageDir, 0755); err != nil {
-			return xerrors.Errorf("failed to create vulnerability reports directory for package %s: %w", p.FullName(), err)
+			errMsg := fmt.Sprintf("failed to create vulnerability reports directory for package %s: %s", p.FullName(), err)
+			buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+			return xerrors.Errorf(errMsg)
 		}
 
 		// Find the SBOM file for this package
@@ -406,7 +434,9 @@ func ScanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 			// Create a temporary file to store the SBOM content
 			tempFile, err := os.CreateTemp("", "leeway-sbom-*.cdx.json")
 			if err != nil {
-				return xerrors.Errorf("failed to create temporary file for SBOM: %w", err)
+				errMsg := fmt.Sprintf("failed to create temporary file for SBOM: %s", err)
+				buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+				return xerrors.Errorf(errMsg)
 			}
 			tempFileName := tempFile.Name()
 			if err := tempFile.Close(); err != nil { // Close it now, we'll reopen it for writing
@@ -467,7 +497,17 @@ func ScanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 
 	// Return error if any packages failed due to vulnerabilities
 	if len(failedPackages) > 0 {
-		return xerrors.Errorf("vulnerability scan failed for packages: %s", strings.Join(failedPackages, ", "))
+		errMsg := fmt.Sprintf("vulnerability scan failed for packages: %s", strings.Join(failedPackages, ", "))
+		// We don't have a specific package to log to, so we'll use the first failed package
+		if len(failedPackages) > 0 {
+			for _, pkg := range packages {
+				if pkg.FullName() == failedPackages[0] {
+					buildctx.Reporter.PackageBuildLog(pkg, true, []byte(errMsg+"\n"))
+					break
+				}
+			}
+		}
+		return xerrors.Errorf(errMsg)
 	}
 
 	return nil
@@ -669,7 +709,7 @@ var ErrNoSBOMFile = fmt.Errorf("no SBOM file found")
 // If no such file exists, ErrNoSBOMFile is returned.
 func AccessSBOMInCachedArchive(fn string, handler func(sbomFile io.Reader) error) (err error) {
 	defer func() {
-		if err != nil {
+		if err != nil && err != ErrNoSBOMFile {
 			err = fmt.Errorf("error extracting SBOM from %s: %w", fn, err)
 		}
 	}()
