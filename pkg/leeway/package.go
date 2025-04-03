@@ -147,6 +147,7 @@ type PackageInternal struct {
 	Environment          []string          `yaml:"env,omitempty"`
 	Ephemeral            bool              `yaml:"ephemeral,omitempty"`
 	PreparationCommands  [][]string        `yaml:"prep,omitempty"`
+	SBOM                 PackageSBOM       `yaml:"sbom,omitempty"`
 }
 
 // Package represents a package in a workspace
@@ -160,9 +161,6 @@ type Package struct {
 	Config          PackageConfig `yaml:"config,omitempty"`
 	// Definition is the raw package definition YAML
 	Definition []byte `yaml:"-"`
-
-	// SBOM configuration for this package
-	SBOM PackageSBOM `yaml:"sbom,omitempty"`
 
 	dependencies     []*Package
 	layout           map[*Package]string
