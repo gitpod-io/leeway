@@ -147,6 +147,7 @@ type PackageInternal struct {
 	Environment          []string          `yaml:"env,omitempty"`
 	Ephemeral            bool              `yaml:"ephemeral,omitempty"`
 	PreparationCommands  [][]string        `yaml:"prep,omitempty"`
+	SBOM                 PackageSBOM       `yaml:"sbom,omitempty"`
 }
 
 // Package represents a package in a workspace
@@ -947,6 +948,12 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 		if p.C.W.Provenance.key != nil {
 			bundle = append(bundle, fmt.Sprintf(" key:%s", p.C.W.Provenance.key.KeyID))
 		}
+		bundle = append(bundle, "\n")
+	}
+
+	// Include SBOM configuration in the version calculation
+	if p.C.W.SBOM.Enabled {
+		bundle = append(bundle, fmt.Sprintf("sbom: enabled=%v", p.C.W.SBOM.Enabled))
 		bundle = append(bundle, "\n")
 	}
 

@@ -544,6 +544,12 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return cacheErr
 	}
 
+	// Scan all packages for vulnerabilities after the build completes
+	// This ensures we scan even cached packages that weren't rebuilt
+	if err := ScanAllPackagesForVulnerabilities(ctx, allpkg); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -733,6 +739,13 @@ func (p *Package) build(buildctx *buildContext) error {
 	// Handle provenance subjects
 	if p.C.W.Provenance.Enabled {
 		if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
+			return err
+		}
+	}
+
+	// Generate SBOM if enabled
+	if p.C.W.SBOM.Enabled {
+		if err := writeSBOM(p, buildctx, builddir); err != nil {
 			return err
 		}
 	}
@@ -1071,6 +1084,11 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		packageJSONFiles = append(packageJSONFiles, pkgYarnLock)
 		if p.C.W.Provenance.Enabled {
 			packageJSONFiles = append(packageJSONFiles, provenanceBundleFilename)
+		}
+		if p.C.W.SBOM.Enabled {
+			packageJSONFiles = append(packageJSONFiles, sbomCycloneDXFilename)
+			packageJSONFiles = append(packageJSONFiles, sbomSPDXFilename)
+			packageJSONFiles = append(packageJSONFiles, sbomSyftFilename)
 		}
 		packageJSON["files"] = packageJSONFiles
 
@@ -1607,10 +1625,18 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// Add a diagnostic command to generate a manifest of what we're packaging
 		pkgcmds = append(pkgcmds, []string{"sh", "-c", fmt.Sprintf("find %s -type f | sort > %s/files-manifest.txt", containerDir, containerDir)})
 
+		sourcePaths := []string{}
+		if p.C.W.SBOM.Enabled {
+			sourcePaths = append(sourcePaths, fmt.Sprintf("../%s", sbomCycloneDXFilename))
+			sourcePaths = append(sourcePaths, fmt.Sprintf("../%s", sbomSPDXFilename))
+			sourcePaths = append(sourcePaths, fmt.Sprintf("../%s", sbomSyftFilename))
+		}
+
 		// Create final tar with container files and metadata
 		pkgcmds = append(pkgcmds, BuildTarCommand(
 			WithOutputFile(result),
 			WithWorkingDir(containerDir),
+			WithSourcePaths(sourcePaths...),
 			WithCompression(!buildctx.DontCompress),
 		))
 
@@ -1649,6 +1675,11 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		sourcePaths := []string{fmt.Sprintf("./%s", dockerImageNamesFiles), fmt.Sprintf("./%s", dockerMetadataFile)}
 		if p.C.W.Provenance.Enabled {
 			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
+		}
+		if p.C.W.SBOM.Enabled {
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomCycloneDXFilename))
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSPDXFilename))
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSyftFilename))
 		}
 
 		archiveCmd := BuildTarCommand(
@@ -1838,10 +1869,22 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 
 		// Use buildTarCommand directly which will handle compression internally
 		var tarCmd []string
-		if p.C.W.Provenance.Enabled {
+		if p.C.W.Provenance.Enabled || p.C.W.SBOM.Enabled {
+			var sourcePaths []string
+
+			if p.C.W.Provenance.Enabled {
+				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
+			}
+
+			if p.C.W.SBOM.Enabled {
+				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomCycloneDXFilename))
+				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSPDXFilename))
+				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSyftFilename))
+			}
+
 			tarCmd = BuildTarCommand(
 				WithOutputFile(result),
-				WithSourcePaths(fmt.Sprintf("./%s", provenanceBundleFilename)),
+				WithSourcePaths(sourcePaths...),
 				WithCompression(!buildctx.DontCompress),
 			)
 			return &packageBuild{

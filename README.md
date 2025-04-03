@@ -322,6 +322,119 @@ environmentManifest:
 
 Using this mechanism you can also overwrite the default manifest entries, e.g. "go" or "yarn".
 
+## SBOM and Vulnerability Scanning
+
+Leeway includes built-in support for Software Bill of Materials (SBOM) generation and vulnerability scanning. This feature helps you identify and manage security vulnerabilities in your software supply chain.
+
+### Enabling SBOM Generation
+
+SBOM generation is configured in your `WORKSPACE.yaml` file:
+
+```yaml
+sbom:
+  enabled: true                # Enable SBOM generation
+  scanVulnerabilities: true    # Enable vulnerability scanning
+  failOn: ["critical", "high"] # Fail builds with vulnerabilities of these severities
+  ignoreVulnerabilities:       # Workspace-level ignore rules
+    - vulnerability: "CVE-2023-1234"
+      reason: "Not exploitable in our context"
+```
+
+When enabled, Leeway automatically generates SBOMs for each package during the build process in multiple formats (CycloneDX, SPDX, and Syft JSON) using [Syft](https://github.com/anchore/syft). These SBOMs are included in the package's build artifacts.
+
+### Vulnerability Scanning
+
+When `scanVulnerabilities` is enabled, Leeway scans the generated SBOMs for vulnerabilities using [Grype](https://github.com/anchore/grype). The scan results are written to the build directory in multiple formats:
+
+- `vulnerabilities.txt` - Human-readable table format
+- `vulnerabilities.json` - Detailed JSON format
+- `vulnerabilities.cdx.json` - CycloneDX format
+- `vulnerabilities.sarif` - SARIF format for integration with code analysis tools
+
+#### Configuring Build Failure Thresholds
+
+The `failOn` setting determines which vulnerability severity levels will cause a build to fail. For example:
+
+```yaml
+failOn: ["critical", "high"]  # Fail on critical and high vulnerabilities
+```
+
+Supported severity levels are: `critical`, `high`, `medium`, `low`, `negligible`, and `unknown`.
+
+### Ignoring Vulnerabilities
+
+Leeway provides a flexible system for ignoring specific vulnerabilities. Ignore rules can be defined at both the workspace level (in `WORKSPACE.yaml`) and the package level (in `BUILD.yaml`). For detailed documentation on ignore rules, see [Grype's documentation on specifying matches to ignore](https://github.com/anchore/grype/blob/main/README.md#specifying-matches-to-ignore).
+
+#### Ignore Rule Configuration
+
+Ignore rules use Grype's powerful filtering capabilities:
+
+```yaml
+# In WORKSPACE.yaml (workspace-level rules)
+sbom:
+  ignoreVulnerabilities:
+    # Basic usage - ignore a specific CVE
+    - vulnerability: "CVE-2023-1234"
+      reason: "Not exploitable in our context"
+      
+    # Advanced usage - ignore a vulnerability only for a specific package
+    - vulnerability: "GHSA-abcd-1234-efgh"
+      reason: "Mitigated by our application architecture"
+      package:
+        name: "vulnerable-pkg"
+        version: "1.2.3"
+        
+    # Using fix state
+    - vulnerability: "CVE-2023-5678"
+      reason: "Will be fixed in next dependency update"
+      fix-state: "fixed"
+      
+    # Using VEX status
+    - vulnerability: "CVE-2023-9012"
+      reason: "Not affected as we don't use the vulnerable component"
+      vex-status: "not_affected"
+      vex-justification: "vulnerable_code_not_in_execute_path"
+```
+
+#### Package-Level Ignore Rules
+
+You can also specify ignore rules for specific packages in their `BUILD.yaml` file:
+
+```yaml
+# In package BUILD.yaml
+packages:
+  - name: my-package
+    type: go
+    # ... other package configuration ...
+    sbom:
+      ignoreVulnerabilities:
+        - vulnerability: "GHSA-abcd-1234-efgh"
+          reason: "Mitigated by our application architecture"
+```
+
+Package-level rules are combined with workspace-level rules during vulnerability scanning.
+
+#### Available Ignore Rule Fields
+
+Leeway's ignore rules support all of Grype's filtering capabilities:
+
+- `vulnerability`: The vulnerability ID to ignore (e.g., "CVE-2023-1234")
+- `reason`: The reason for ignoring this vulnerability (required)
+- `namespace`: The vulnerability namespace (e.g., "github:golang")
+- `fix-state`: The fix state to match (e.g., "fixed", "not-fixed", "unknown")
+- `package`: Package-specific criteria (see below)
+- `vex-status`: VEX status (e.g., "affected", "fixed", "not_affected")
+- `vex-justification`: Justification for the VEX status
+- `match-type`: The type of match to ignore (e.g., "exact-direct-dependency")
+
+The `package` field can contain:
+- `name`: Package name (supports regex)
+- `version`: Package version
+- `language`: Package language
+- `type`: Package type
+- `location`: Package location (supports glob patterns)
+- `upstream-name`: Upstream package name (supports regex)
+
 # Configuration
 Leeway is configured exclusively through the WORKSPACE.yaml/BUILD.yaml files and environment variables. The following environment
 variables have an effect on leeway:
