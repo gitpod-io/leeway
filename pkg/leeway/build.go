@@ -1625,10 +1625,18 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// Add a diagnostic command to generate a manifest of what we're packaging
 		pkgcmds = append(pkgcmds, []string{"sh", "-c", fmt.Sprintf("find %s -type f | sort > %s/files-manifest.txt", containerDir, containerDir)})
 
+		sourcePaths := []string{fmt.Sprintf("./%s", dockerImageNamesFiles), fmt.Sprintf("./%s", dockerMetadataFile)}
+		if p.C.W.SBOM.Enabled {
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomCycloneDXFilename))
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSPDXFilename))
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomSyftFilename))
+		}
+
 		// Create final tar with container files and metadata
 		pkgcmds = append(pkgcmds, BuildTarCommand(
 			WithOutputFile(result),
 			WithWorkingDir(containerDir),
+			WithSourcePaths(sourcePaths...),
 			WithCompression(!buildctx.DontCompress),
 		))
 
