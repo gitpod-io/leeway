@@ -470,29 +470,29 @@ func ScanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 
 			if err != nil {
 				if err == ErrNoSBOMFile {
-					buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("SBOM file not found in package archive, skipping vulnerability scan for package %s\n", p.FullName())))
+					buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "SBOM file not found in package archive, skipping vulnerability scan for package %s\n", p.FullName()))
 					continue
 				}
-				buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Failed to extract SBOM from package archive, skipping vulnerability scan for package %s: %s\n", p.FullName(), err.Error())))
+				buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Failed to extract SBOM from package archive, skipping vulnerability scan for package %s: %s\n", p.FullName(), err.Error()))
 				continue
 			}
 
 			// Set the SBOM file path to the temporary file
 			sbomFile = tempFileName
 		} else {
-			buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Package %s not found in local cache, skipping vulnerability scan\n", p.FullName())))
+			buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Package %s not found in local cache, skipping vulnerability scan\n", p.FullName()))
 			continue
 		}
 
 		// Scan the package for vulnerabilities
 		if err := ScanPackageForVulnerabilities(p, buildctx, sbomFile, reportLocation.PackageDir); err != nil {
-			buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Failed to scan package %s for vulnerabilities: %s\n", p.FullName(), err.Error())))
+			buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Failed to scan package %s for vulnerabilities: %s\n", p.FullName(), err.Error()))
 			// Add to failed packages
 			failedPackages = append(failedPackages, p.FullName())
 			continue
 		}
 
-		buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Vulnerability scan completed for package %s (reports: %s)\n", p.FullName(), reportLocation.PackageDir)))
+		buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Vulnerability scan completed for package %s (reports: %s)\n", p.FullName(), reportLocation.PackageDir))
 	}
 
 	// Return error if any packages failed due to vulnerabilities
@@ -748,8 +748,11 @@ func AccessSBOMInCachedArchive(fn string, handler func(sbomFile io.Reader) error
 		}
 
 		if hdr.Name != "./"+sbomCycloneDXFilename && hdr.Name != "package/"+sbomCycloneDXFilename {
+			fmt.Println(hdr.Name)
 			continue
 		}
+
+		fmt.Println(hdr.Name)
 
 		err = handler(io.LimitReader(a, hdr.Size))
 		if err != nil {
