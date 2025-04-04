@@ -95,6 +95,10 @@ type ConsoleReporter struct {
 	writer map[string]io.Writer
 	times  map[string]time.Time
 	mu     sync.RWMutex
+
+	// out is the writer to print to. Normally this is os.Stdout, but it can be set to a buffer for testing.
+	out io.Writer
+	now func() time.Time
 }
 
 // exclusiveWriter makes a write an exclusive resource by protecting Write calls with a mutex.
@@ -115,6 +119,8 @@ func NewConsoleReporter() *ConsoleReporter {
 	return &ConsoleReporter{
 		writer: make(map[string]io.Writer),
 		times:  make(map[string]time.Time),
+		out:    os.Stdout,
+		now:    time.Now,
 	}
 }
 
@@ -134,7 +140,7 @@ func (r *ConsoleReporter) getWriter(pkg *Package) io.Writer {
 			return res
 		}
 
-		res = &exclusiveWriter{O: textio.NewPrefixWriter(os.Stdout, getRunPrefix(pkg))}
+		res = &exclusiveWriter{O: textio.NewPrefixWriter(r.out, getRunPrefix(pkg))}
 		r.writer[name] = res
 		r.mu.Unlock()
 	}
@@ -166,7 +172,7 @@ func (r *ConsoleReporter) BuildStarted(pkg *Package, status map[*Package]Package
 		i++
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i] < lines[j] })
-	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	tw := tabwriter.NewWriter(r.out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, strings.Join(lines, ""))
 	tw.Flush()
 }
@@ -191,7 +197,7 @@ func (r *ConsoleReporter) PackageBuildStarted(pkg *Package) {
 	}
 
 	r.mu.Lock()
-	r.times[pkg.FullName()] = time.Now()
+	r.times[pkg.FullName()] = r.now()
 	r.mu.Unlock()
 
 	_, _ = io.WriteString(out, color.Sprintf("<fg=yellow>build started</> <gray>(version %s)</>\n", version))
@@ -210,20 +216,32 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRe
 	out := r.getWriter(pkg)
 
 	r.mu.Lock()
-	dur := time.Since(r.times[nme])
+	dur := r.now().Sub(r.times[nme])
 	delete(r.writer, nme)
 	delete(r.times, nme)
 	r.mu.Unlock()
 
+	// Format phase durations
+	var phaseDurations []string
+	for _, phase := range rep.Phases {
+		if d := rep.PhaseDuration(phase); d > 0 {
+			phaseDurations = append(phaseDurations, fmt.Sprintf("%s: %.1fs", phase, d.Seconds()))
+		}
+	}
+	phaseDurStr := ""
+	if len(phaseDurations) > 0 {
+		phaseDurStr = color.Sprintf(" [%s]", strings.Join(phaseDurations, " | "))
+	}
+
 	var msg string
-  if rep.Error != nil {
+	if rep.Error != nil {
 		msg = color.Sprintf("<red>package build failed while %sing</>\n<white>Reason:</> %s\n", rep.LastPhase(), rep.Error)
 	} else {
 		var coverage string
 		if rep.TestCoverageAvailable {
 			coverage = color.Sprintf("<fg=yellow>test coverage: %d%%</> <gray>(%d of %d functions have tests)</>\n", rep.TestCoveragePercentage, rep.FunctionsWithTest, rep.FunctionsWithTest+rep.FunctionsWithoutTest)
 		}
-		msg = color.Sprintf("%s<green>package build succeded</> <gray>(%.2fs)</>\n", coverage, dur.Seconds())
+		msg = color.Sprintf("%s<green>package build succeded</> <gray>(%.2fs)%s</>\n", coverage, dur.Seconds(), phaseDurStr)
 	}
 	//nolint:errcheck
 	io.WriteString(out, msg)
