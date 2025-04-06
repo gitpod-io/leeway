@@ -264,6 +264,8 @@ type buildOptions struct {
 	CoverageOutputPath     string
 	DockerBuildOptions     *DockerBuildOptions
 	JailedExecution        bool
+	UseFixedBuildDir       bool
+	DisableCoverage        bool
 
 	context *buildContext
 }
@@ -361,6 +363,20 @@ func WithJailedExecution(jailedExecution bool) BuildOption {
 func WithCompressionDisabled(dontCompress bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.DontCompress = dontCompress
+		return nil
+	}
+}
+
+func WithFixedBuildDir(fixedBuildDir bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.UseFixedBuildDir = fixedBuildDir
+		return nil
+	}
+}
+
+func WithDisableCoverage(disableCoverage bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DisableCoverage = disableCoverage
 		return nil
 	}
 }
@@ -624,12 +640,6 @@ func (p *Package) build(buildctx *buildContext) error {
 	}
 	defer buildctx.ReleaseBuildLock(p)
 
-	// Get package version
-	version, err := p.Version()
-	if err != nil {
-		return err
-	}
-
 	// Build dependencies first
 	if err := p.buildDependencies(buildctx); err != nil {
 		return err
@@ -653,13 +663,24 @@ func (p *Package) build(buildctx *buildContext) error {
 	buildctx.Reporter.PackageBuildStarted(p)
 
 	// Ensure we notify reporter when build finishes
+	var err error
 	defer func() {
 		pkgRep.Error = err
 		buildctx.Reporter.PackageBuildFinished(p, pkgRep)
 	}()
 
 	// Prepare build directory
-	builddir := filepath.Join(buildctx.BuildDir(), p.FilesystemSafeName()+"."+version)
+	builddir, err := createBuildDir(buildctx, p)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// Clean up build directory after build, such that the next build of the same component
+		// can use the fixed build directory again.
+		os.RemoveAll(builddir)
+	}()
+
+	log.WithField("package", p.FullName()).WithField("builddir", builddir).Info("using build directory")
 	if err := prepareDirectory(builddir); err != nil {
 		return err
 	}
@@ -754,6 +775,48 @@ func (p *Package) build(buildctx *buildContext) error {
 
 	// Register newly built package
 	return buildctx.RegisterNewlyBuilt(p)
+}
+
+func createBuildDir(buildctx *buildContext, p *Package) (string, error) {
+	if !buildctx.UseFixedBuildDir {
+		// Original behavior: use version as suffix to ensure a unique build directory for each package version.
+		version, err := p.Version()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(buildctx.BuildDir(), p.FilesystemSafeName()+"."+version), nil
+	}
+
+	// New behavior: use the package name as the build directory.
+	// This ensures the same directory is used for each new build of the package,
+	// which is more cache-friendly. Allows e.g. Go build/test caching to work,
+	// as well as golangci-lint caching.
+	//
+	// Note: This directoy is only used if it doesn't already exist, otherwise
+	// we'll fall back to the version as suffix.
+	// It is possible that the directory exists because the package is already
+	// being built with a different version (e.g. different args).
+	builddir := filepath.Join(buildctx.BuildDir(), p.FilesystemSafeName())
+
+	err := os.MkdirAll(filepath.Dir(builddir), 0755)
+	if err != nil {
+		return "", fmt.Errorf("failed to create parent directory for build directory: %w", err)
+	}
+
+	err = os.Mkdir(builddir, 0755)
+	if err == nil {
+		return builddir, nil
+	}
+	if !os.IsExist(err) {
+		return "", fmt.Errorf("failed to create build directory: %w", err)
+	}
+
+	// Already exists, use version as suffix
+	version, err := p.Version()
+	if err != nil {
+		return "", fmt.Errorf("failed to get version for package %s: %w", p.FullName(), err)
+	}
+	return filepath.Join(buildctx.BuildDir(), p.FilesystemSafeName()+"."+version), nil
 }
 
 func prepareDirectory(dir string) error {
@@ -1345,11 +1408,15 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 			testCommand = append(testCommand, "-v")
 		}
 
-		if buildctx.buildOptions.CoverageOutputPath != "" {
-			testCommand = append(testCommand, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
-		} else {
-			testCommand = append(testCommand, "-coverprofile=testcoverage.out")
-			reportCoverage = collectGoTestCoverage(filepath.Join(wd, "testcoverage.out"))
+		// Added as an option to disable test coverage until Go 1.25 is released https://github.com/golang/go/commit/6a4bc8d17eb6703baf0c483fb40e0d3e1f0f6af3
+		// Running with coverage stops the test cache from being used, which will be fixed in Go 1.25.
+		if !buildctx.DisableCoverage {
+			if buildctx.buildOptions.CoverageOutputPath != "" {
+				testCommand = append(testCommand, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
+			} else {
+				testCommand = append(testCommand, "-coverprofile=testcoverage.out")
+				reportCoverage = collectGoTestCoverage(filepath.Join(wd, "testcoverage.out"))
+			}
 		}
 		testCommand = append(testCommand, "./...")
 

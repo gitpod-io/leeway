@@ -181,10 +181,12 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("jailed-execution", false, "Run all build commands using runc (defaults to false)")
 	cmd.Flags().UintP("max-concurrent-tasks", "j", uint(cpus), "Limit the number of max concurrent build tasks - set to 0 to disable the limit")
 	cmd.Flags().String("coverage-output-path", "", "Output path where test coverage file will be copied after running tests")
+	cmd.Flags().Bool("disable-coverage", false, "Disable test coverage collection (defaults to false)")
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
 	cmd.Flags().String("report-segment", os.Getenv("LEEWAY_SEGMENT_KEY"), "Report build events to segment using the segment key (defaults to $LEEWAY_SEGMENT_KEY)")
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
+	cmd.Flags().Bool("fixed-build-dir", false, "Use a fixed build directory for each package, instead of based on the package version, to better utilize caches based on absolute paths (defaults to false)")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
@@ -291,6 +293,8 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		_ = os.MkdirAll(coverageOutputPath, 0644)
 	}
 
+	disableCoverage, _ := cmd.Flags().GetBool("disable-coverage")
+
 	var dockerBuildOptions leeway.DockerBuildOptions
 	dockerBuildOptions, err = cmd.Flags().GetStringToString("docker-build-options")
 	if err != nil {
@@ -307,6 +311,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		log.Fatal(err)
 	}
 
+	fixedBuildDir, err := cmd.Flags().GetBool("fixed-build-dir")
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
@@ -319,6 +328,8 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		leeway.WithDockerBuildOptions(&dockerBuildOptions),
 		leeway.WithJailedExecution(jailedExecution),
 		leeway.WithCompressionDisabled(dontCompress),
+		leeway.WithFixedBuildDir(fixedBuildDir),
+		leeway.WithDisableCoverage(disableCoverage),
 	}, localCache
 }
 
