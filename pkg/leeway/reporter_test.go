@@ -2,6 +2,7 @@ package leeway
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 	"time"
 
@@ -64,7 +65,7 @@ func TestConsoleReporter(t *testing.T) {
 			},
 			Expect: Expectation{
 				Output: `[test:test] build started (version unknown)
-[test:test] package build succeded (5.00s) [prep: 1.0s | pull: 1.0s | lint: 1.0s | test: 1.0s | build: 1.0s]
+[test:test] package build succeeded (5.00s) [prep: 1.0s | pull: 1.0s | lint: 1.0s | test: 1.0s | build: 1.0s]
 `,
 			},
 		},
@@ -78,7 +79,22 @@ func TestConsoleReporter(t *testing.T) {
 			},
 			Expect: Expectation{
 				Output: `[test:test] build started (version unknown)
-[test:test] package build succeded (0.00s)
+[test:test] package build succeeded (0.00s)
+`,
+			},
+		},
+		{
+			Name: "failed build",
+			Func: func(t *testing.T, r *ConsoleReporter) {
+				r.PackageBuildStarted(pkg)
+				r.PackageBuildFinished(pkg, &PackageBuildReport{
+					Error: errors.New("failed"),
+				})
+			},
+			Expect: Expectation{
+				Output: `[test:test] build started (version unknown)
+[test:test] package build failed while preping
+[test:test] Reason: failed
 `,
 			},
 		},

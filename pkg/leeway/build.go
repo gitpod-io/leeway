@@ -631,7 +631,7 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 	return g.Wait()
 }
 
-func (p *Package) build(buildctx *buildContext) error {
+func (p *Package) build(buildctx *buildContext) (err error) {
 	// Try to obtain lock for building this package
 	doBuild := buildctx.ObtainBuildLock(p)
 	if !doBuild {
@@ -663,7 +663,6 @@ func (p *Package) build(buildctx *buildContext) error {
 	buildctx.Reporter.PackageBuildStarted(p)
 
 	// Ensure we notify reporter when build finishes
-	var err error
 	defer func() {
 		pkgRep.Error = err
 		buildctx.Reporter.PackageBuildFinished(p, pkgRep)
