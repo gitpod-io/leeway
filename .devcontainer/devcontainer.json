@@ -1,13 +1,17 @@
 {
 	"name": "leeway",
-	"build": {
-		"context": "..",
-		"dockerfile": "../.gitpod.Dockerfile"
+	"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+	"features": {
+		"ghcr.io/devcontainers/features/node:1": {
+			"version": "lts"
+		},
+		"ghcr.io/devcontainers/features/go:1": {
+			"version": "1.24.0"
+		},
+		"ghcr.io/devcontainers/features/common-utils:2": {},
+		"ghcr.io/devcontainers-contrib/features/shfmt:1": {
+			"version": "3.10.0"
+		}
 	},
-	"runArgs": [
-		"--privileged",
-		"--security-opt=seccomp=unconfined",
-		"--network=host"
-	],
-	"containerUser": "root"
+	"postStartCommand": "./.devcontainer/install-leeway.sh"
 }
