@@ -241,7 +241,7 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRe
 		if rep.TestCoverageAvailable {
 			coverage = color.Sprintf("<fg=yellow>test coverage: %d%%</> <gray>(%d of %d functions have tests)</>\n", rep.TestCoveragePercentage, rep.FunctionsWithTest, rep.FunctionsWithTest+rep.FunctionsWithoutTest)
 		}
-		msg = color.Sprintf("%s<green>package build succeded</> <gray>(%.2fs)%s</>\n", coverage, dur.Seconds(), phaseDurStr)
+		msg = color.Sprintf("%s<green>package build succeeded</> <gray>(%.2fs)%s</>\n", coverage, dur.Seconds(), phaseDurStr)
 	}
 	//nolint:errcheck
 	io.WriteString(out, msg)
