@@ -611,6 +611,8 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 		return xerrors.Errorf("package \"%s\" is not linked", p.FullName())
 	}
 
+	log.WithField("package", p.FullName()).WithField("deps", len(deps)).Debug("building dependencies")
+
 	// No dependencies means nothing to build
 	if len(deps) == 0 {
 		return nil
@@ -622,8 +624,12 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 	for _, dep := range deps {
 		// Capture the dependency in a local variable to avoid closure issues
 		d := dep
+		pp := p
 		g.Go(func() error {
-			return d.build(buildctx)
+			log.WithField("package", pp.FullName()).WithField("deps", len(deps)).WithField("dep", d.FullName()).Debug("building dependency")
+			err := d.build(buildctx)
+			log.WithField("package", pp.FullName()).WithField("deps", len(deps)).WithField("dep", d.FullName()).WithError(err).Debug("building dependency done")
+			return err
 		})
 	}
 
