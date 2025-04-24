@@ -540,7 +540,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	// Check for build errors immediately and return if there are any
 	if buildErr != nil {
 		// We deliberately swallow the target package build error as that will have already been reported using the reporter.
-		return xerrors.Errorf("build failed")
+		return xerrors.Errorf("build failed: %w", buildErr)
 	}
 
 	// Only proceed with cache upload if build succeeded
