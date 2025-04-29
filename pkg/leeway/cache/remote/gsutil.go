@@ -97,20 +97,65 @@ func (rs *GSUtilCache) Download(ctx context.Context, dst cache.LocalCache, pkgs 
 		files []string
 		dest  string
 	)
+	type urlPair struct {
+		gzURL  string
+		tarURL string
+	}
+
+	// Create a list of all possible URLs
+	var urls []string
+	packageToURLMap := make(map[cache.Package]urlPair)
 	for _, pkg := range pkgs {
 		fn, exists := dst.Location(pkg)
 		if exists {
 			continue
 		}
-
+		version, err := pkg.Version()
+		if err != nil {
+			log.WithError(err).WithField("package", pkg.FullName()).Warn("Failed to get version for package, skipping")
+			continue
+		}
 		if dest == "" {
 			dest = filepath.Dir(fn)
 		} else if dest != filepath.Dir(fn) {
 			return fmt.Errorf("gsutil only supports one target folder, not %s and %s", dest, filepath.Dir(fn))
 		}
 
-		files = append(files, fmt.Sprintf("gs://%s/%s", rs.BucketName, filepath.Base(fn)))
+		pair := urlPair{
+			gzURL:  fmt.Sprintf("gs://%s/%s.tar.gz", rs.BucketName, version),
+			tarURL: fmt.Sprintf("gs://%s/%s.tar", rs.BucketName, version),
+		}
+		packageToURLMap[pkg] = pair
+		urls = append(urls, pair.gzURL, pair.tarURL)
 	}
+	if len(urls) == 0 {
+		return nil
+	}
+
+	args := append([]string{"stat"}, urls...)
+	cmd := exec.Command("gsutil", args...)
+
+	var stdoutBuffer, stderrBuffer strings.Builder
+	cmd.Stdout = &stdoutBuffer
+	cmd.Stderr = &stderrBuffer
+
+	err := cmd.Run()
+	if err != nil && (!strings.Contains(stderrBuffer.String(), "No URLs matched")) {
+		log.Debugf("gsutil stat returned non-zero exit code: [%v], stderr: [%v]", err, stderrBuffer.String())
+		return fmt.Errorf("failed to check if files exist in remote cache: %w", err)
+	}
+
+	existingURLs := parseGSUtilStatOutput(strings.NewReader(stdoutBuffer.String()))
+	for _, urls := range packageToURLMap {
+		if _, exists := existingURLs[urls.gzURL]; exists {
+			files = append(files, urls.gzURL)
+			continue
+		}
+		if _, exists := existingURLs[urls.tarURL]; exists {
+			files = append(files, urls.tarURL)
+		}
+	}
+
 	return gsutilTransfer(dest, files)
 }
 
