@@ -9,6 +9,13 @@ environmentManifest:
 provenance:
   enabled: true
   slsa: true
+sbom:
+  enabled: true
+  scanVulnerabilities: true
+  # failOn: ["critical", "high"]
+  # ignoreVulnerabilities:
+  #   - vulnerability: GHSA-265r-hfxg-fhmg
+  #     reason: "Not exploitable in our context"
 variants:
 - name: nogit
   srcs:
