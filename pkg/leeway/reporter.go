@@ -485,10 +485,14 @@ func (r *HTMLReporter) Report() {
 `
 	tmpl, _ := template.New("Report").Parse(strings.ReplaceAll(tmplString, "'", "`"))
 
-	file, _ := os.Create(r.filename)
+	file, err := os.Create(r.filename)
+	if err != nil {
+		log.WithError(err).WithField("filename", r.filename).Fatal("Failed to create output file")
+		return
+	}
 	defer file.Close()
 
-	err := tmpl.Execute(file, vars)
+	err = tmpl.Execute(file, vars)
 	if err != nil {
 		log.WithError(err).Fatal("Can't render template")
 	}
