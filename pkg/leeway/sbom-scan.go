@@ -1,6 +1,7 @@
 package leeway
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -675,7 +676,9 @@ func findBuildYamlFile(p *Package) (string, error) {
 }
 
 // updateIgnoreRulesInBuildYaml updates the ignore rules in the BUILD.yaml file
-// for vulnerabilities with the specified severity levels
+// for vulnerabilities with the specified severity levels.
+// This implementation uses yaml.v3's node-based API to preserve the structure
+// and order of the original document.
 func updateIgnoreRulesInBuildYaml(
 	p *Package,
 	buildYamlPath string,
@@ -691,55 +694,48 @@ func updateIgnoreRulesInBuildYaml(
 		return xerrors.Errorf("failed to read BUILD.yaml file: %w", err)
 	}
 
-	// Parse the YAML content
-	var buildYaml map[string]interface{}
-	if err := yaml.Unmarshal(content, &buildYaml); err != nil {
+	// Parse the YAML content into a Node tree
+	var rootNode yaml.Node
+	if err := yaml.Unmarshal(content, &rootNode); err != nil {
 		return xerrors.Errorf("failed to parse BUILD.yaml file: %w", err)
 	}
 
-	// Find the package configuration in the BUILD.yaml
-	packagesArray, ok := buildYaml["packages"].([]interface{})
-	if !ok {
+	// The root node should be a document node, and its first content node is the actual root mapping
+	if len(rootNode.Content) == 0 {
+		return xerrors.Errorf("invalid YAML document: empty content")
+	}
+	docNode := rootNode.Content[0]
+
+	// Find the packages sequence node
+	packagesNode := findChildNodeByKey(docNode, "packages")
+	if packagesNode == nil || packagesNode.Kind != yaml.SequenceNode {
 		return xerrors.Errorf("invalid BUILD.yaml format: 'packages' section not found or has wrong type")
 	}
 
-	// Find the specific package
-	var packageConfig map[string]interface{}
+	// Find the specific package node
+	var packageNode *yaml.Node
 	var packageName string
-	for _, pkgItem := range packagesArray {
-		pkg, ok := pkgItem.(map[string]interface{})
-		if !ok {
+	for _, pkgItemNode := range packagesNode.Content {
+		if pkgItemNode.Kind != yaml.MappingNode {
 			continue
 		}
-		
-		name, ok := pkg["name"].(string)
-		if !ok {
+
+		nameNode := findChildNodeByKey(pkgItemNode, "name")
+		if nameNode == nil || nameNode.Kind != yaml.ScalarNode {
 			continue
 		}
-		
+
+		name := nameNode.Value
 		// The package name in BUILD.yaml might be just the last part of the full name
 		if strings.HasSuffix(p.FullName(), ":"+name) || p.Name == name {
-			packageConfig = pkg
+			packageNode = pkgItemNode
 			packageName = name
 			break
 		}
 	}
 
-	if packageConfig == nil {
+	if packageNode == nil {
 		return xerrors.Errorf("package %s not found in BUILD.yaml", p.FullName())
-	}
-
-	// Get or create the SBOM section
-	sbom, ok := packageConfig["sbom"].(map[string]interface{})
-	if !ok {
-		sbom = make(map[string]interface{})
-		packageConfig["sbom"] = sbom
-	}
-
-	// Get or create the ignoreVulnerabilities section
-	var ignoreVulnerabilities []interface{}
-	if existingRules, ok := sbom["ignoreVulnerabilities"].([]interface{}); ok {
-		ignoreVulnerabilities = existingRules
 	}
 
 	// Create new ignore rules for vulnerabilities with the specified severity levels
@@ -748,18 +744,66 @@ func updateIgnoreRulesInBuildYaml(
 		return xerrors.Errorf("failed to create ignore rules: %w", err)
 	}
 
+	// Find the SBOM node if it exists
+	sbomNode := findChildNodeByKey(packageNode, "sbom")
+
+	// Find the ignoreVulnerabilities node if it exists
+	var ignoreVulnNode *yaml.Node
+	if sbomNode != nil {
+		ignoreVulnNode = findChildNodeByKey(sbomNode, "ignoreVulnerabilities")
+	}
+
+	// Check if we have any existing rules
+	existingRulesCount := 0
+	if ignoreVulnNode != nil {
+		existingRulesCount = len(ignoreVulnNode.Content)
+	}
+
+	// If there are no new rules and no existing rules (or all existing rules are outdated),
+	// don't add/keep the SBOM section
+	if len(newRules) == 0 && (ignoreVulnNode == nil || (removeOutdatedRules && existingRulesCount == 0)) {
+		// No need to add or modify anything
+		return nil
+	}
+
+	// Create the SBOM node if it doesn't exist and we need it
+	if sbomNode == nil {
+		// Create a new SBOM mapping node
+		sbomNode = &yaml.Node{
+			Kind: yaml.MappingNode,
+			Tag:  "!!map",
+		}
+		// Add the sbom key and value to the package node
+		packageNode.Content = append(packageNode.Content,
+			&yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!str",
+				Value: "sbom",
+			},
+			sbomNode,
+		)
+	}
+
+	// Create the ignoreVulnerabilities node if it doesn't exist and we need it
+	if ignoreVulnNode == nil {
+		// Create a new ignoreVulnerabilities sequence node
+		ignoreVulnNode = &yaml.Node{
+			Kind: yaml.SequenceNode,
+			Tag:  "!!seq",
+		}
+		// Add the ignoreVulnerabilities key and value to the sbom node
+		sbomNode.Content = append(sbomNode.Content,
+			&yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!str",
+				Value: "ignoreVulnerabilities",
+			},
+			ignoreVulnNode,
+		)
+	}
+
 	// If removeOutdatedRules is true, remove rules that no longer match any findings
 	if removeOutdatedRules {
-		// Convert existing rules to a map for easier lookup
-		existingRuleMap := make(map[string]interface{})
-		for _, rule := range ignoreVulnerabilities {
-			if ruleMap, ok := rule.(map[string]interface{}); ok {
-				if vuln, ok := ruleMap["vulnerability"].(string); ok {
-					existingRuleMap[vuln] = rule
-				}
-			}
-		}
-
 		// Create a map of all vulnerabilities (both matched and ignored)
 		allVulns := make(map[string]bool)
 		for _, m := range matches.Sorted() {
@@ -770,52 +814,55 @@ func updateIgnoreRulesInBuildYaml(
 		}
 
 		// Keep only rules that match existing vulnerabilities
-		var updatedRules []interface{}
-		for _, rule := range ignoreVulnerabilities {
-			if ruleMap, ok := rule.(map[string]interface{}); ok {
-				if vuln, ok := ruleMap["vulnerability"].(string); ok {
-					if allVulns[vuln] {
-						updatedRules = append(updatedRules, rule)
-					} else {
-						log.Infof("Removing outdated ignore rule for %s (vulnerability no longer found)", vuln)
-					}
+		var updatedRuleNodes []*yaml.Node
+		for i := 0; i < len(ignoreVulnNode.Content); i++ {
+			ruleNode := ignoreVulnNode.Content[i]
+			vulnNode := findChildNodeByKey(ruleNode, "vulnerability")
+			if vulnNode != nil && vulnNode.Kind == yaml.ScalarNode {
+				vulnID := vulnNode.Value
+				if allVulns[vulnID] {
+					updatedRuleNodes = append(updatedRuleNodes, ruleNode)
 				} else {
-					// Keep rules without a specific vulnerability ID
-					updatedRules = append(updatedRules, rule)
+					log.Infof("Removing outdated ignore rule for %s (vulnerability no longer found)", vulnID)
 				}
+			} else {
+				// Keep rules without a specific vulnerability ID
+				updatedRuleNodes = append(updatedRuleNodes, ruleNode)
 			}
 		}
-		ignoreVulnerabilities = updatedRules
+		ignoreVulnNode.Content = updatedRuleNodes
 	}
 
 	// Add new rules
 	for _, ruleMap := range newRules {
 		// Check if rule already exists
-		exists := false
 		vulnID, _ := ruleMap["vulnerability"].(string)
-		for _, existingRule := range ignoreVulnerabilities {
-			if existingRuleMap, ok := existingRule.(map[string]interface{}); ok {
-				if existingVuln, ok := existingRuleMap["vulnerability"].(string); ok && existingVuln == vulnID {
-					exists = true
-					break
-				}
+		exists := false
+		for i := 0; i < len(ignoreVulnNode.Content); i++ {
+			ruleNode := ignoreVulnNode.Content[i]
+			vulnNode := findChildNodeByKey(ruleNode, "vulnerability")
+			if vulnNode != nil && vulnNode.Kind == yaml.ScalarNode && vulnNode.Value == vulnID {
+				exists = true
+				break
 			}
 		}
 
 		if !exists {
-			ignoreVulnerabilities = append(ignoreVulnerabilities, ruleMap)
+			// Convert the rule map to a YAML node
+			ruleNode := mapToYAMLNode(ruleMap)
+			ignoreVulnNode.Content = append(ignoreVulnNode.Content, ruleNode)
 			log.Infof("Added ignore rule for %s", vulnID)
 		}
 	}
 
-	// Update the ignoreVulnerabilities section
-	sbom["ignoreVulnerabilities"] = ignoreVulnerabilities
-
-	// Marshal the updated BUILD.yaml
-	updatedContent, err := yaml.Marshal(buildYaml)
-	if err != nil {
+	// Marshal the updated YAML tree with 2-space indentation
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&rootNode); err != nil {
 		return xerrors.Errorf("failed to marshal updated BUILD.yaml: %w", err)
 	}
+	updatedContent := buf.Bytes()
 
 	// Write the updated BUILD.yaml
 	if err := os.WriteFile(buildYamlPath, updatedContent, 0644); err != nil {
@@ -824,6 +871,136 @@ func updateIgnoreRulesInBuildYaml(
 
 	log.Infof("Updated ignore rules in %s for package %s", buildYamlPath, packageName)
 	return nil
+}
+
+// findChildNodeByKey finds a child node with the given key in a mapping node.
+// Returns nil if the key is not found or the parent is not a mapping node.
+func findChildNodeByKey(parent *yaml.Node, key string) *yaml.Node {
+	if parent == nil || parent.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	for i := 0; i < len(parent.Content); i += 2 {
+		if i+1 < len(parent.Content) && parent.Content[i].Value == key {
+			return parent.Content[i+1]
+		}
+	}
+
+	return nil
+}
+
+// mapToYAMLNode converts a map[string]interface{} to a YAML node.
+func mapToYAMLNode(m map[string]interface{}) *yaml.Node {
+	node := &yaml.Node{
+		Kind: yaml.MappingNode,
+		Tag:  "!!map",
+	}
+
+	// Add each key-value pair to the node
+	for k, v := range m {
+		// Add the key
+		keyNode := &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: k,
+		}
+		node.Content = append(node.Content, keyNode)
+
+		// Add the value based on its type
+		var valueNode *yaml.Node
+		switch val := v.(type) {
+		case string:
+			valueNode = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!str",
+				Value: val,
+			}
+		case map[string]interface{}:
+			valueNode = mapToYAMLNode(val)
+		case []interface{}:
+			valueNode = sliceToYAMLNode(val)
+		case int:
+			valueNode = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!int",
+				Value: fmt.Sprintf("%d", val),
+			}
+		case float64:
+			valueNode = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!float",
+				Value: fmt.Sprintf("%g", val),
+			}
+		case bool:
+			valueNode = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!bool",
+				Value: fmt.Sprintf("%t", val),
+			}
+		default:
+			// For other types, convert to string
+			valueNode = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!str",
+				Value: fmt.Sprintf("%v", val),
+			}
+		}
+		node.Content = append(node.Content, valueNode)
+	}
+
+	return node
+}
+
+// sliceToYAMLNode converts a []interface{} to a YAML sequence node.
+func sliceToYAMLNode(s []interface{}) *yaml.Node {
+	node := &yaml.Node{
+		Kind: yaml.SequenceNode,
+		Tag:  "!!seq",
+	}
+
+	for _, item := range s {
+		var itemNode *yaml.Node
+		switch val := item.(type) {
+		case string:
+			itemNode = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!str",
+				Value: val,
+			}
+		case map[string]interface{}:
+			itemNode = mapToYAMLNode(val)
+		case []interface{}:
+			itemNode = sliceToYAMLNode(val)
+		case int:
+			itemNode = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!int",
+				Value: fmt.Sprintf("%d", val),
+			}
+		case float64:
+			itemNode = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!float",
+				Value: fmt.Sprintf("%g", val),
+			}
+		case bool:
+			itemNode = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!bool",
+				Value: fmt.Sprintf("%t", val),
+			}
+		default:
+			// For other types, convert to string
+			itemNode = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!str",
+				Value: fmt.Sprintf("%v", val),
+			}
+		}
+		node.Content = append(node.Content, itemNode)
+	}
+
+	return node
 }
 
 // createIgnoreRulesForVulnerabilities creates ignore rules for vulnerabilities with the specified severity levels
