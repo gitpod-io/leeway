@@ -559,7 +559,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	// Scan all packages for vulnerabilities after the build completes
 	// This ensures we scan even cached packages that weren't rebuilt
 	if pkg.C.W.SBOM.Enabled && pkg.C.W.SBOM.ScanVulnerabilities {
-		if err := scanAllPackagesForVulnerabilities(ctx, allpkg); err != nil {
+		if err := scanAllPackagesForVulnerabilities(ctx, allpkg, "", false, ""); err != nil {
 			return err
 		}
 	}

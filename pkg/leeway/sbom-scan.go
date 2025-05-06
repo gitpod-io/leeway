@@ -30,6 +30,7 @@ import (
 	"github.com/anchore/syft/syft/source"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
+	"gopkg.in/yaml.v3"
 )
 
 // PackageVulnerabilityStats represents vulnerability statistics for a package
@@ -49,7 +50,7 @@ type PackageVulnerabilityStats struct {
 // This function is called after the build process completes to identify security issues
 // in all built packages, including those loaded from cache. It generates comprehensive
 // vulnerability reports in multiple formats and collects statistics across all packages.
-func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Package, customOutputDir ...string) error {
+func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Package, updateIgnoreRules string, removeOutdatedRules bool, customOutputDir string) error {
 	if len(packages) == 0 {
 		return nil
 	}
@@ -59,8 +60,8 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 
 	// Determine output directory - use custom dir if provided, otherwise create timestamped dir
 	var outputDir string
-	if len(customOutputDir) > 0 && customOutputDir[0] != "" {
-		outputDir = customOutputDir[0]
+	if customOutputDir != "" {
+		outputDir = customOutputDir
 	} else {
 		timestamp := time.Now().Format("20060102-150405")
 		outputDir = filepath.Join(GetDefaultVulnerabilityReportsDir(buildctx), timestamp)
@@ -70,6 +71,16 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 		errMsg := fmt.Sprintf("failed to create output directory %s: %s", outputDir, err)
 		buildctx.Reporter.PackageBuildLog(nil, true, []byte(errMsg+"\n"))
 		return xerrors.Errorf(errMsg)
+	}
+
+	// Parse severity levels for updating ignore rules
+	var severityLevels []string
+	if updateIgnoreRules != "" {
+		severityLevels = strings.Split(strings.ToUpper(updateIgnoreRules), ",")
+		for i, s := range severityLevels {
+			severityLevels[i] = strings.TrimSpace(s)
+		}
+		log.Infof("Will update ignore rules for severity levels: %s", strings.Join(severityLevels, ", "))
 	}
 
 	// Process each package
@@ -119,7 +130,7 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 		}
 
 		// Scan for vulnerabilities
-		stats, err := scanSBOMForVulnerabilities(buildctx, p, sbomFilename, outputDir)
+		stats, matches, ignoredMatches, vulnProvider, err := scanSBOMForVulnerabilities(buildctx, p, sbomFilename, outputDir)
 		if err != nil {
 			buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Failed to scan package %s for vulnerabilities: %s\n", p.FullName(), err.Error()))
 			failedPackages = append(failedPackages, p.FullName())
@@ -128,6 +139,21 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 
 		if stats != nil {
 			allStats = append(allStats, stats)
+		}
+
+		// Update ignore rules in BUILD.yaml if requested
+		if len(severityLevels) > 0 && matches != nil {
+			buildYamlPath, err := findBuildYamlFile(p)
+			if err != nil {
+				log.WithError(err).Warnf("Could not find BUILD.yaml for package %s, skipping ignore rule update", p.FullName())
+			} else {
+				err = updateIgnoreRulesInBuildYaml(p, buildYamlPath, matches, ignoredMatches, vulnProvider, severityLevels, removeOutdatedRules)
+				if err != nil {
+					log.WithError(err).Warnf("Failed to update ignore rules in BUILD.yaml for package %s", p.FullName())
+				} else {
+					buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Updated ignore rules in %s for package %s\n", buildYamlPath, p.FullName()))
+				}
+			}
 		}
 
 		buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Vulnerability scan completed for package %s (reports: %s)\n", p.FullName(), outputDir))
@@ -188,7 +214,10 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 // ScanAllPackagesForVulnerabilities provides a public API for scanning packages for vulnerabilities.
 // It creates a build context with the provided local cache and reporter, then calls the internal
 // scanAllPackagesForVulnerabilities function to perform the actual scanning.
-func ScanAllPackagesForVulnerabilities(localCache cache.LocalCache, packages []*Package, customOutputDir ...string) error {
+// If updateIgnoreRules is provided, it will update the ignore rules in the BUILD.yaml file
+// for vulnerabilities with the specified severity levels.
+// If removeOutdatedRules is true, it will remove ignore rules that no longer match any findings.
+func ScanAllPackagesForVulnerabilities(localCache cache.LocalCache, packages []*Package, customOutputDir string, updateIgnoreRules string, removeOutdatedRules bool) error {
 	buildctx := &buildContext{
 		buildOptions: buildOptions{
 			Reporter:   NewConsoleReporter(),
@@ -196,17 +225,17 @@ func ScanAllPackagesForVulnerabilities(localCache cache.LocalCache, packages []*
 		},
 	}
 
-	return scanAllPackagesForVulnerabilities(buildctx, packages, customOutputDir...)
+	return scanAllPackagesForVulnerabilities(buildctx, packages, updateIgnoreRules, removeOutdatedRules, customOutputDir)
 }
 
 // scanSBOMForVulnerabilities scans an SBOM file for vulnerabilities and generates reports.
 // This function can be called independently of the build process to analyze a specific SBOM file.
-// It returns vulnerability statistics for the package and an error if the scan fails.
+// It returns vulnerability statistics, matches, ignored matches, vulnerability provider, and an error if the scan fails.
 // The function handles loading the vulnerability database, parsing the SBOM, finding matches,
 // and generating reports in multiple formats.
-func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile string, outputDir string) (stats *PackageVulnerabilityStats, err error) {
+func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile string, outputDir string) (stats *PackageVulnerabilityStats, matches *match.Matches, ignoredMatches []match.IgnoredMatch, vulnProvider vulnerability.Provider, err error) {
 	if !p.C.W.SBOM.Enabled {
-		return nil, xerrors.Errorf("SBOM feature is disabled, cannot scan for vulnerabilities")
+		return nil, nil, nil, nil, xerrors.Errorf("SBOM feature is disabled, cannot scan for vulnerabilities")
 	}
 
 	buildctx.Reporter.PackageBuildLog(p, false, []byte("Scanning SBOM for vulnerabilities\n"))
@@ -214,15 +243,16 @@ func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile str
 	if _, err := os.Stat(sbomFile); os.IsNotExist(err) {
 		errMsg := fmt.Sprintf("SBOM file not found: %s", sbomFile)
 		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
-		return nil, xerrors.Errorf(errMsg)
+		return nil, nil, nil, nil, xerrors.Errorf(errMsg)
 	}
 
 	// Load vulnerability database
-	vulnProvider, vulnProviderStatus, err := loadVulnerabilityDB(buildctx, p)
+	var vulnProviderStatus *vulnerability.ProviderStatus
+	vulnProvider, vulnProviderStatus, err = loadVulnerabilityDB(buildctx, p)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to load vulnerability database: %s", err)
 		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
-		return nil, xerrors.Errorf(errMsg)
+		return nil, nil, nil, nil, xerrors.Errorf(errMsg)
 	}
 	defer func() {
 		if closeErr := vulnProvider.Close(); closeErr != nil {
@@ -238,7 +268,7 @@ func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile str
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to parse SBOM: %s", err)
 		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
-		return nil, xerrors.Errorf(errMsg)
+		return nil, nil, nil, nil, xerrors.Errorf(errMsg)
 	}
 
 	buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Found packages in SBOM (count: %d)\n", len(packages)))
@@ -248,12 +278,16 @@ func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile str
 	ignoreRules = append(ignoreRules, p.SBOM.IgnoreVulnerabilities...)
 
 	// Find vulnerabilities
-	matches, ignoredMatches, err := findVulnerabilities(packages, context, vulnProvider, ignoreRules)
+	var matchesResult *match.Matches
+	var ignoredMatchesResult []match.IgnoredMatch
+	matchesResult, ignoredMatchesResult, err = findVulnerabilities(packages, context, vulnProvider, ignoreRules)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to find vulnerabilities: %s", err)
 		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
-		return nil, xerrors.Errorf(errMsg)
+		return nil, nil, nil, vulnProvider, xerrors.Errorf(errMsg)
 	}
+	matches = matchesResult
+	ignoredMatches = ignoredMatchesResult
 
 	// Count vulnerabilities by severity
 	severityCounts := make(map[string]int)
@@ -262,7 +296,7 @@ func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile str
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to get vulnerability metadata: %s", err)
 			buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
-			return nil, xerrors.Errorf(errMsg)
+			return nil, matches, ignoredMatches, vulnProvider, xerrors.Errorf(errMsg)
 		}
 
 		severity := strings.ToUpper(metadata.Severity)
@@ -301,7 +335,7 @@ func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile str
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		errMsg := fmt.Sprintf("failed to create output directory: %s", err)
 		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
-		return nil, xerrors.Errorf(errMsg)
+		return nil, matches, ignoredMatches, vulnProvider, xerrors.Errorf(errMsg)
 	}
 
 	baseFilename := p.FilesystemSafeName()
@@ -311,7 +345,7 @@ func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile str
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to write vulnerability results: %s", err)
 		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
-		return nil, xerrors.Errorf(errMsg)
+		return nil, matches, ignoredMatches, vulnProvider, xerrors.Errorf(errMsg)
 	}
 
 	// Check if build should fail based on vulnerability severity
@@ -329,14 +363,14 @@ func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile str
 			errorMsg := fmt.Sprintf("build failed due to vulnerabilities with severity levels [%s] - see vulnerability reports for details",
 				strings.Join(failedSeverities, ", "))
 			buildctx.Reporter.PackageBuildLog(p, false, []byte(errorMsg+"\n"))
-			return stats, xerrors.Errorf(errorMsg)
+			return stats, matches, ignoredMatches, vulnProvider, xerrors.Errorf(errorMsg)
 		}
 
 		buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "No vulnerabilities found at severity levels: %s\n",
 			strings.Join(p.C.W.SBOM.FailOn, ", ")))
 	}
 
-	return stats, nil
+	return stats, matches, ignoredMatches, vulnProvider, nil
 }
 
 // parseSBOMFile parses an SBOM file and returns the packages and context.
@@ -628,6 +662,226 @@ func WritePackageVulnerabilityMarkdown(outputDir string, stats []*PackageVulnera
 
 	log.Infof("Wrote vulnerability summary to %s", outputPath)
 	return nil
+}
+
+// findBuildYamlFile locates the BUILD.yaml file for a package
+func findBuildYamlFile(p *Package) (string, error) {
+	buildYamlPath := filepath.Join(p.C.Origin, "BUILD.yaml")
+	if _, err := os.Stat(buildYamlPath); err == nil {
+		return buildYamlPath, nil
+	}
+
+	return "", xerrors.Errorf("could not find BUILD.yaml for package %s", p.FullName())
+}
+
+// updateIgnoreRulesInBuildYaml updates the ignore rules in the BUILD.yaml file
+// for vulnerabilities with the specified severity levels
+func updateIgnoreRulesInBuildYaml(
+	p *Package,
+	buildYamlPath string,
+	matches *match.Matches,
+	ignoredMatches []match.IgnoredMatch,
+	vulnProvider vulnerability.Provider,
+	severityLevels []string,
+	removeOutdatedRules bool,
+) error {
+	// Read the BUILD.yaml file
+	content, err := os.ReadFile(buildYamlPath)
+	if err != nil {
+		return xerrors.Errorf("failed to read BUILD.yaml file: %w", err)
+	}
+
+	// Parse the YAML content
+	var buildYaml map[string]interface{}
+	if err := yaml.Unmarshal(content, &buildYaml); err != nil {
+		return xerrors.Errorf("failed to parse BUILD.yaml file: %w", err)
+	}
+
+	// Find the package configuration in the BUILD.yaml
+	packagesArray, ok := buildYaml["packages"].([]interface{})
+	if !ok {
+		return xerrors.Errorf("invalid BUILD.yaml format: 'packages' section not found or has wrong type")
+	}
+
+	// Find the specific package
+	var packageConfig map[string]interface{}
+	var packageName string
+	for _, pkgItem := range packagesArray {
+		pkg, ok := pkgItem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		
+		name, ok := pkg["name"].(string)
+		if !ok {
+			continue
+		}
+		
+		// The package name in BUILD.yaml might be just the last part of the full name
+		if strings.HasSuffix(p.FullName(), ":"+name) || p.Name == name {
+			packageConfig = pkg
+			packageName = name
+			break
+		}
+	}
+
+	if packageConfig == nil {
+		return xerrors.Errorf("package %s not found in BUILD.yaml", p.FullName())
+	}
+
+	// Get or create the SBOM section
+	sbom, ok := packageConfig["sbom"].(map[string]interface{})
+	if !ok {
+		sbom = make(map[string]interface{})
+		packageConfig["sbom"] = sbom
+	}
+
+	// Get or create the ignoreVulnerabilities section
+	var ignoreVulnerabilities []interface{}
+	if existingRules, ok := sbom["ignoreVulnerabilities"].([]interface{}); ok {
+		ignoreVulnerabilities = existingRules
+	}
+
+	// Create new ignore rules for vulnerabilities with the specified severity levels
+	newRules, err := createIgnoreRulesForVulnerabilities(matches, vulnProvider, severityLevels)
+	if err != nil {
+		return xerrors.Errorf("failed to create ignore rules: %w", err)
+	}
+
+	// If removeOutdatedRules is true, remove rules that no longer match any findings
+	if removeOutdatedRules {
+		// Convert existing rules to a map for easier lookup
+		existingRuleMap := make(map[string]interface{})
+		for _, rule := range ignoreVulnerabilities {
+			if ruleMap, ok := rule.(map[string]interface{}); ok {
+				if vuln, ok := ruleMap["vulnerability"].(string); ok {
+					existingRuleMap[vuln] = rule
+				}
+			}
+		}
+
+		// Create a map of all vulnerabilities (both matched and ignored)
+		allVulns := make(map[string]bool)
+		for _, m := range matches.Sorted() {
+			allVulns[m.Vulnerability.ID] = true
+		}
+		for _, m := range ignoredMatches {
+			allVulns[m.Vulnerability.ID] = true
+		}
+
+		// Keep only rules that match existing vulnerabilities
+		var updatedRules []interface{}
+		for _, rule := range ignoreVulnerabilities {
+			if ruleMap, ok := rule.(map[string]interface{}); ok {
+				if vuln, ok := ruleMap["vulnerability"].(string); ok {
+					if allVulns[vuln] {
+						updatedRules = append(updatedRules, rule)
+					} else {
+						log.Infof("Removing outdated ignore rule for %s (vulnerability no longer found)", vuln)
+					}
+				} else {
+					// Keep rules without a specific vulnerability ID
+					updatedRules = append(updatedRules, rule)
+				}
+			}
+		}
+		ignoreVulnerabilities = updatedRules
+	}
+
+	// Add new rules
+	for _, ruleMap := range newRules {
+		// Check if rule already exists
+		exists := false
+		vulnID, _ := ruleMap["vulnerability"].(string)
+		for _, existingRule := range ignoreVulnerabilities {
+			if existingRuleMap, ok := existingRule.(map[string]interface{}); ok {
+				if existingVuln, ok := existingRuleMap["vulnerability"].(string); ok && existingVuln == vulnID {
+					exists = true
+					break
+				}
+			}
+		}
+
+		if !exists {
+			ignoreVulnerabilities = append(ignoreVulnerabilities, ruleMap)
+			log.Infof("Added ignore rule for %s", vulnID)
+		}
+	}
+
+	// Update the ignoreVulnerabilities section
+	sbom["ignoreVulnerabilities"] = ignoreVulnerabilities
+
+	// Marshal the updated BUILD.yaml
+	updatedContent, err := yaml.Marshal(buildYaml)
+	if err != nil {
+		return xerrors.Errorf("failed to marshal updated BUILD.yaml: %w", err)
+	}
+
+	// Write the updated BUILD.yaml
+	if err := os.WriteFile(buildYamlPath, updatedContent, 0644); err != nil {
+		return xerrors.Errorf("failed to write updated BUILD.yaml: %w", err)
+	}
+
+	log.Infof("Updated ignore rules in %s for package %s", buildYamlPath, packageName)
+	return nil
+}
+
+// createIgnoreRulesForVulnerabilities creates ignore rules for vulnerabilities with the specified severity levels
+// and returns them directly as maps ready for YAML marshaling
+func createIgnoreRulesForVulnerabilities(matches *match.Matches, vulnProvider vulnerability.Provider, severityLevels []string) ([]map[string]interface{}, error) {
+	var rules []map[string]interface{}
+
+	// Create a map of severity levels for faster lookup
+	severityMap := make(map[string]bool)
+	for _, level := range severityLevels {
+		severityMap[level] = true
+	}
+
+	// Create ignore rules for vulnerabilities with the specified severity levels
+	for _, m := range matches.Sorted() {
+		metadata, err := vulnProvider.VulnerabilityMetadata(m.Vulnerability.Reference)
+		if err != nil {
+			return nil, xerrors.Errorf("failed to get vulnerability metadata: %w", err)
+		}
+
+		severity := strings.ToUpper(metadata.Severity)
+		if !severityMap[severity] {
+			continue
+		}
+
+		// Create a new rule map
+		ruleMap := map[string]interface{}{
+			"vulnerability": m.Vulnerability.ID,
+			"reason":        fmt.Sprintf("Added by sbom-scan command on %s\n\nVulnerability Description:\n%s", time.Now().Format("2006-01-02"), m.Vulnerability.Metadata.Description),
+		}
+
+		if m.Vulnerability.Namespace != "" {
+			ruleMap["namespace"] = m.Vulnerability.Namespace
+		}
+
+		// Add package information if available
+		pkgMap := make(map[string]interface{})
+		if m.Package.Name != "" {
+			pkgMap["name"] = m.Package.Name
+		}
+		if m.Package.Version != "" {
+			pkgMap["version"] = m.Package.Version
+		}
+		if m.Package.Language != "" {
+			pkgMap["language"] = string(m.Package.Language)
+		}
+		if m.Package.Type != "" {
+			pkgMap["type"] = string(m.Package.Type)
+		}
+
+		if len(pkgMap) > 0 {
+			ruleMap["package"] = pkgMap
+		}
+
+		rules = append(rules, ruleMap)
+	}
+
+	return rules, nil
 }
 
 // loadVulnerabilityDB initializes and loads the vulnerability database.

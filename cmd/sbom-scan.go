@@ -62,7 +62,11 @@ If no package is specified, the workspace's default target is used.`,
 			GetPackagePath(p, localCache)
 		}
 
-		if err := leeway.ScanAllPackagesForVulnerabilities(localCache, allpkg, outputDir); err != nil {
+		// Get update-ignore-rules and remove-outdated-rules flags
+		updateIgnoreRules, _ := cmd.Flags().GetString("update-ignore-rules")
+		removeOutdatedRules, _ := cmd.Flags().GetBool("remove-outdated-rules")
+
+		if err := leeway.ScanAllPackagesForVulnerabilities(localCache, allpkg, outputDir, updateIgnoreRules, removeOutdatedRules); err != nil {
 			log.WithError(err).Fatalf("Failed to scan package %s for vulnerabilities", pkg.FullName())
 		}
 
@@ -84,6 +88,8 @@ func init() {
 		log.WithError(err).Fatal("failed to mark output-dir flag as required")
 	}
 	sbomScanCmd.Flags().Bool("with-dependencies", false, "Scan the package and all its dependencies")
+	sbomScanCmd.Flags().String("update-ignore-rules", "", "Update ignore rules in BUILD.yaml for vulnerabilities with specified severity levels (comma-separated, e.g., 'critical,high')")
+	sbomScanCmd.Flags().Bool("remove-outdated-rules", false, "Remove ignore rules that no longer match any findings")
 
 	sbomCmd.AddCommand(sbomScanCmd)
 	addBuildFlags(sbomScanCmd)
