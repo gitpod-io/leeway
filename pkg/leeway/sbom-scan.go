@@ -80,6 +80,12 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 			return xerrors.Errorf(string(errMsg))
 		}
 
+		// Skip ephemeral packages as they're not meant to be cached
+		if p.Ephemeral {
+			buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Skipping vulnerability scan for ephemeral package %s\n", p.FullName())))
+			continue
+		}
+
 		location, exists := buildctx.LocalCache.Location(p)
 		if !exists {
 			errMsg := fmt.Appendf(nil, "Package %s not found in local cache, cannot scan for vulnerabilities\n", p.FullName())
