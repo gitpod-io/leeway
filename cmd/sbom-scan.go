@@ -54,7 +54,17 @@ If no package is specified, the workspace's default target is used.`,
 			deps := pkg.GetTransitiveDependencies()
 			log.Infof("Scanning SBOMs for %s and %d dependencies to %s", pkg.FullName(), len(deps), outputDir)
 
-			allpkg = append(allpkg, deps...)
+			// Skip ephemeral packages as they're not meant to be cached
+			var filteredDeps []*leeway.Package
+			for _, p := range deps {
+				if p.Ephemeral {
+					log.Infof("Skipping vulnerability scan for ephemeral package %s\n", p.FullName())
+					continue
+				}
+				filteredDeps = append(filteredDeps, p)
+			}
+
+			allpkg = append(allpkg, filteredDeps...)
 		}
 
 		// Download packages from remote cache when needed
