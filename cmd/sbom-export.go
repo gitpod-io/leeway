@@ -62,9 +62,17 @@ If no package is specified, the workspace's default target is used.`,
 		if withDependencies {
 			// Get all dependencies
 			deps := pkg.GetTransitiveDependencies()
-			log.Infof("Exporting SBOMs for %s and %d dependencies to %s", pkg.FullName(), len(deps), outputDir)
 
-			allpkg = append(allpkg, deps...)
+			// Skip ephemeral packages as they're not meant to be cached
+			for _, p := range deps {
+				if p.Ephemeral {
+					log.Infof("Skipping vulnerability scan for ephemeral package %s\n", p.FullName())
+					continue
+				}
+				allpkg = append(allpkg, p)
+			}
+
+			log.Infof("Exporting SBOMs for %s and %d dependencies to %s", pkg.FullName(), len(allpkg)-1, outputDir)
 		}
 
 		for _, p := range allpkg {
