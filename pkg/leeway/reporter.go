@@ -36,9 +36,9 @@ type Reporter interface {
 	// The root package will also be passed into PackageBuildFinished once it's been built.
 	BuildFinished(pkg *Package, err error)
 
-	// PackageBuildStarted is called when a package build actually gets underway. At this point
+		// PackageBuildStarted is called when a package build actually gets underway. At this point
 	// all transitive dependencies of the package have been built.
-	PackageBuildStarted(pkg *Package)
+	PackageBuildStarted(pkg *Package, builddir string)
 
 	// PackageBuildLog is called during a package build whenever a build command produced some output.
 	PackageBuildLog(pkg *Package, isErr bool, buf []byte)
@@ -188,7 +188,7 @@ func (r *ConsoleReporter) BuildFinished(pkg *Package, err error) {
 }
 
 // PackageBuildStarted is called when a package build actually gets underway.
-func (r *ConsoleReporter) PackageBuildStarted(pkg *Package) {
+func (r *ConsoleReporter) PackageBuildStarted(pkg *Package, builddir string) {
 	out := r.getWriter(pkg)
 
 	version, err := pkg.Version()
@@ -200,7 +200,7 @@ func (r *ConsoleReporter) PackageBuildStarted(pkg *Package) {
 	r.times[pkg.FullName()] = r.now()
 	r.mu.Unlock()
 
-	_, _ = io.WriteString(out, color.Sprintf("<fg=yellow>build started</> <gray>(version %s)</>\n", version))
+	_, _ = io.WriteString(out, color.Sprintf("<fg=yellow>build started</> <gray>(version %s, builddir %s)</>\n", version, builddir))
 }
 
 // PackageBuildLog is called during a package build whenever a build command produced some output.
@@ -403,7 +403,7 @@ func (r *HTMLReporter) BuildFinished(pkg *Package, err error) {
 	r.Report()
 }
 
-func (r *HTMLReporter) PackageBuildStarted(pkg *Package) {
+func (r *HTMLReporter) PackageBuildStarted(pkg *Package, builddir string) {
 	rep := r.getReport(pkg)
 	rep.start = time.Now()
 	rep.status = PackageBuilding
@@ -529,9 +529,9 @@ func (cr CompositeReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte
 }
 
 // PackageBuildStarted implements Reporter
-func (cr CompositeReporter) PackageBuildStarted(pkg *Package) {
+func (cr CompositeReporter) PackageBuildStarted(pkg *Package, builddir string) {
 	for _, r := range cr {
-		r.PackageBuildStarted(pkg)
+		r.PackageBuildStarted(pkg, builddir)
 	}
 }
 
@@ -552,7 +552,7 @@ func (*NoopReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildReport)
 func (*NoopReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {}
 
 // PackageBuildStarted implements Reporter
-func (*NoopReporter) PackageBuildStarted(pkg *Package) {}
+func (*NoopReporter) PackageBuildStarted(pkg *Package, builddir string) {}
 
 var _ Reporter = ((*NoopReporter)(nil))
 

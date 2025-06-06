@@ -667,15 +667,6 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	}
 	pkgRep.phaseEnter[PackageBuildPhasePrep] = time.Now()
 
-	// Notify reporter that package build is starting
-	buildctx.Reporter.PackageBuildStarted(p)
-
-	// Ensure we notify reporter when build finishes
-	defer func() {
-		pkgRep.Error = err
-		buildctx.Reporter.PackageBuildFinished(p, pkgRep)
-	}()
-
 	// Prepare build directory
 	builddir, err := createBuildDir(buildctx, p)
 	if err != nil {
@@ -687,7 +678,14 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		os.RemoveAll(builddir)
 	}()
 
-	log.WithField("package", p.FullName()).WithField("builddir", builddir).Info("using build directory")
+	// Notify reporter that package build is starting
+	buildctx.Reporter.PackageBuildStarted(p, builddir)
+
+	// Ensure we notify reporter when build finishes
+	defer func() {
+		pkgRep.Error = err
+		buildctx.Reporter.PackageBuildFinished(p, pkgRep)
+	}()
 	if err := prepareDirectory(builddir); err != nil {
 		return err
 	}
