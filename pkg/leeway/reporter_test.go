@@ -33,9 +33,9 @@ func TestConsoleReporter(t *testing.T) {
 		Expect   Expectation
 	}{
 		{
-			Name: "all phases",
+						Name: "all phases",
 			Func: func(t *testing.T, r *ConsoleReporter) {
-				r.PackageBuildStarted(pkg)
+				r.PackageBuildStarted(pkg, "/tmp/build")
 
 				r.now = func() time.Time {
 					return start.Add(5 * time.Second)
@@ -64,7 +64,7 @@ func TestConsoleReporter(t *testing.T) {
 				})
 			},
 			Expect: Expectation{
-				Output: `[test:test] build started (version unknown)
+				Output: `[test:test] build started (version unknown, builddir /tmp/build)
 [test:test] package build succeeded (5.00s) [prep: 1.0s | pull: 1.0s | lint: 1.0s | test: 1.0s | build: 1.0s]
 `,
 			},
@@ -72,13 +72,13 @@ func TestConsoleReporter(t *testing.T) {
 		{
 			Name: "no phases",
 			Func: func(t *testing.T, r *ConsoleReporter) {
-				r.PackageBuildStarted(pkg)
+				r.PackageBuildStarted(pkg, "/tmp/build")
 				r.PackageBuildFinished(pkg, &PackageBuildReport{
 					Phases: []PackageBuildPhase{},
 				})
 			},
 			Expect: Expectation{
-				Output: `[test:test] build started (version unknown)
+				Output: `[test:test] build started (version unknown, builddir /tmp/build)
 [test:test] package build succeeded (0.00s)
 `,
 			},
@@ -86,13 +86,13 @@ func TestConsoleReporter(t *testing.T) {
 		{
 			Name: "failed build",
 			Func: func(t *testing.T, r *ConsoleReporter) {
-				r.PackageBuildStarted(pkg)
+				r.PackageBuildStarted(pkg, "/tmp/build")
 				r.PackageBuildFinished(pkg, &PackageBuildReport{
 					Error: errors.New("failed"),
 				})
 			},
 			Expect: Expectation{
-				Output: `[test:test] build started (version unknown)
+				Output: `[test:test] build started (version unknown, builddir /tmp/build)
 [test:test] package build failed while preping
 [test:test] Reason: failed
 `,
