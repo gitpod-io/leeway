@@ -8,3 +8,6 @@ RUN bash -c 'set -euo pipefail && \
     tar -xzf /tmp/leeway.tar.gz -C /tmp && \
     install -m 755 /tmp/leeway /usr/local/bin/ && \
     rm /tmp/leeway.tar.gz /tmp/leeway'
+
+# Install claude-code globally
+RUN npm i -g @anthropic-ai/claude-code
