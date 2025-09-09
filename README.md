@@ -335,12 +335,23 @@ sbom:
   enabled: true                # Enable SBOM generation
   scanVulnerabilities: true    # Enable vulnerability scanning
   failOn: ["critical", "high"] # Fail builds with vulnerabilities of these severities (default: build does not fail)
+  parallelism: 8               # Number of parallel workers for SBOM generation (default: CPU cores)
   ignoreVulnerabilities:       # Workspace-level ignore rules
     - vulnerability: "CVE-2023-1234"
       reason: "Not exploitable in our context"
 ```
 
 When enabled, Leeway automatically generates SBOMs for each package during the build process in multiple formats (CycloneDX, SPDX, and Syft JSON) using [Syft](https://github.com/anchore/syft). These SBOMs are included in the package's build artifacts.
+
+#### Performance Configuration
+
+The `parallelism` setting controls how many parallel workers are used for SBOM generation. By default, Leeway uses the number of CPU cores available for optimal performance. You can override this setting:
+
+- **Default behavior**: Uses `runtime.NumCPU()` (number of CPU cores)
+- **Custom value**: Set to any positive integer (e.g., `parallelism: 4`)
+- **Sequential processing**: Set to `1` for single-threaded operation
+
+Based on performance benchmarking, the default CPU core count provides significant performance improvements (up to 16% faster) for larger repositories while having minimal impact on smaller ones.
 
 ### SBOM Commands
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"slices"
@@ -53,6 +54,7 @@ type WorkspaceSBOM struct {
 	ScanVulnerabilities   bool         `yaml:"scanVulnerabilities"`
 	FailOn                []string     `yaml:"failOn,omitempty"`                // e.g., ["CRITICAL", "HIGH"]
 	IgnoreVulnerabilities []IgnoreRule `yaml:"ignoreVulnerabilities,omitempty"` // Workspace-level ignore rules
+	Parallelism           *int         `yaml:"parallelism,omitempty"`           // Number of parallel workers for SBOM generation (default: CPU cores)
 }
 
 // PackageSBOM configures SBOM generation for a package
@@ -83,6 +85,17 @@ type IgnoreRulePackage = match.IgnoreRulePackage
 // - match-type: The type of match to ignore (e.g., "exact-direct-dependency")
 type IgnoreRule = match.IgnoreRule
 
+// GetSBOMParallelism returns the effective parallelism setting for SBOM generation.
+// If not explicitly configured or set to 0, defaults to the number of CPU cores for optimal performance.
+func GetSBOMParallelism(sbomConfig WorkspaceSBOM) int {
+	if sbomConfig.Parallelism != nil && *sbomConfig.Parallelism > 0 {
+		return *sbomConfig.Parallelism
+	}
+	// Default to CPU core count for optimal performance based on benchmarking
+	// This applies when parallelism is nil, 0, or negative
+	return runtime.NumCPU()
+}
+
 // writeSBOM generates Software Bill of Materials (SBOM) for a package in multiple formats.
 // This function is called during the build process to create SBOMs that are included in
 // the package's build artifacts. It supports different source types based on the package type
@@ -93,6 +106,10 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 	}
 
 	cfg := syft.DefaultCreateSBOMConfig()
+	
+	// Configure parallelism - default to CPU core count for optimal performance
+	parallelism := GetSBOMParallelism(p.C.W.SBOM)
+	cfg = cfg.WithParallelism(parallelism)
 
 	// Get the appropriate source based on package type
 	var src source.Source
