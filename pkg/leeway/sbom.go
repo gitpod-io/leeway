@@ -86,16 +86,13 @@ type IgnoreRulePackage = match.IgnoreRulePackage
 type IgnoreRule = match.IgnoreRule
 
 // GetSBOMParallelism returns the effective parallelism setting for SBOM generation.
-// If not explicitly configured, defaults to the number of CPU cores for optimal performance.
+// If not explicitly configured or set to 0, defaults to the number of CPU cores for optimal performance.
 func GetSBOMParallelism(sbomConfig WorkspaceSBOM) int {
-	if sbomConfig.Parallelism != nil {
-		// Ensure minimum of 1 to avoid invalid configurations
-		if *sbomConfig.Parallelism < 1 {
-			return 1
-		}
+	if sbomConfig.Parallelism != nil && *sbomConfig.Parallelism > 0 {
 		return *sbomConfig.Parallelism
 	}
 	// Default to CPU core count for optimal performance based on benchmarking
+	// This applies when parallelism is nil, 0, or negative
 	return runtime.NumCPU()
 }
 
@@ -113,8 +110,6 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 	// Configure parallelism - default to CPU core count for optimal performance
 	parallelism := GetSBOMParallelism(p.C.W.SBOM)
 	cfg = cfg.WithParallelism(parallelism)
-	
-	buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Using SBOM parallelism: %d (CPU cores: %d)\n", parallelism, runtime.NumCPU()))
 
 	// Get the appropriate source based on package type
 	var src source.Source
