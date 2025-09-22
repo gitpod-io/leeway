@@ -727,7 +727,7 @@ func (s *S3Cache) downloadBothParallel(ctx context.Context, artifactKey, attesta
 		case <-ctx.Done():
 			// Context cancelled, clean up with race protection
 			s.cleanupMu.Lock()
-			os.Remove(artifactPath)
+			_ = os.Remove(artifactPath) // Ignore error during cleanup
 			s.cleanupMu.Unlock()
 		}
 	}()
@@ -770,7 +770,7 @@ func (s *S3Cache) downloadBothParallel(ctx context.Context, artifactKey, attesta
 		case <-ctx.Done():
 			// Context cancelled, clean up with race protection
 			s.cleanupMu.Lock()
-			os.Remove(attestationPath)
+			_ = os.Remove(attestationPath) // Ignore error during cleanup
 			s.cleanupMu.Unlock()
 		}
 	}()
@@ -1027,13 +1027,13 @@ func (s *S3Storage) GetObject(ctx context.Context, key string, dest string) (int
 	if err != nil {
 		return 0, fmt.Errorf("failed to create destination file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }() // Ignore error on close
 
 	// Set up cleanup in case of error
 	var downloadErr error
 	defer func() {
 		if downloadErr != nil {
-			os.Remove(dest)
+			_ = os.Remove(dest) // Ignore error during cleanup
 		}
 	}()
 
@@ -1074,7 +1074,7 @@ func (s *S3Storage) UploadObject(ctx context.Context, key string, src string) er
 		log.WithError(err).WithField("key", key).Warn("failed to open source file for upload")
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }() // Ignore error on close
 
 	uploader := manager.NewUploader(s.client, func(u *manager.Uploader) {
 		u.PartSize = defaultS3PartSize

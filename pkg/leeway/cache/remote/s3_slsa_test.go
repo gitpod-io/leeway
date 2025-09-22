@@ -112,10 +112,7 @@ func createValidAttestation(t *testing.T) []byte {
 	}`)
 }
 
-// createInvalidAttestation creates an invalid attestation for testing failure cases
-func createInvalidAttestation(t *testing.T) []byte {
-	return []byte(`{"invalid": "attestation"}`)
-}
+
 
 func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 	tests := []struct {
