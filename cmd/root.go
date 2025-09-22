@@ -24,6 +24,12 @@ const (
 
 	// EnvvarRemoteCacheStorage configures a Remote Storage Provider. Default is GCP
 	EnvvarRemoteCacheStorage = "LEEWAY_REMOTE_CACHE_STORAGE"
+
+	// EnvvarSLSACacheVerification enables SLSA verification for cached artifacts
+	EnvvarSLSACacheVerification = "LEEWAY_SLSA_CACHE_VERIFICATION"
+
+	// EnvvarSLSASourceURI configures the expected source URI for SLSA verification
+	EnvvarSLSASourceURI = "LEEWAY_SLSA_SOURCE_URI"
 )
 
 const (
@@ -79,19 +85,21 @@ var rootCmd = &cobra.Command{
 <white>Configuration</>
 Leeway is configured exclusively through the WORKSPACE/BUILD files and environment variables. The following environment
 variables have an effect on leeway:
-       <light_blue>LEEWAY_WORKSPACE_ROOT</>  Contains the path where to look for a WORKSPACE file. Can also be set using --workspace.
- <light_blue>LEEWAY_REMOTE_CACHE_STORAGE</>  Defines the remote caching storage provider. Valid values are "GCP" and "AWS". Defaults to "GCP".
-  <light_blue>LEEWAY_REMOTE_CACHE_BUCKET</>  Enables remote caching using GCP or S3 buckets. Required credentials depend on the storage provider:
-                             - GCP: leeway expects "gsutil" in the path configured and authenticated so that it can work with the bucket.
-                             - AWS: leeway expects that AWS credentials have been provided and with read/write access to the S3 bucket.
-                               For details on configuring AWS credentials see https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
-            <light_blue>LEEWAY_CACHE_DIR</>  Location of the local build cache. The directory does not have to exist yet.
-            <light_blue>LEEWAY_BUILD_DIR</>  Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O
-                              which makes it advisable to place this on a fast SSD or in RAM.
-           <light_blue>LEEWAY_YARN_MUTEX</>  Configures the mutex flag leeway will pass to yarn. Defaults to "network".
-                              See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
-  <light_blue>LEEWAY_DEFAULT_CACHE_LEVEL</>  Sets the default cache level for builds. Defaults to "remote".
-         <light_blue>LEEWAY_EXPERIMENTAL</>  Enables experimental leeway features and commands.
+         <light_blue>LEEWAY_WORKSPACE_ROOT</>  Contains the path where to look for a WORKSPACE file. Can also be set using --workspace.
+   <light_blue>LEEWAY_REMOTE_CACHE_STORAGE</>  Defines the remote caching storage provider. Valid values are "GCP" and "AWS". Defaults to "GCP".
+    <light_blue>LEEWAY_REMOTE_CACHE_BUCKET</>  Enables remote caching using GCP or S3 buckets. Required credentials depend on the storage provider:
+                               - GCP: leeway expects "gsutil" in the path configured and authenticated so that it can work with the bucket.
+                               - AWS: leeway expects that AWS credentials have been provided and with read/write access to the S3 bucket.
+                                 For details on configuring AWS credentials see https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
+              <light_blue>LEEWAY_CACHE_DIR</>  Location of the local build cache. The directory does not have to exist yet.
+              <light_blue>LEEWAY_BUILD_DIR</>  Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O
+                                which makes it advisable to place this on a fast SSD or in RAM.
+             <light_blue>LEEWAY_YARN_MUTEX</>  Configures the mutex flag leeway will pass to yarn. Defaults to "network".
+                                See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
+    <light_blue>LEEWAY_DEFAULT_CACHE_LEVEL</>  Sets the default cache level for builds. Defaults to "remote".
+<light_blue>LEEWAY_SLSA_CACHE_VERIFICATION</>  Enables SLSA verification for cached artifacts (true/false).
+        <light_blue>LEEWAY_SLSA_SOURCE_URI</>  Expected source URI for SLSA verification (github.com/owner/repo).
+           <light_blue>LEEWAY_EXPERIMENTAL</>  Enables experimental leeway features and commands.
 `),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if verbose {
