@@ -165,7 +165,7 @@ func GetPackagePath(pkg *leeway.Package, localCache cache.LocalCache) (packagePa
 		// Package not found in local cache, check if it's in the remote cache
 		log.Debugf("Package %s not found in local cache, checking remote cache", pkg.FullName())
 
-		remoteCache := getRemoteCache()
+		remoteCache := getRemoteCacheFromEnv()
 		remoteCache = &pullOnlyRemoteCache{C: remoteCache}
 
 		// Convert to cache.Package interface
