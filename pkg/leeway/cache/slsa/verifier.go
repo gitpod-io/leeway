@@ -11,6 +11,11 @@ import (
 	"github.com/slsa-framework/slsa-verifier/v2/options"
 )
 
+// VerifierInterface defines the interface for SLSA verification
+type VerifierInterface interface {
+	VerifyArtifact(ctx context.Context, artifactPath, attestationPath string) error
+}
+
 // Verifier handles SLSA attestation verification using Go API
 type Verifier struct {
 	sourceURI    string
