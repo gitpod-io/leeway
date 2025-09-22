@@ -183,6 +183,8 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().String("coverage-output-path", "", "Output path where test coverage file will be copied after running tests")
 	cmd.Flags().Bool("disable-coverage", false, "Disable test coverage collection (defaults to false)")
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
+	cmd.Flags().Bool("slsa-cache-verification", false, "Enable SLSA verification for cached artifacts")
+	cmd.Flags().String("slsa-source-uri", "", "Expected source URI for SLSA verification (required when verification enabled)")
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
 	cmd.Flags().String("report-segment", os.Getenv("LEEWAY_SEGMENT_KEY"), "Report build events to segment using the segment key (defaults to $LEEWAY_SEGMENT_KEY)")
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
@@ -194,7 +196,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 	log.WithField("cacheMode", cm).Debug("configuring caches")
 	cacheLevel := leeway.CacheLevel(cm)
 
-	remoteCache := getRemoteCache()
+	remoteCache := getRemoteCache(cmd)
 	switch cacheLevel {
 	case leeway.CacheNone, leeway.CacheLocal:
 		remoteCache = remote.NewNoRemoteCache()
@@ -365,34 +367,67 @@ func (c *pullOnlyRemoteCache) Upload(ctx context.Context, src cache.LocalCache, 
 	return nil
 }
 
-func getRemoteCache() cache.RemoteCache {
+func getRemoteCacheFromEnv() cache.RemoteCache {
+	return getRemoteCache(nil)
+}
+
+func getRemoteCache(cmd *cobra.Command) cache.RemoteCache {
 	remoteCacheBucket := os.Getenv(EnvvarRemoteCacheBucket)
 	remoteStorage := os.Getenv(EnvvarRemoteCacheStorage)
+	
+	// Get SLSA verification settings from environment variables (defaults)
+	slsaVerificationEnabled := os.Getenv(EnvvarSLSACacheVerification) == "true"
+	slsaSourceURI := os.Getenv(EnvvarSLSASourceURI)
+	
+	// CLI flags override environment variables (if cmd is provided)
+	if cmd != nil {
+		if cmd.Flags().Changed("slsa-cache-verification") {
+			if flagValue, err := cmd.Flags().GetBool("slsa-cache-verification"); err == nil {
+				slsaVerificationEnabled = flagValue
+			}
+		}
+		if cmd.Flags().Changed("slsa-source-uri") {
+			if flagValue, err := cmd.Flags().GetString("slsa-source-uri"); err == nil && flagValue != "" {
+				slsaSourceURI = flagValue
+			}
+		}
+	}
+	
+	// CONDITIONAL VALIDATION - Follow existing Leeway pattern
+	if slsaVerificationEnabled && slsaSourceURI == "" {
+		log.Fatal("--slsa-source-uri is required when using --slsa-cache-verification")
+	}
+	
 	if remoteCacheBucket != "" {
+		config := &cache.RemoteConfig{
+			BucketName:        remoteCacheBucket,
+			SLSAVerification:  slsaVerificationEnabled,
+			SourceURI:         slsaSourceURI,
+			TrustedRoots: []string{
+				"https://fulcio.sigstore.dev",
+			},
+		}
+		
 		switch remoteStorage {
 		case "GCP":
-			return remote.NewGSUtilCache(
-				&cache.RemoteConfig{
-					BucketName: remoteCacheBucket,
-				},
-			)
+			if slsaVerificationEnabled {
+				log.Warn("SLSA verification not yet supported with GCP storage, verification disabled")
+				config.SLSAVerification = false
+			}
+			return remote.NewGSUtilCache(config)
 		case "AWS":
-			rc, err := remote.NewS3Cache(
-				&cache.RemoteConfig{
-					BucketName: remoteCacheBucket,
-				},
-			)
+			// AWS supports SLSA verification
+			rc, err := remote.NewS3Cache(config)
 			if err != nil {
 				log.Fatalf("cannot access remote S3 cache: %v", err)
 			}
-
 			return rc
 		default:
-			return remote.NewGSUtilCache(
-				&cache.RemoteConfig{
-					BucketName: remoteCacheBucket,
-				},
-			)
+			if slsaVerificationEnabled {
+				log.Warn("SLSA verification not yet supported with GCP storage, verification disabled")
+				config.SLSAVerification = false
+			}
+			return remote.NewGSUtilCache(config)
 		}
 	}
 
