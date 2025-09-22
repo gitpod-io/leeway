@@ -66,4 +66,16 @@ type RemoteConfig struct {
 
 	// Endpoint for the remote service
 	Endpoint string
+
+	// SLSAVerification enables SLSA verification for cached artifacts
+	SLSAVerification bool `yaml:"slsa_verification" json:"slsa_verification"`
+
+	// TrustedRoots contains the trusted root certificates for SLSA verification
+	TrustedRoots []string `yaml:"trusted_roots" json:"trusted_roots"`
+
+	// RequireAttestation determines if attestations are required (fail if missing)
+	RequireAttestation bool `yaml:"require_attestation" json:"require_attestation"`
+
+	// SourceURI is the expected source URI for SLSA verification
+	SourceURI string `yaml:"source_uri" json:"source_uri"`
 }
