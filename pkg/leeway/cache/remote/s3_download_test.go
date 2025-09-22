@@ -12,6 +12,7 @@ import (
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache/local"
 	"github.com/google/go-cmp/cmp"
+	"golang.org/x/time/rate"
 )
 
 // s3TestPackage for testing S3 download functionality
@@ -175,6 +176,8 @@ func TestS3CacheDownload(t *testing.T) {
 			s3Cache := &S3Cache{
 				storage:     mockStorage,
 				workerCount: 1,
+				rateLimiter: rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:   make(chan struct{}, maxConcurrentOperations),
 			}
 
 			err := s3Cache.Download(context.Background(), localCache, tt.packages)
