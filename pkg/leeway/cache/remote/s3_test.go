@@ -18,6 +18,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/google/go-cmp/cmp"
+	"golang.org/x/time/rate"
 )
 
 // mockS3Client implements a mock S3 client for testing
@@ -149,6 +150,8 @@ func TestS3Cache_ExistingPackages(t *testing.T) {
 					bucketName: "test-bucket",
 				},
 				workerCount: 1,
+				rateLimiter: rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:   make(chan struct{}, maxConcurrentOperations),
 			}
 
 			results, err := s3Cache.ExistingPackages(ctx, tt.packages)
@@ -291,6 +294,8 @@ func TestS3Cache_Download(t *testing.T) {
 					bucketName: "test-bucket",
 				},
 				workerCount: 1,
+				rateLimiter: rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:   make(chan struct{}, maxConcurrentOperations),
 			}
 
 			err := s3Cache.Download(ctx, tt.localCache, tt.packages)
@@ -420,6 +425,8 @@ func TestS3Cache_Upload(t *testing.T) {
 					bucketName: "test-bucket",
 				},
 				workerCount: 1,
+				rateLimiter: rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:   make(chan struct{}, maxConcurrentOperations),
 			}
 
 			err := s3Cache.Upload(ctx, tt.localCache, tt.packages)
