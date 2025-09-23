@@ -371,10 +371,8 @@ func getRemoteCacheFromEnv() cache.RemoteCache {
 	return getRemoteCache(nil)
 }
 
-func getRemoteCache(cmd *cobra.Command) cache.RemoteCache {
-	remoteCacheBucket := os.Getenv(EnvvarRemoteCacheBucket)
-	remoteStorage := os.Getenv(EnvvarRemoteCacheStorage)
-	
+// parseSLSAConfig parses SLSA configuration from CLI flags and environment variables
+func parseSLSAConfig(cmd *cobra.Command) (*cache.SLSAConfig, error) {
 	// Get SLSA verification settings from environment variables (defaults)
 	slsaVerificationEnabled := os.Getenv(EnvvarSLSACacheVerification) == "true"
 	slsaSourceURI := os.Getenv(EnvvarSLSASourceURI)
@@ -393,26 +391,45 @@ func getRemoteCache(cmd *cobra.Command) cache.RemoteCache {
 		}
 	}
 	
-	// CONDITIONAL VALIDATION - Follow existing Leeway pattern
-	if slsaVerificationEnabled && slsaSourceURI == "" {
-		log.Fatal("--slsa-source-uri is required when using --slsa-cache-verification")
+	// If verification is disabled, return nil
+	if !slsaVerificationEnabled {
+		return nil, nil
+	}
+	
+	// Validation: source URI is required when verification is enabled
+	if slsaSourceURI == "" {
+		return nil, fmt.Errorf("--slsa-source-uri is required when using --slsa-cache-verification")
+	}
+	
+	return &cache.SLSAConfig{
+		Verification:       true,
+		SourceURI:          slsaSourceURI,
+		TrustedRoots:       []string{"https://fulcio.sigstore.dev"},
+		RequireAttestation: false, // Default: missing attestation → download without verification
+	}, nil
+}
+
+func getRemoteCache(cmd *cobra.Command) cache.RemoteCache {
+	remoteCacheBucket := os.Getenv(EnvvarRemoteCacheBucket)
+	remoteStorage := os.Getenv(EnvvarRemoteCacheStorage)
+	
+	// Parse SLSA configuration
+	slsaConfig, err := parseSLSAConfig(cmd)
+	if err != nil {
+		log.Fatalf("SLSA configuration error: %v", err)
 	}
 	
 	if remoteCacheBucket != "" {
 		config := &cache.RemoteConfig{
-			BucketName:        remoteCacheBucket,
-			SLSAVerification:  slsaVerificationEnabled,
-			SourceURI:         slsaSourceURI,
-			TrustedRoots: []string{
-				"https://fulcio.sigstore.dev",
-			},
+			BucketName: remoteCacheBucket,
+			SLSA:       slsaConfig,
 		}
 		
 		switch remoteStorage {
 		case "GCP":
-			if slsaVerificationEnabled {
+			if slsaConfig != nil && slsaConfig.Verification {
 				log.Warn("SLSA verification not yet supported with GCP storage, verification disabled")
-				config.SLSAVerification = false
+				config.SLSA = nil
 			}
 			return remote.NewGSUtilCache(config)
 		case "AWS":
@@ -423,9 +440,9 @@ func getRemoteCache(cmd *cobra.Command) cache.RemoteCache {
 			}
 			return rc
 		default:
-			if slsaVerificationEnabled {
+			if slsaConfig != nil && slsaConfig.Verification {
 				log.Warn("SLSA verification not yet supported with GCP storage, verification disabled")
-				config.SLSAVerification = false
+				config.SLSA = nil
 			}
 			return remote.NewGSUtilCache(config)
 		}
