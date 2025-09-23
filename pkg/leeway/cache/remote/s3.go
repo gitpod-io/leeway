@@ -38,6 +38,12 @@ const (
 	maxConcurrentOperations = 50
 )
 
+// downloadResult represents the result of a download operation with proper error attribution
+type downloadResult struct {
+	err  error
+	kind string // "artifact" or "attestation"
+}
+
 // S3Config holds the configuration for S3Cache
 type S3Config struct {
 	BucketName  string
@@ -693,13 +699,16 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 }
 
 // downloadFileAsync downloads a single file asynchronously with proper concurrency control
-func (s *S3Cache) downloadFileAsync(ctx context.Context, key, localPath string, 
-	wg *sync.WaitGroup, errChan chan<- error) {
+func (s *S3Cache) downloadFileAsync(ctx context.Context, key, localPath, kind string, 
+	wg *sync.WaitGroup, resultChan chan<- downloadResult) {
 	defer wg.Done()
 	
 	// Acquire semaphore for concurrency control
 	if err := s.acquireSemaphore(ctx); err != nil {
-		errChan <- fmt.Errorf("semaphore acquire failed for %s: %w", key, err)
+		resultChan <- downloadResult{
+			err:  fmt.Errorf("semaphore acquire failed for %s: %w", key, err),
+			kind: kind,
+		}
 		return
 	}
 	defer s.releaseSemaphore()
@@ -723,60 +732,80 @@ func (s *S3Cache) downloadFileAsync(ctx context.Context, key, localPath string,
 		}
 	})
 	
+	// NEW: Structured result reporting
 	if err != nil {
 		// Clean up on error with race protection
 		s.cleanupMu.Lock()
 		_ = os.Remove(localPath) // Ignore error during cleanup
 		s.cleanupMu.Unlock()
-		errChan <- fmt.Errorf("failed to download %s: %w", key, err)
+		resultChan <- downloadResult{
+			err:  fmt.Errorf("failed to download %s: %w", key, err),
+			kind: kind,
+		}
+	} else {
+		resultChan <- downloadResult{
+			err:  nil,
+			kind: kind,
+		}
 	}
 }
 
 // downloadBothParallel downloads artifact and attestation in parallel with context awareness
 func (s *S3Cache) downloadBothParallel(ctx context.Context, artifactKey, attestationKey, artifactPath, attestationPath string) (error, error) {
+	resultChan := make(chan downloadResult, 2)
 	var wg sync.WaitGroup
-	errChan := make(chan error, 2)
 	
 	// Download artifact
 	wg.Add(1)
-	go s.downloadFileAsync(ctx, artifactKey, artifactPath, &wg, errChan)
+	go s.downloadFileAsync(ctx, artifactKey, artifactPath, "artifact", &wg, resultChan)
 	
 	// Download attestation  
 	wg.Add(1)
-	go s.downloadFileAsync(ctx, attestationKey, attestationPath, &wg, errChan)
+	go s.downloadFileAsync(ctx, attestationKey, attestationPath, "attestation", &wg, resultChan)
 	
-	// Wait for completion
-	done := make(chan struct{})
+	// Wait and close channel when done
 	go func() {
 		wg.Wait()
-		close(done)
+		close(resultChan)
 	}()
-
-	select {
-	case <-done:
-		// All downloads completed
-	case <-ctx.Done():
-		// Context cancelled, cleanup
-		s.cleanupTempFiles(artifactPath, attestationPath)
-		return ctx.Err(), ctx.Err()
-	}
-
-	// Collect errors
-	var artifactErr, attestationErr error
-	close(errChan)
 	
-	// Process errors from channel
-	for err := range errChan {
-		if err != nil {
-			// Determine which download failed based on error message
-			if strings.Contains(err.Error(), artifactKey) {
-				artifactErr = err
-			} else {
-				attestationErr = err
+	var artifactErr, attestationErr error
+	var resultsCollected int
+	
+	// Collect results with proper context handling
+	for resultsCollected < 2 {
+		select {
+		case result, ok := <-resultChan:
+			if !ok {
+				// Channel closed, all results collected
+				break
 			}
+			resultsCollected++
+			switch result.kind {
+			case "artifact":
+				artifactErr = result.err
+			case "attestation":
+				attestationErr = result.err
+			}
+			
+		case <-ctx.Done():
+			// Context cancelled - provide specific errors based on what we know
+			ctxErr := ctx.Err()
+			
+			// Set errors for operations that haven't completed
+			if resultsCollected < 2 {
+				if artifactErr == nil {
+					artifactErr = fmt.Errorf("artifact download cancelled: %w", ctxErr)
+				}
+				if attestationErr == nil {
+					attestationErr = fmt.Errorf("attestation download cancelled: %w", ctxErr)
+				}
+			}
+			
+			return artifactErr, attestationErr
 		}
 	}
-
+	
 	return artifactErr, attestationErr
 }
 
