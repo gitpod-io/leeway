@@ -112,7 +112,37 @@ func createValidAttestation(t *testing.T) []byte {
 	}`)
 }
 
+// createTestConfig creates a test configuration with optional SLSA settings
+func createTestConfig(slsaEnabled bool) *cache.RemoteConfig {
+	var slsaConfig *cache.SLSAConfig
+	if slsaEnabled {
+		slsaConfig = &cache.SLSAConfig{
+			Verification:       true,
+			SourceURI:          "github.com/gitpod-io/gitpod-next",
+			TrustedRoots:       []string{"https://fulcio.sigstore.dev"},
+			RequireAttestation: false,
+		}
+	}
+	
+	return &cache.RemoteConfig{
+		BucketName: "test-bucket",
+		SLSA:       slsaConfig,
+	}
+}
 
+// createTestConfigWithRequiredAttestation creates a test configuration with required attestation.
+// When RequireAttestation=true: missing attestation → skip download, allow local build fallback
+func createTestConfigWithRequiredAttestation() *cache.RemoteConfig {
+	return &cache.RemoteConfig{
+		BucketName: "test-bucket",
+		SLSA: &cache.SLSAConfig{
+			Verification:       true,
+			SourceURI:          "github.com/gitpod-io/gitpod-next",
+			TrustedRoots:       []string{"https://fulcio.sigstore.dev"},
+			RequireAttestation: true,
+		},
+	}
+}
 
 func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 	tests := []struct {
@@ -127,14 +157,8 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 		expectedLogContains string
 	}{
 		{
-			name: "successful SLSA verification",
-			config: cache.RemoteConfig{
-				BucketName:         "test-bucket",
-				SLSAVerification:   true,
-				RequireAttestation: false,
-				SourceURI:          "github.com/gitpod-io/gitpod-next",
-				TrustedRoots:       []string{"https://fulcio.sigstore.dev"},
-			},
+			name:   "successful SLSA verification",
+			config: *createTestConfig(true),
 			mockObjects: map[string][]byte{
 				"v1.tar.gz":     createValidArtifact(t),
 				"v1.tar.gz.att": createValidAttestation(t),
@@ -146,13 +170,8 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 			expectVerification: true,
 		},
 		{
-			name: "missing attestation with requirement disabled",
-			config: cache.RemoteConfig{
-				BucketName:         "test-bucket",
-				SLSAVerification:   true,
-				RequireAttestation: false,
-				SourceURI:          "github.com/gitpod-io/gitpod-next",
-			},
+			name:   "missing attestation with requirement disabled",
+			config: *createTestConfig(true),
 			mockObjects: map[string][]byte{
 				"v1.tar.gz": createValidArtifact(t),
 				// No attestation file
@@ -165,30 +184,23 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 			expectedLogContains: "downloading without verification",
 		},
 		{
-			name: "missing attestation with requirement enabled",
-			config: cache.RemoteConfig{
-				BucketName:         "test-bucket",
-				SLSAVerification:   true,
-				RequireAttestation: true,
-				SourceURI:          "github.com/gitpod-io/gitpod-next",
-			},
+			name:   "missing attestation with requirement enabled",
+			config: *createTestConfigWithRequiredAttestation(),
 			mockObjects: map[string][]byte{
 				"v1.tar.gz": createValidArtifact(t),
-				// No attestation file
+				// No attestation file - this triggers RequireAttestation=true behavior
 			},
 			packages: []cache.Package{
 				&mockPackage{version: "v1"},
 			},
-			expectDownload:      false, // Should fallback to local build
-			expectFallback:      true,
+			// DOCUMENTED BEHAVIOR: RequireAttestation=true + missing attestation → skip download, allow local build fallback
+			expectDownload:      false, // No files downloaded when attestation required but missing
+			expectFallback:      true,  // Function returns nil to allow local build
 			expectedLogContains: "will build locally",
 		},
 		{
-			name: "verification disabled - uses original path",
-			config: cache.RemoteConfig{
-				BucketName:       "test-bucket",
-				SLSAVerification: false,
-			},
+			name:   "verification disabled - uses original path",
+			config: *createTestConfig(false),
 			mockObjects: map[string][]byte{
 				"v1.tar.gz": createValidArtifact(t),
 			},
@@ -199,12 +211,8 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 			expectVerification: false,
 		},
 		{
-			name: "network error during attestation download",
-			config: cache.RemoteConfig{
-				BucketName:       "test-bucket",
-				SLSAVerification: true,
-				SourceURI:        "github.com/gitpod-io/gitpod-next",
-			},
+			name:   "network error during attestation download",
+			config: *createTestConfig(true),
 			mockObjects: map[string][]byte{
 				"v1.tar.gz": createValidArtifact(t),
 			},
@@ -252,7 +260,7 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 			}
 
 			// Initialize SLSA verifier if enabled
-			if tt.config.SLSAVerification && tt.config.SourceURI != "" {
+			if tt.config.SLSA != nil && tt.config.SLSA.Verification && tt.config.SLSA.SourceURI != "" {
 				// Use mock verifier for testing
 				mockVerifier := slsa.NewMockVerifier()
 				
@@ -286,7 +294,7 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 			}
 
 			// Verify call patterns
-			if tt.config.SLSAVerification {
+			if tt.config.SLSA != nil && tt.config.SLSA.Verification {
 				// Should check for both artifact and attestation
 				hasArtifactCheck := false
 				hasAttestationCheck := false
@@ -319,10 +327,7 @@ func TestS3Cache_BackwardCompatibility(t *testing.T) {
 		t.Fatalf("failed to create local cache: %v", err)
 	}
 
-	config := &cache.RemoteConfig{
-		BucketName:       "test-bucket",
-		SLSAVerification: false, // Disabled
-	}
+	config := createTestConfig(false) // SLSA disabled
 
 	mockStorage := &mockS3StorageWithSLSA{
 		objects: map[string][]byte{
