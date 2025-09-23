@@ -1,3 +1,22 @@
+// Package cache provides local and remote caching capabilities for build artifacts.
+//
+// SLSA Verification Behavior:
+// The cache system supports SLSA (Supply-chain Levels for Software Artifacts) verification
+// for enhanced security. The behavior is controlled by the SLSAConfig.RequireAttestation field:
+//
+//   - RequireAttestation=false (default): Missing attestation → download without verification
+//     This provides graceful degradation and backward compatibility.
+//
+//   - RequireAttestation=true: Missing attestation → skip download, allow local build fallback
+//     This enforces strict security but may impact build performance.
+//
+// The cache system is designed to never fail builds due to cache issues. When artifacts
+// cannot be downloaded (missing, verification failed, network issues), the system gracefully
+// falls back to local builds.
+//
+// Future Evolution:
+// A CLI flag like --slsa-require-attestation could be added to set RequireAttestation=true
+// for environments that require strict SLSA compliance.
 package cache
 
 import (
@@ -56,6 +75,24 @@ type Config struct {
 	RemoteConfig RemoteConfig
 }
 
+// SLSAConfig holds configuration for SLSA verification
+type SLSAConfig struct {
+	// Verification enables SLSA verification for cached artifacts
+	Verification bool `yaml:"verification" json:"verification"`
+
+	// SourceURI is the expected source URI for SLSA verification
+	SourceURI string `yaml:"source_uri" json:"source_uri"`
+
+	// TrustedRoots contains the trusted root certificates for SLSA verification
+	TrustedRoots []string `yaml:"trusted_roots" json:"trusted_roots"`
+
+	// RequireAttestation determines behavior when SLSA attestations are missing.
+	// When true: missing attestation → skip download, allow local build fallback
+	// When false: missing attestation → download without verification (with warning)
+	// Default: false (for backward compatibility and graceful degradation)
+	RequireAttestation bool `yaml:"require_attestation" json:"require_attestation"`
+}
+
 // RemoteConfig holds configuration for remote cache implementations
 type RemoteConfig struct {
 	// BucketName for object storage
@@ -67,15 +104,6 @@ type RemoteConfig struct {
 	// Endpoint for the remote service
 	Endpoint string
 
-	// SLSAVerification enables SLSA verification for cached artifacts
-	SLSAVerification bool `yaml:"slsa_verification" json:"slsa_verification"`
-
-	// TrustedRoots contains the trusted root certificates for SLSA verification
-	TrustedRoots []string `yaml:"trusted_roots" json:"trusted_roots"`
-
-	// RequireAttestation determines if attestations are required (fail if missing)
-	RequireAttestation bool `yaml:"require_attestation" json:"require_attestation"`
-
-	// SourceURI is the expected source URI for SLSA verification
-	SourceURI string `yaml:"source_uri" json:"source_uri"`
+	// SLSA holds SLSA verification configuration
+	SLSA *SLSAConfig `yaml:"slsa,omitempty" json:"slsa,omitempty"`
 }
