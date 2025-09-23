@@ -76,11 +76,11 @@ func NewS3Cache(cfg *cache.RemoteConfig) (*S3Cache, error) {
 	
 	// Initialize SLSA verifier if enabled
 	var slsaVerifier slsa.VerifierInterface
-	if cfg.SLSAVerification && cfg.SourceURI != "" {
-		slsaVerifier = slsa.NewVerifier(cfg.SourceURI, cfg.TrustedRoots)
+	if cfg.SLSA != nil && cfg.SLSA.Verification && cfg.SLSA.SourceURI != "" {
+		slsaVerifier = slsa.NewVerifier(cfg.SLSA.SourceURI, cfg.SLSA.TrustedRoots)
 		log.WithFields(log.Fields{
-			"sourceURI":    cfg.SourceURI,
-			"trustedRoots": len(cfg.TrustedRoots),
+			"sourceURI":    cfg.SLSA.SourceURI,
+			"trustedRoots": len(cfg.SLSA.TrustedRoots),
 		}).Debug("SLSA verification enabled for cache")
 	}
 	
@@ -325,7 +325,7 @@ func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cac
 		}
 
 		// Branch based on SLSA verification configuration
-		if s.slsaVerifier != nil && s.cfg.SLSAVerification {
+		if s.slsaVerifier != nil {
 			return s.downloadWithSLSAVerification(ctx, p, version, localPath)
 		} else {
 			return s.downloadOriginal(ctx, p, version, localPath)
@@ -427,7 +427,16 @@ func (s *S3Cache) downloadOriginal(ctx context.Context, p cache.Package, version
 	return nil
 }
 
-// downloadWithSLSAVerification downloads and verifies artifacts using SLSA attestations
+// downloadWithSLSAVerification downloads and verifies artifacts using SLSA attestations.
+//
+// Behavior based on RequireAttestation configuration:
+//   - RequireAttestation=false (default): Missing attestation → download without verification (graceful degradation)
+//   - RequireAttestation=true: Missing attestation → skip download, return nil to allow local build fallback
+//
+// This function tries multiple extensions (.tar.gz, .tar) and their corresponding attestations.
+// Returns nil (not an error) when no suitable artifacts are found to allow graceful fallback to local builds.
+//
+// Future CLI flag consideration: --slsa-require-attestation could set RequireAttestation=true
 func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Package, version, localPath string) error {
 	log.WithFields(log.Fields{
 		"package": p.FullName(),
@@ -460,15 +469,18 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 			continue
 		}
 
-		// Step 2: Handle missing attestation based on configuration
+		// Step 2: Handle missing attestation based on RequireAttestation configuration
 		if !attestationExists {
-			if s.cfg.RequireAttestation {
+			if s.cfg.SLSA != nil && s.cfg.SLSA.RequireAttestation {
+				// RequireAttestation=true: missing attestation → skip download, try next extension
+				// If all extensions fail, function returns nil to allow local build fallback
 				log.WithFields(log.Fields{
 					"package":     p.FullName(),
 					"attestation": attestationKey,
 				}).Debug("Required attestation missing, skipping this attempt")
 				continue
 			} else {
+				// RequireAttestation=false: missing attestation → download without verification
 				log.WithFields(log.Fields{
 					"package":     p.FullName(),
 					"attestation": attestationKey,
@@ -550,7 +562,10 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 		"version": version,
 	}).Debug("No SLSA-verified artifacts found, will build locally")
 
-	return nil // Not an error - allows local build fallback
+	// IMPORTANT: Return nil (not an error) to allow local build fallback.
+	// This behavior is critical when RequireAttestation=true and no attestations are found.
+	// The cache system is designed to gracefully degrade to local builds rather than fail.
+	return nil
 }
 
 // checkBothExist checks if both artifact and attestation exist in parallel
@@ -677,104 +692,59 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 	return artifactExists, attestationExists, nil
 }
 
+// downloadFileAsync downloads a single file asynchronously with proper concurrency control
+func (s *S3Cache) downloadFileAsync(ctx context.Context, key, localPath string, 
+	wg *sync.WaitGroup, errChan chan<- error) {
+	defer wg.Done()
+	
+	// Acquire semaphore for concurrency control
+	if err := s.acquireSemaphore(ctx); err != nil {
+		errChan <- fmt.Errorf("semaphore acquire failed for %s: %w", key, err)
+		return
+	}
+	defer s.releaseSemaphore()
+	
+	// Download with retry logic
+	err := withRetry(3, func() error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			// Wait for rate limiter permission
+			if err := s.waitForRateLimit(ctx); err != nil {
+				return err
+			}
+			
+			// Create timeout context for storage operation
+			timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			defer cancel()
+			_, err := s.storage.GetObject(timeoutCtx, key, localPath)
+			return err
+		}
+	})
+	
+	if err != nil {
+		// Clean up on error with race protection
+		s.cleanupMu.Lock()
+		_ = os.Remove(localPath) // Ignore error during cleanup
+		s.cleanupMu.Unlock()
+		errChan <- fmt.Errorf("failed to download %s: %w", key, err)
+	}
+}
+
 // downloadBothParallel downloads artifact and attestation in parallel with context awareness
 func (s *S3Cache) downloadBothParallel(ctx context.Context, artifactKey, attestationKey, artifactPath, attestationPath string) (error, error) {
-	type downloadResult struct {
-		err      error
-		kind     string
-		duration time.Duration
-	}
-
-	results := make(chan downloadResult, 2)
 	var wg sync.WaitGroup
-	wg.Add(2)
-
+	errChan := make(chan error, 2)
+	
 	// Download artifact
-	go func() {
-		defer wg.Done()
-		start := time.Now()
-		
-		// Acquire semaphore slot
-		if err := s.acquireSemaphore(ctx); err != nil {
-			select {
-			case results <- downloadResult{err: err, kind: "artifact", duration: time.Since(start)}:
-			case <-ctx.Done():
-			}
-			return
-		}
-		defer s.releaseSemaphore()
-		
-		err := withRetry(3, func() error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				// Wait for rate limiter permission
-				if err := s.waitForRateLimit(ctx); err != nil {
-					return err
-				}
-				
-				// Create timeout context for storage operation
-				timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-				defer cancel()
-				_, err := s.storage.GetObject(timeoutCtx, artifactKey, artifactPath)
-				return err
-			}
-		})
-		
-		select {
-		case results <- downloadResult{err: err, kind: "artifact", duration: time.Since(start)}:
-		case <-ctx.Done():
-			// Context cancelled, clean up with race protection
-			s.cleanupMu.Lock()
-			_ = os.Remove(artifactPath) // Ignore error during cleanup
-			s.cleanupMu.Unlock()
-		}
-	}()
-
-	// Download attestation
-	go func() {
-		defer wg.Done()
-		start := time.Now()
-		
-		// Acquire semaphore slot
-		if err := s.acquireSemaphore(ctx); err != nil {
-			select {
-			case results <- downloadResult{err: err, kind: "attestation", duration: time.Since(start)}:
-			case <-ctx.Done():
-			}
-			return
-		}
-		defer s.releaseSemaphore()
-		
-		err := withRetry(3, func() error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				// Wait for rate limiter permission
-				if err := s.waitForRateLimit(ctx); err != nil {
-					return err
-				}
-				
-				// Create timeout context for storage operation
-				timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-				defer cancel()
-				_, err := s.storage.GetObject(timeoutCtx, attestationKey, attestationPath)
-				return err
-			}
-		})
-		
-		select {
-		case results <- downloadResult{err: err, kind: "attestation", duration: time.Since(start)}:
-		case <-ctx.Done():
-			// Context cancelled, clean up with race protection
-			s.cleanupMu.Lock()
-			_ = os.Remove(attestationPath) // Ignore error during cleanup
-			s.cleanupMu.Unlock()
-		}
-	}()
-
+	wg.Add(1)
+	go s.downloadFileAsync(ctx, artifactKey, artifactPath, &wg, errChan)
+	
+	// Download attestation  
+	wg.Add(1)
+	go s.downloadFileAsync(ctx, attestationKey, attestationPath, &wg, errChan)
+	
 	// Wait for completion
 	done := make(chan struct{})
 	go func() {
@@ -791,18 +761,19 @@ func (s *S3Cache) downloadBothParallel(ctx context.Context, artifactKey, attesta
 		return ctx.Err(), ctx.Err()
 	}
 
+	// Collect errors
 	var artifactErr, attestationErr error
-	// Block until all results arrive - no default case to avoid race condition
-	for i := 0; i < 2; i++ {
-		select {
-		case result := <-results:
-			if result.kind == "artifact" {
-				artifactErr = result.err
+	close(errChan)
+	
+	// Process errors from channel
+	for err := range errChan {
+		if err != nil {
+			// Determine which download failed based on error message
+			if strings.Contains(err.Error(), artifactKey) {
+				artifactErr = err
 			} else {
-				attestationErr = result.err
+				attestationErr = err
 			}
-		case <-ctx.Done():
-			return ctx.Err(), ctx.Err()
 		}
 	}
 
