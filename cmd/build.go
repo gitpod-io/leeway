@@ -185,6 +185,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
 	cmd.Flags().Bool("slsa-cache-verification", false, "Enable SLSA verification for cached artifacts")
 	cmd.Flags().String("slsa-source-uri", "", "Expected source URI for SLSA verification (required when verification enabled)")
+	cmd.Flags().Bool("in-flight-checksums", false, "Enable checksumming of cache artifacts to prevent TOCTU attacks")
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
 	cmd.Flags().String("report-segment", os.Getenv("LEEWAY_SEGMENT_KEY"), "Report build events to segment using the segment key (defaults to $LEEWAY_SEGMENT_KEY)")
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
@@ -318,6 +319,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		log.Fatal(err)
 	}
 
+	inFlightChecksums, err := cmd.Flags().GetBool("in-flight-checksums")
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
@@ -332,6 +338,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		leeway.WithCompressionDisabled(dontCompress),
 		leeway.WithFixedBuildDir(fixedBuildDir),
 		leeway.WithDisableCoverage(disableCoverage),
+		leeway.WithInFlightChecksums(inFlightChecksums),
 	}, localCache
 }
 
