@@ -919,6 +919,14 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
+	// Record checksum immediately after cache artifact creation
+	if cacheArtifactPath, exists := buildctx.LocalCache.Location(p); exists {
+		if err := buildctx.recordArtifactChecksum(cacheArtifactPath); err != nil {
+			log.WithError(err).WithField("package", p.FullName()).Warn("Failed to record cache artifact checksum")
+			// Don't fail build - this is defensive, not critical path
+		}
+	}
+
 	// Register newly built package
 	return buildctx.RegisterNewlyBuilt(p)
 }
