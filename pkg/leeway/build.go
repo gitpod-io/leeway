@@ -71,6 +71,11 @@ type buildContext struct {
 	pkgLockCond *sync.Cond
 	pkgLocks    map[string]struct{}
 	buildLimit  *semaphore.Weighted
+
+	// For in-flight checksumming
+	InFlightChecksums      bool              // Feature enabled flag
+	artifactChecksums      map[string]string // path -> sha256 hex
+	artifactChecksumsMutex sync.RWMutex      // Thread safety for parallel builds
 }
 
 const (
@@ -145,6 +150,14 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 		return nil, xerrors.Errorf("cannot compute hash of myself: %w", err)
 	}
 
+	// Initialize checksum storage based on feature flag
+	var checksumMap map[string]string
+	if options.InFlightChecksums {
+		checksumMap = make(map[string]string)
+	} else {
+		checksumMap = nil // Disable feature completely
+	}
+
 	ctx = &buildContext{
 		buildOptions:       options,
 		buildDir:           buildDir,
@@ -154,6 +167,9 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 		pkgLocks:           make(map[string]struct{}),
 		buildLimit:         buildLimit,
 		leewayHash:         hex.EncodeToString(leewayHash.Sum(nil)),
+		// In-flight checksumming initialization
+		InFlightChecksums: options.InFlightChecksums,
+		artifactChecksums: checksumMap,
 	}
 
 	err = os.MkdirAll(buildDir, 0755)
@@ -266,6 +282,7 @@ type buildOptions struct {
 	JailedExecution        bool
 	UseFixedBuildDir       bool
 	DisableCoverage        bool
+	InFlightChecksums      bool
 
 	context *buildContext
 }
@@ -377,6 +394,14 @@ func WithFixedBuildDir(fixedBuildDir bool) BuildOption {
 func WithDisableCoverage(disableCoverage bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.DisableCoverage = disableCoverage
+		return nil
+	}
+}
+
+// WithInFlightChecksums enables checksumming of cache artifacts to prevent TOCTU attacks
+func WithInFlightChecksums(enabled bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.InFlightChecksums = enabled
 		return nil
 	}
 }
