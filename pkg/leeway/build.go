@@ -267,6 +267,115 @@ func (c *buildContext) GetNewPackagesForCache() []*Package {
 	return res
 }
 
+func (ctx *buildContext) recordArtifactChecksum(path string) error {
+	if ctx.artifactChecksums == nil {
+		return nil
+	}
+
+	checksum, err := computeSHA256(path)
+	if err != nil {
+		return fmt.Errorf("failed to compute checksum for %s: %w", path, err)
+	}
+
+	// Thread-safe storage
+	ctx.artifactChecksumsMutex.Lock()
+	ctx.artifactChecksums[path] = checksum
+	ctx.artifactChecksumsMutex.Unlock()
+
+	log.WithFields(log.Fields{
+		"artifact": path,
+		"checksum": checksum[:16] + "...", // Log first 16 chars for debugging
+	}).Debug("Recorded cache artifact checksum")
+
+	return nil
+}
+
+// verifyArtifactChecksum
+func (ctx *buildContext) verifyArtifactChecksum(path string) error {
+	if ctx.artifactChecksums == nil {
+		return nil
+	}
+
+	// Get stored checksum
+	ctx.artifactChecksumsMutex.RLock()
+	expectedChecksum, exists := ctx.artifactChecksums[path]
+	ctx.artifactChecksumsMutex.RUnlock()
+
+	if !exists {
+		return nil // Not tracked, skip verification
+	}
+
+	// Compute current checksum
+	actualChecksum, err := computeSHA256(path)
+	if err != nil {
+		return fmt.Errorf("failed to verify checksum for %s: %w", path, err)
+	}
+
+	// Detect tampering
+	if expectedChecksum != actualChecksum {
+		return fmt.Errorf("cache artifact %s modified (expected: %s..., actual: %s...)",
+			path, expectedChecksum[:16], actualChecksum[:16])
+	}
+
+	return nil
+}
+
+// computeSHA256 computes the SHA256 hash of a file
+func computeSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// verifyAllArtifactChecksums verifies all tracked cache artifacts before signing handoff
+func verifyAllArtifactChecksums(buildctx *buildContext) error {
+	if buildctx.artifactChecksums == nil {
+		return nil // Feature disabled
+	}
+
+	// Get snapshot of all artifacts to verify
+	buildctx.artifactChecksumsMutex.RLock()
+	checksumCount := len(buildctx.artifactChecksums)
+	artifactsToVerify := make([]string, 0, checksumCount)
+	for path := range buildctx.artifactChecksums {
+		artifactsToVerify = append(artifactsToVerify, path)
+	}
+	buildctx.artifactChecksumsMutex.RUnlock()
+
+	if checksumCount == 0 {
+		log.Debug("No cache artifacts to verify")
+		return nil
+	}
+
+	log.WithField("artifacts", checksumCount).Info("Verifying cache artifact integrity")
+
+	// Verify each artifact
+	var verificationErrors []string
+	for _, path := range artifactsToVerify {
+		if err := buildctx.verifyArtifactChecksum(path); err != nil {
+			verificationErrors = append(verificationErrors, err.Error())
+		}
+	}
+
+	// Report results
+	if len(verificationErrors) > 0 {
+		return fmt.Errorf("checksum verification failures:\n%s",
+			strings.Join(verificationErrors, "\n"))
+	}
+
+	log.WithField("artifacts", checksumCount).Info("All cache artifacts verified successfully")
+	return nil
+}
+
 type buildOptions struct {
 	LocalCache             cache.LocalCache
 	RemoteCache            cache.RemoteCache
