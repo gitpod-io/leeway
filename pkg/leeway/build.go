@@ -698,6 +698,13 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		}
 	}
 
+	// Verify all cache artifact checksums before signing handoff
+	if ctx.InFlightChecksums {
+		if err := verifyAllArtifactChecksums(ctx); err != nil {
+			return fmt.Errorf("cache artifact integrity check failed - potential TOCTU attack detected: %w", err)
+		}
+	}
+
 	return nil
 }
 
