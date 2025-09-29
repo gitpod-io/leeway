@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -72,7 +70,7 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 	}
 
 	// Get remote cache using existing Leeway patterns
-	remoteCache := getRemoteCache(cmd)
+	remoteCache := getRemoteCacheFromEnv()
 	if remoteCache == nil {
 		return fmt.Errorf("remote cache not configured - set LEEWAY_REMOTE_CACHE_BUCKET and LEEWAY_REMOTE_CACHE_STORAGE")
 	}
