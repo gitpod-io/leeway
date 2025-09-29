@@ -13,6 +13,8 @@ import (
 	"github.com/in-toto/in-toto-golang/in_toto"
 	"github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/common"
 	slsa "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2"
+	"github.com/sigstore/sigstore-go/pkg/root"
+	"github.com/sigstore/sigstore-go/pkg/sign"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -197,34 +199,116 @@ func signProvenanceWithSigstore(ctx context.Context, statement *in_toto.Statemen
 		"subject":      statement.Subject[0].Name,
 	}).Debug("Starting Sigstore keyless signing")
 
-	// TODO: Implement actual Sigstore signing using the correct API
-	// For now, return the unsigned payload as a placeholder
-	// This maintains the correct architecture while we resolve the API details
-	
-	log.WithFields(log.Fields{
-		"artifact": statement.Subject[0].Name,
-		"note":     "Using placeholder signing - actual Sigstore integration needed",
-	}).Warn("Placeholder signing implementation - replace with actual Sigstore signing")
-
-	// Create a simple .att file format that's compatible with existing verification
-	// This is a temporary implementation to maintain the correct architecture
-	attestationEnvelope := map[string]interface{}{
-		"payloadType": "application/vnd.in-toto+json",
-		"payload":     payload,
-		"signatures": []map[string]interface{}{
-			{
-				"keyid": "placeholder-keyid",
-				"sig":   "placeholder-signature",
-			},
-		},
-	}
-
-	bundleBytes, err := json.Marshal(attestationEnvelope)
+	// Create ephemeral keypair for signing
+	keypair, err := sign.NewEphemeralKeypair(nil)
 	if err != nil {
 		return nil, &SigningError{
 			Type:     ErrorTypeSigstore,
 			Artifact: statement.Subject[0].Name,
-			Message:  fmt.Sprintf("failed to marshal attestation envelope: %v", err),
+			Message:  fmt.Sprintf("failed to create ephemeral keypair: %v", err),
+			Cause:    err,
+		}
+	}
+
+	// Create DSSE content for SLSA attestation (in-toto format)
+	content := &sign.DSSEData{
+		Data:        payload,
+		PayloadType: "application/vnd.in-toto+json",
+	}
+
+	// Get trusted root from Sigstore TUF
+	trustedRoot, err := root.FetchTrustedRoot()
+	if err != nil {
+		return nil, &SigningError{
+			Type:     ErrorTypeSigstore,
+			Artifact: statement.Subject[0].Name,
+			Message:  fmt.Sprintf("failed to fetch trusted root: %v", err),
+			Cause:    err,
+		}
+	}
+
+	// Get signing config from Sigstore TUF
+	signingConfig, err := root.FetchSigningConfig()
+	if err != nil {
+		return nil, &SigningError{
+			Type:     ErrorTypeSigstore,
+			Artifact: statement.Subject[0].Name,
+			Message:  fmt.Sprintf("failed to fetch signing config: %v", err),
+			Cause:    err,
+		}
+	}
+
+	// Create bundle options
+	bundleOpts := sign.BundleOptions{
+		TrustedRoot: trustedRoot,
+		Context:     ctx,
+	}
+
+	// Configure Fulcio for GitHub OIDC if we have a token
+	if os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") != "" {
+		// Select Fulcio service from signing config
+		fulcioService, err := root.SelectService(signingConfig.FulcioCertificateAuthorityURLs(), sign.FulcioAPIVersions, time.Now())
+		if err != nil {
+			return nil, &SigningError{
+				Type:     ErrorTypeSigstore,
+				Artifact: statement.Subject[0].Name,
+				Message:  fmt.Sprintf("failed to select Fulcio service: %v", err),
+				Cause:    err,
+			}
+		}
+
+		fulcioOpts := &sign.FulcioOptions{
+			BaseURL: fulcioService.URL,
+			Timeout: 30 * time.Second,
+			Retries: 1,
+		}
+		bundleOpts.CertificateProvider = sign.NewFulcio(fulcioOpts)
+		bundleOpts.CertificateProviderOptions = &sign.CertificateProviderOptions{
+			// Let sigstore-go automatically handle GitHub OIDC
+			// It will use ACTIONS_ID_TOKEN_REQUEST_TOKEN/URL automatically
+		}
+
+		// Configure Rekor transparency log
+		rekorServices, err := root.SelectServices(signingConfig.RekorLogURLs(),
+			signingConfig.RekorLogURLsConfig(), sign.RekorAPIVersions, time.Now())
+		if err != nil {
+			return nil, &SigningError{
+				Type:     ErrorTypeSigstore,
+				Artifact: statement.Subject[0].Name,
+				Message:  fmt.Sprintf("failed to select Rekor services: %v", err),
+				Cause:    err,
+			}
+		}
+
+		for _, rekorService := range rekorServices {
+			rekorOpts := &sign.RekorOptions{
+				BaseURL: rekorService.URL,
+				Timeout: 90 * time.Second,
+				Retries: 1,
+				Version: rekorService.MajorAPIVersion,
+			}
+			bundleOpts.TransparencyLogs = append(bundleOpts.TransparencyLogs, sign.NewRekor(rekorOpts))
+		}
+	}
+
+	// Sign and create bundle
+	signedBundle, err := sign.Bundle(content, keypair, bundleOpts)
+	if err != nil {
+		return nil, &SigningError{
+			Type:     ErrorTypeSigstore,
+			Artifact: statement.Subject[0].Name,
+			Message:  fmt.Sprintf("failed to sign with Sigstore: %v", err),
+			Cause:    err,
+		}
+	}
+
+	// Convert to bytes for .att file format
+	bundleBytes, err := json.Marshal(signedBundle)
+	if err != nil {
+		return nil, &SigningError{
+			Type:     ErrorTypeSigstore,
+			Artifact: statement.Subject[0].Name,
+			Message:  fmt.Sprintf("failed to marshal signed bundle: %v", err),
 			Cause:    err,
 		}
 	}
@@ -232,19 +316,19 @@ func signProvenanceWithSigstore(ctx context.Context, statement *in_toto.Statemen
 	log.WithFields(log.Fields{
 		"artifact":    statement.Subject[0].Name,
 		"bundle_size": len(bundleBytes),
-	}).Info("Generated SLSA attestation (placeholder signing)")
+	}).Info("Successfully signed SLSA attestation with Sigstore")
 
 	return bundleBytes, nil
 }
 
 // validateSigstoreEnvironment checks if the environment is properly configured for keyless signing
 func validateSigstoreEnvironment() error {
-	// Check for required GitHub OIDC token
+	// Check for GitHub OIDC token (this is the key requirement)
 	if os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") == "" {
 		return &SigningError{
 			Type:     ErrorTypeValidation,
 			Artifact: "",
-			Message:  "ACTIONS_ID_TOKEN_REQUEST_TOKEN not found - ensure id-token: write permission is set",
+			Message:  "ACTIONS_ID_TOKEN_REQUEST_TOKEN not found - ensure 'permissions: id-token: write' is set in GitHub Actions",
 			Cause:    nil,
 		}
 	}
@@ -254,6 +338,16 @@ func validateSigstoreEnvironment() error {
 			Type:     ErrorTypeValidation,
 			Artifact: "",
 			Message:  "ACTIONS_ID_TOKEN_REQUEST_URL not found - ensure running in GitHub Actions",
+			Cause:    nil,
+		}
+	}
+
+	// Verify we're in GitHub Actions environment
+	if os.Getenv("GITHUB_ACTIONS") != "true" {
+		return &SigningError{
+			Type:     ErrorTypeValidation,
+			Artifact: "",
+			Message:  "not running in GitHub Actions environment",
 			Cause:    nil,
 		}
 	}
