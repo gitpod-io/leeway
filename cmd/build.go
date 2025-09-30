@@ -319,9 +319,15 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		log.Fatal(err)
 	}
 
+	// Get in-flight checksums setting (env var as default, CLI flag overrides)
+	inFlightChecksumsDefault := os.Getenv(EnvvarEnableInFlightChecksums) == "true"
 	inFlightChecksums, err := cmd.Flags().GetBool("in-flight-checksums")
 	if err != nil {
 		log.Fatal(err)
+	}
+	// If flag wasn't explicitly set, use environment variable
+	if !cmd.Flags().Changed("in-flight-checksums") {
+		inFlightChecksums = inFlightChecksumsDefault
 	}
 
 	return []leeway.BuildOption{
