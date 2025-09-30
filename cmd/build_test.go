@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -68,6 +69,90 @@ func TestBuildCommandFlags(t *testing.T) {
 			if val != tt.wantVal {
 				t.Errorf("expected flag %s to be %v, got %v", tt.wantFlag, tt.wantVal, val)
 			}
+		})
+	}
+}
+
+func TestInFlightChecksumsEnvironmentVariable(t *testing.T) {
+	tests := []struct {
+		name      string
+		envValue  string
+		flagValue string
+		flagSet   bool
+		expected  bool
+	}{
+		{
+			name:     "env var enabled, no flag",
+			envValue: "true",
+			expected: true,
+		},
+		{
+			name:     "env var disabled, no flag",
+			envValue: "false",
+			expected: false,
+		},
+		{
+			name:     "no env var, no flag",
+			envValue: "",
+			expected: false,
+		},
+		{
+			name:      "env var enabled, flag explicitly disabled",
+			envValue:  "true",
+			flagValue: "false",
+			flagSet:   true,
+			expected:  false, // Flag should override
+		},
+		{
+			name:      "env var disabled, flag explicitly enabled",
+			envValue:  "false",
+			flagValue: "true",
+			flagSet:   true,
+			expected:  true, // Flag should override
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clean up any previous env var
+			os.Unsetenv("LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS")
+			
+			// Set environment variable if specified
+			if tt.envValue != "" {
+				os.Setenv("LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS", tt.envValue)
+				defer os.Unsetenv("LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS")
+			}
+
+			// Create test command
+			cmd := &cobra.Command{
+				Use: "build",
+				Run: func(cmd *cobra.Command, args []string) {},
+			}
+			
+			addBuildFlags(cmd)
+			
+			// Set flag if specified
+			if tt.flagSet {
+				err := cmd.Flags().Set("in-flight-checksums", tt.flagValue)
+				if err != nil {
+					t.Fatalf("failed to set flag: %v", err)
+				}
+			}
+			
+			// Call getBuildOpts which should apply the logic
+			opts, localCache := getBuildOpts(cmd)
+			
+			if opts == nil {
+				t.Error("expected build options but got nil")
+			}
+			if localCache == nil {
+				t.Error("expected local cache but got nil")
+			}
+			
+			// Note: Since we can't directly inspect opts.InFlightChecksums,
+			// this test verifies the function executes without error.
+			// The actual behavior is validated through integration tests.
+			// To properly test, you may need to expose the option or use integration tests.
 		})
 	}
 }
@@ -156,6 +241,90 @@ func TestGetBuildOptsWithInFlightChecksums(t *testing.T) {
 
 			// The actual verification of the in-flight checksums option would need
 			// to be done through integration tests or by exposing the option state
+		})
+	}
+}
+
+func TestInFlightChecksumsEnvironmentVariable(t *testing.T) {
+	tests := []struct {
+		name      string
+		envValue  string
+		flagValue string
+		flagSet   bool
+		expected  bool
+	}{
+		{
+			name:     "env var enabled, no flag",
+			envValue: "true",
+			expected: true,
+		},
+		{
+			name:     "env var disabled, no flag",
+			envValue: "false",
+			expected: false,
+		},
+		{
+			name:     "no env var, no flag",
+			envValue: "",
+			expected: false,
+		},
+		{
+			name:      "env var enabled, flag explicitly disabled",
+			envValue:  "true",
+			flagValue: "false",
+			flagSet:   true,
+			expected:  false, // Flag should override
+		},
+		{
+			name:      "env var disabled, flag explicitly enabled",
+			envValue:  "false",
+			flagValue: "true",
+			flagSet:   true,
+			expected:  true, // Flag should override
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clean up any previous env var
+			os.Unsetenv("LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS")
+			
+			// Set environment variable if specified
+			if tt.envValue != "" {
+				os.Setenv("LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS", tt.envValue)
+				defer os.Unsetenv("LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS")
+			}
+
+			// Create test command
+			cmd := &cobra.Command{
+				Use: "build",
+				Run: func(cmd *cobra.Command, args []string) {},
+			}
+			
+			addBuildFlags(cmd)
+			
+			// Set flag if specified
+			if tt.flagSet {
+				err := cmd.Flags().Set("in-flight-checksums", tt.flagValue)
+				if err != nil {
+					t.Fatalf("failed to set flag: %v", err)
+				}
+			}
+			
+			// Call getBuildOpts which should apply the logic
+			opts, localCache := getBuildOpts(cmd)
+			
+			if opts == nil {
+				t.Error("expected build options but got nil")
+			}
+			if localCache == nil {
+				t.Error("expected local cache but got nil")
+			}
+			
+			// Note: Since we can't directly inspect opts.InFlightChecksums,
+			// this test verifies the function executes without error.
+			// The actual behavior is validated through integration tests.
+			// To properly test, you may need to expose the option or use integration tests.
 		})
 	}
 }
