@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -423,7 +424,7 @@ func measureDownloadTimePerf(t *testing.T, size int64, withVerification bool) ti
 }
 
 // BenchmarkS3Cache_ParallelDownloads measures concurrent download performance
-func BenchmarkS3Cache_ParallelDownloads_DISABLED(b *testing.B) {
+func BenchmarkS3Cache_ParallelDownloads(b *testing.B) {
 	if testing.Short() {
 		b.Skip("skipping benchmark in short mode")
 	}
@@ -432,29 +433,56 @@ func BenchmarkS3Cache_ParallelDownloads_DISABLED(b *testing.B) {
 
 	for _, concurrency := range concurrencyLevels {
 		b.Run(fmt.Sprintf("%d-concurrent", concurrency), func(b *testing.B) {
-			// Setup multiple packages
-			packages := make([]cache.Package, concurrency)
-			for i := 0; i < concurrency; i++ {
-				packages[i] = &mockPackagePerf{
-					version:  fmt.Sprintf("v%d", i),
-					fullName: fmt.Sprintf("package%d", i),
-				}
+			// Create mock storage with multiple unique packages
+			mockStorage := &realisticMockS3Storage{
+				objects: make(map[string][]byte),
 			}
 
-			// Setup mock storage with multiple artifacts
-			mockStorage := createRealisticMockS3StorageMultiple(b, concurrency)
+			// Create small artifacts for each package
+			artifactData := make([]byte, 1024*1024) // 1MB each
+			_, err := rand.Read(artifactData)
+			require.NoError(b, err)
+
+			for i := 0; i < concurrency; i++ {
+				key := fmt.Sprintf("package%d:v1.tar.gz", i)
+				mockStorage.objects[key] = artifactData
+			}
 
 			tmpDir := b.TempDir()
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				// Directly test the realistic mock to ensure it's being used
-				dest := filepath.Join(tmpDir, fmt.Sprintf("artifact-%d.tar.gz", i))
+				// Download all packages concurrently
+				var wg sync.WaitGroup
+				errChan := make(chan error, concurrency)
 
-				// Download artifact only (no verification for baseline)
-				_, err := mockStorage.GetObject(context.Background(), "test-package:v1.tar.gz", dest)
-				if err != nil {
-					b.Fatal(err)
+				for j := 0; j < concurrency; j++ {
+					wg.Add(1)
+					go func(idx int) {
+						defer wg.Done()
+
+						key := fmt.Sprintf("package%d:v1.tar.gz", idx)
+						dest := filepath.Join(tmpDir, fmt.Sprintf("artifact-%d-%d.tar.gz", i, idx))
+
+						_, err := mockStorage.GetObject(context.Background(), key, dest)
+						if err != nil {
+							errChan <- err
+							return
+						}
+					}(j)
+				}
+
+				wg.Wait()
+				close(errChan)
+
+				// Check for any errors
+				select {
+				case err := <-errChan:
+					if err != nil {
+						b.Fatal(err)
+					}
+				default:
+					// No errors
 				}
 			}
 		})
@@ -523,7 +551,7 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 }
 
 // BenchmarkS3Cache_ThroughputComparison compares baseline vs verified throughput
-func BenchmarkS3Cache_ThroughputComparison_DISABLED(b *testing.B) {
+func BenchmarkS3Cache_ThroughputComparison(b *testing.B) {
 	if testing.Short() {
 		b.Skip("skipping benchmark in short mode")
 	}
