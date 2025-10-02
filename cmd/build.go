@@ -24,7 +24,24 @@ import (
 var buildCmd = &cobra.Command{
 	Use:   "build [targetPackage]",
 	Short: "Builds a package",
-	Args:  cobra.MaximumNArgs(1),
+	Long: `Builds a package and all its dependencies.
+
+Docker Export Mode:
+  By default, Docker packages with 'image' configuration push directly to registries.
+  Use --docker-export-to-cache to export images to cache instead (enables SLSA L3).
+  
+  The LEEWAY_DOCKER_EXPORT_TO_CACHE environment variable sets the default for the flag.
+
+Examples:
+  # Build with Docker export mode enabled (CLI flag)
+  leeway build --docker-export-to-cache :myapp
+  
+  # Build with Docker export mode enabled (environment variable)
+  LEEWAY_DOCKER_EXPORT_TO_CACHE=true leeway build :myapp
+  
+  # Disable export mode even if env var is set
+  leeway build --docker-export-to-cache=false :myapp`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		_, pkg, _, _ := getTarget(args, false)
 		if pkg == nil {
@@ -190,6 +207,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().String("report-segment", os.Getenv("LEEWAY_SEGMENT_KEY"), "Report build events to segment using the segment key (defaults to $LEEWAY_SEGMENT_KEY)")
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
 	cmd.Flags().Bool("fixed-build-dir", true, "Use a fixed build directory for each package, instead of based on the package version, to better utilize caches based on absolute paths (defaults to true)")
+	cmd.Flags().Bool("docker-export-to-cache", false, "Export Docker images to cache instead of pushing directly (enables SLSA L3 compliance)")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
@@ -330,6 +348,26 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		inFlightChecksums = inFlightChecksumsDefault
 	}
 
+	// Get docker export to cache setting with proper precedence:
+	// 1. CLI flag (if explicitly set)
+	// 2. Environment variable (if set)
+	// 3. Package config (default)
+	dockerExportToCache := false
+	dockerExportSet := false
+
+	if cmd.Flags().Changed("docker-export-to-cache") {
+		// Flag was explicitly set by user - this takes precedence
+		dockerExportToCache, err = cmd.Flags().GetBool("docker-export-to-cache")
+		if err != nil {
+			log.Fatal(err)
+		}
+		dockerExportSet = true
+	} else if envVal := os.Getenv("LEEWAY_DOCKER_EXPORT_TO_CACHE"); envVal != "" {
+		// Env var set (flag not set) - env var takes precedence over package config
+		dockerExportToCache = envVal == "true" || envVal == "1"
+		dockerExportSet = true
+	}
+
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
@@ -345,6 +383,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		leeway.WithFixedBuildDir(fixedBuildDir),
 		leeway.WithDisableCoverage(disableCoverage),
 		leeway.WithInFlightChecksums(inFlightChecksums),
+		leeway.WithDockerExportToCache(dockerExportToCache, dockerExportSet),
 	}, localCache
 }
 
