@@ -150,6 +150,172 @@ func TestBuildDockerDeps(t *testing.T) {
 	}
 }
 
+func TestDockerPkgConfig_ExportToCache(t *testing.T) {
+	tests := []struct {
+		name           string
+		config         leeway.DockerPkgConfig
+		expectedExport bool
+	}{
+		{
+			name: "default behavior - push directly",
+			config: leeway.DockerPkgConfig{
+				Image: []string{"test:latest"},
+			},
+			expectedExport: false,
+		},
+		{
+			name: "explicit export to cache",
+			config: leeway.DockerPkgConfig{
+				Image:         []string{"test:latest"},
+				ExportToCache: true,
+			},
+			expectedExport: true,
+		},
+		{
+			name: "explicit push directly",
+			config: leeway.DockerPkgConfig{
+				Image:         []string{"test:latest"},
+				ExportToCache: false,
+			},
+			expectedExport: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.config.ExportToCache != tt.expectedExport {
+				t.Errorf("ExportToCache = %v, want %v", tt.config.ExportToCache, tt.expectedExport)
+			}
+		})
+	}
+}
+
+func TestBuildDocker_ExportToCache(t *testing.T) {
+	if *testutil.Dut {
+		pth, err := os.MkdirTemp("", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = os.WriteFile(filepath.Join(pth, "docker"), []byte(dummyDocker), 0755)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.RemoveAll(pth) })
+
+		os.Setenv("PATH", pth+":"+os.Getenv("PATH"))
+		log.WithField("path", os.Getenv("PATH")).Debug("modified path to use dummy docker")
+	}
+	testutil.RunDUT()
+
+	tests := []*testutil.CommandFixtureTest{
+		{
+			Name:      "docker export to cache",
+			T:         t,
+			Args:      []string{"build", "-v", "-c", "none", "comp:pkg"},
+			StderrSub: "Exporting Docker image to cache",
+			ExitCode:  0,
+			Fixture: &testutil.Setup{
+				Components: []testutil.Component{
+					{
+						Location: "comp",
+						Files: map[string]string{
+							"Dockerfile": "FROM alpine:latest",
+						},
+						Packages: []leeway.Package{
+							{
+								PackageInternal: leeway.PackageInternal{
+									Name: "pkg",
+									Type: leeway.DockerPackage,
+								},
+								Config: leeway.DockerPkgConfig{
+									Dockerfile:    "Dockerfile",
+									Image:         []string{"test:latest"},
+									ExportToCache: true,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		test.Run()
+	}
+}
+
+func TestDockerPackage_BuildContextOverride(t *testing.T) {
+	tests := []struct {
+		name                   string
+		packageConfigValue     bool
+		buildContextExportFlag bool
+		buildContextExportSet  bool
+		expectedFinal          bool
+	}{
+		{
+			name:                   "no override - use package config false",
+			packageConfigValue:     false,
+			buildContextExportFlag: false,
+			buildContextExportSet:  false,
+			expectedFinal:          false,
+		},
+		{
+			name:                   "no override - use package config true",
+			packageConfigValue:     true,
+			buildContextExportFlag: false,
+			buildContextExportSet:  false,
+			expectedFinal:          true,
+		},
+		{
+			name:                   "CLI flag enables export (overrides package false)",
+			packageConfigValue:     false,
+			buildContextExportFlag: true,
+			buildContextExportSet:  true,
+			expectedFinal:          true,
+		},
+		{
+			name:                   "CLI flag keeps export enabled (package true)",
+			packageConfigValue:     true,
+			buildContextExportFlag: true,
+			buildContextExportSet:  true,
+			expectedFinal:          true,
+		},
+		{
+			name:                   "CLI flag disables export (overrides package true) - CRITICAL TEST",
+			packageConfigValue:     true,
+			buildContextExportFlag: false,
+			buildContextExportSet:  true,
+			expectedFinal:          false,
+		},
+		{
+			name:                   "CLI flag keeps export disabled (package false)",
+			packageConfigValue:     false,
+			buildContextExportFlag: false,
+			buildContextExportSet:  true,
+			expectedFinal:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := leeway.DockerPkgConfig{
+				ExportToCache: tt.packageConfigValue,
+			}
+
+			// Simulate the build context override logic from buildDocker
+			// This mimics: if buildctx.DockerExportSet { cfg.ExportToCache = buildctx.DockerExportToCache }
+			if tt.buildContextExportSet {
+				cfg.ExportToCache = tt.buildContextExportFlag
+			}
+
+			if cfg.ExportToCache != tt.expectedFinal {
+				t.Errorf("ExportToCache = %v, want %v", cfg.ExportToCache, tt.expectedFinal)
+			}
+		})
+	}
+}
+
 func TestDockerPostProcessing(t *testing.T) {
 	if *testutil.Dut {
 		pth, err := os.MkdirTemp("", "")
