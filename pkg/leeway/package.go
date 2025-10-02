@@ -546,6 +546,11 @@ type DockerPkgConfig struct {
 	BuildArgs  map[string]string `yaml:"buildArgs,omitempty"`
 	Squash     bool              `yaml:"squash,omitempty"`
 	Metadata   map[string]string `yaml:"metadata,omitempty"`
+
+	// ExportToCache controls whether Docker images are exported to cache instead of pushed immediately.
+	// When true, images are saved as .tar files and go through the standard cache flow.
+	// When false (default), images are pushed directly to registries (legacy behavior).
+	ExportToCache bool `yaml:"exportToCache,omitempty"`
 }
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
