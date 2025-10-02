@@ -2167,7 +2167,6 @@ func createDockerExportMetadata(wd, version string, cfg DockerPkgConfig) error {
 	return nil
 }
 
-
 // Update buildGeneric to use compression arg helper
 func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
 	cfg, ok := p.Config.(GenericPkgConfig)
