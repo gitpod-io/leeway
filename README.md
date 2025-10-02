@@ -170,6 +170,11 @@ config:
 config:
   # Dockerfile is the name of the Dockerfile to build. Automatically added to the package sources.
   dockerfile: "Dockerfile"
+  # exportToCache controls whether images are pushed directly or exported to cache
+  # - false (default): push directly to registry (legacy behavior)
+  # - true: export to cache for signing (enables SLSA L3 compliance)
+  # Can be overridden via --docker-export-to-cache flag or LEEWAY_DOCKER_EXPORT_TO_CACHE env var
+  exportToCache: false
   # Metadata produces a metadata.yaml file in the resulting package tarball.
   metadata:
     foo: bar
@@ -190,6 +195,12 @@ The name of this build argument is the package name of the dependency, transform
 - all uppercase.
 
 E.g. `component/nested:docker` becomes `COMPONENT_NESTED__DOCKER`.
+
+**For SLSA Level 3 compliance:** Set `exportToCache: true` to enable cache-based Docker image distribution with cryptographic signing. This can be overridden globally using:
+- CLI flag: `leeway build --docker-export-to-cache`
+- Environment variable: `LEEWAY_DOCKER_EXPORT_TO_CACHE=true`
+
+See `leeway build --help` for more details.
 
 ### Generic packages
 ```YAML
