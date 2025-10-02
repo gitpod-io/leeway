@@ -392,6 +392,8 @@ type buildOptions struct {
 	UseFixedBuildDir       bool
 	DisableCoverage        bool
 	InFlightChecksums      bool
+	DockerExportToCache    bool
+	DockerExportSet        bool // Track if explicitly set via CLI flag or env var
 
 	context *buildContext
 }
@@ -511,6 +513,15 @@ func WithDisableCoverage(disableCoverage bool) BuildOption {
 func WithInFlightChecksums(enabled bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.InFlightChecksums = enabled
+		return nil
+	}
+}
+
+// WithDockerExportToCache configures whether Docker images should be exported to cache
+func WithDockerExportToCache(exportToCache bool, explicitlySet bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DockerExportToCache = exportToCache
+		opts.DockerExportSet = explicitlySet
 		return nil
 	}
 }
@@ -1690,6 +1701,19 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		return nil, err
 	}
 
+	// Apply global export mode setting from build options (CLI flag or env var)
+	// This overrides the package-level configuration in BOTH directions
+	if buildctx.DockerExportSet {
+		if cfg.ExportToCache != buildctx.DockerExportToCache {
+			log.WithField("package", p.FullName()).
+				WithField("package_config", cfg.ExportToCache).
+				WithField("override_value", buildctx.DockerExportToCache).
+				Info("Docker export mode overridden via CLI flag or environment variable")
+		}
+		cfg.ExportToCache = buildctx.DockerExportToCache
+	}
+	// else: respect package config (no override)
+
 	var (
 		commands          = make(map[PackageBuildPhase][][]string)
 		imageDependencies = make(map[string]string)
@@ -1850,9 +1874,9 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		))
 
 		commands[PackageBuildPhasePackage] = pkgcmds
-	} else if len(cfg.Image) > 0 {
+	} else if len(cfg.Image) > 0 && !cfg.ExportToCache {
 		// Image push workflow
-		log.WithField("images", cfg.Image).Debug("configuring image push")
+		log.WithField("images", cfg.Image).Debug("configuring image push (legacy behavior)")
 
 		for _, img := range cfg.Image {
 			pkgCommands = append(pkgCommands, [][]string{
@@ -1905,75 +1929,74 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			Commands: commands,
 		}
 
-		// Enhanced subjects function with better error handling and logging
-		res.Subjects = func() ([]in_toto.Subject, error) {
-			subjectLogger := log.WithField("operation", "provenance-subjects")
-			subjectLogger.Debug("Calculating provenance subjects for pushed images")
+		// Add subjects function for provenance generation
+		res.Subjects = createDockerSubjectsFunction(version, cfg)
+	} else if len(cfg.Image) > 0 && cfg.ExportToCache {
+		// Export to cache for signing
+		log.WithField("package", p.FullName()).Debug("Exporting Docker image to cache")
 
-			// Get image digest with improved error handling
-			out, err := exec.Command("docker", "inspect", version).CombinedOutput()
-			if err != nil {
-				return nil, xerrors.Errorf("failed to inspect image %s: %w\nOutput: %s",
-					version, err, string(out))
-			}
+		// Export the image to tar
+		imageTarPath := filepath.Join(wd, "image.tar")
+		pkgCommands = append(pkgCommands,
+			[]string{"docker", "save", version, "-o", imageTarPath},
+		)
 
-			var inspectRes []struct {
-				ID          string   `json:"Id"`
-				RepoDigests []string `json:"RepoDigests"`
-			}
-
-			if err := json.Unmarshal(out, &inspectRes); err != nil {
-				return nil, xerrors.Errorf("cannot unmarshal Docker inspect response: %w", err)
-			}
-
-			if len(inspectRes) == 0 {
-				return nil, xerrors.Errorf("docker inspect returned empty result for image %s", version)
-			}
-
-			// Try to get digest from ID first (most reliable)
-			var digest common.DigestSet
-			if inspectRes[0].ID != "" {
-				segs := strings.Split(inspectRes[0].ID, ":")
-				if len(segs) == 2 {
-					digest = common.DigestSet{
-						segs[0]: segs[1],
-					}
-				}
-			}
-
-			// If we couldn't get digest from ID, try RepoDigests as fallback
-			if len(digest) == 0 && len(inspectRes[0].RepoDigests) > 0 {
-				for _, repoDigest := range inspectRes[0].RepoDigests {
-					parts := strings.Split(repoDigest, "@")
-					if len(parts) == 2 {
-						digestParts := strings.Split(parts[1], ":")
-						if len(digestParts) == 2 {
-							digest = common.DigestSet{
-								digestParts[0]: digestParts[1],
-							}
-							break
-						}
-					}
-				}
-			}
-
-			if len(digest) == 0 {
-				return nil, xerrors.Errorf("could not determine digest for image %s", version)
-			}
-
-			subjectLogger.WithField("digest", digest).Debug("Found image digest")
-
-			// Create subjects for each image
-			result := make([]in_toto.Subject, 0, len(cfg.Image))
-			for _, tag := range cfg.Image {
-				result = append(result, in_toto.Subject{
-					Name:   tag,
-					Digest: digest,
-				})
-			}
-
-			return result, nil
+		// Store image names for later use
+		for _, img := range cfg.Image {
+			pkgCommands = append(pkgCommands,
+				[]string{"sh", "-c", fmt.Sprintf("echo %s >> %s", img, dockerImageNamesFiles)},
+			)
 		}
+
+		// Add metadata file
+		if len(cfg.Metadata) > 0 {
+			metadataContent, err := yaml.Marshal(cfg.Metadata)
+			if err != nil {
+				return nil, xerrors.Errorf("failed to marshal metadata: %w", err)
+			}
+			encodedMetadata := base64.StdEncoding.EncodeToString(metadataContent)
+			pkgCommands = append(pkgCommands,
+				[]string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", encodedMetadata, dockerMetadataFile)},
+			)
+		}
+
+		// Package everything into final tar.gz
+		sourcePaths := []string{"./image.tar", fmt.Sprintf("./%s", dockerImageNamesFiles), "./docker-export-metadata.json"}
+		if len(cfg.Metadata) > 0 {
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", dockerMetadataFile))
+		}
+		if p.C.W.Provenance.Enabled {
+			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
+		}
+		if p.C.W.SBOM.Enabled {
+			sourcePaths = append(sourcePaths,
+				fmt.Sprintf("./%s", sbomBaseFilename+sbomCycloneDXFileExtension),
+				fmt.Sprintf("./%s", sbomBaseFilename+sbomSPDXFileExtension),
+				fmt.Sprintf("./%s", sbomBaseFilename+sbomSyftFileExtension),
+			)
+		}
+
+		archiveCmd := BuildTarCommand(
+			WithOutputFile(result),
+			WithSourcePaths(sourcePaths...),
+			WithCompression(!buildctx.DontCompress),
+		)
+		pkgCommands = append(pkgCommands, archiveCmd)
+
+		commands[PackageBuildPhasePackage] = pkgCommands
+
+		// Initialize res with commands
+		res = &packageBuild{
+			Commands: commands,
+		}
+
+		// Add PostProcess to create structured metadata file
+		res.PostProcess = func(buildCtx *buildContext, pkg *Package, buildDir string) error {
+			return createDockerExportMetadata(buildDir, version, cfg)
+		}
+
+		// Add subjects function for provenance generation
+		res.Subjects = createDockerSubjectsFunction(version, cfg)
 	}
 
 	return res, nil
@@ -2031,6 +2054,179 @@ func extractImageNameFromCache(pkgName, cacheBundleFN string) (imgname string, e
 	}
 
 	return "", nil
+}
+
+// humanReadableSize converts bytes to human-readable format
+func humanReadableSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// createDockerSubjectsFunction creates a function that generates SLSA provenance subjects for Docker images
+func createDockerSubjectsFunction(version string, cfg DockerPkgConfig) func() ([]in_toto.Subject, error) {
+	return func() ([]in_toto.Subject, error) {
+		subjectLogger := log.WithField("operation", "provenance-subjects")
+		subjectLogger.Debug("Calculating provenance subjects for Docker images")
+
+		// Get image digest with improved error handling
+		out, err := exec.Command("docker", "inspect", version).CombinedOutput()
+		if err != nil {
+			return nil, xerrors.Errorf("failed to inspect image %s: %w\nOutput: %s",
+				version, err, string(out))
+		}
+
+		var inspectRes []struct {
+			ID          string   `json:"Id"`
+			RepoDigests []string `json:"RepoDigests"`
+		}
+
+		if err := json.Unmarshal(out, &inspectRes); err != nil {
+			return nil, xerrors.Errorf("cannot unmarshal Docker inspect response: %w", err)
+		}
+
+		if len(inspectRes) == 0 {
+			return nil, xerrors.Errorf("docker inspect returned empty result for image %s", version)
+		}
+
+		// Try to get digest from ID first (most reliable)
+		var digest common.DigestSet
+		if inspectRes[0].ID != "" {
+			segs := strings.Split(inspectRes[0].ID, ":")
+			if len(segs) == 2 {
+				digest = common.DigestSet{
+					segs[0]: segs[1],
+				}
+			}
+		}
+
+		// If we couldn't get digest from ID, try RepoDigests as fallback
+		if len(digest) == 0 && len(inspectRes[0].RepoDigests) > 0 {
+			for _, repoDigest := range inspectRes[0].RepoDigests {
+				parts := strings.Split(repoDigest, "@")
+				if len(parts) == 2 {
+					digestParts := strings.Split(parts[1], ":")
+					if len(digestParts) == 2 {
+						digest = common.DigestSet{
+							digestParts[0]: digestParts[1],
+						}
+						break
+					}
+				}
+			}
+		}
+
+		if len(digest) == 0 {
+			return nil, xerrors.Errorf("could not determine digest for image %s", version)
+		}
+
+		subjectLogger.WithField("digest", digest).Debug("Found image digest")
+
+		// Create subjects for each image
+		result := make([]in_toto.Subject, 0, len(cfg.Image))
+		for _, tag := range cfg.Image {
+			result = append(result, in_toto.Subject{
+				Name:   tag,
+				Digest: digest,
+			})
+		}
+
+		return result, nil
+	}
+}
+
+// DockerImageMetadata holds metadata for exported Docker images
+type DockerImageMetadata struct {
+	ImageNames   []string          `json:"image_names" yaml:"image_names"`
+	BuiltVersion string            `json:"built_version" yaml:"built_version"`
+	Digest       string            `json:"digest,omitempty" yaml:"digest,omitempty"`
+	BuildTime    time.Time         `json:"build_time" yaml:"build_time"`
+	CustomMeta   map[string]string `json:"custom_metadata,omitempty" yaml:"custom_metadata,omitempty"`
+}
+
+// createDockerExportMetadata creates metadata file for exported Docker images
+func createDockerExportMetadata(wd, version string, cfg DockerPkgConfig) error {
+	metadata := DockerImageMetadata{
+		ImageNames:   cfg.Image,
+		BuiltVersion: version,
+		BuildTime:    time.Now(),
+		CustomMeta:   cfg.Metadata,
+	}
+
+	// Try to get image digest if available
+	inspectCmd := exec.Command("docker", "inspect", "--format={{index .Id}}", version)
+	if output, err := inspectCmd.Output(); err == nil {
+		metadata.Digest = strings.TrimSpace(string(output))
+	}
+
+	// Write as JSON for easy parsing
+	metadataBytes, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal Docker metadata: %w", err)
+	}
+
+	metadataPath := filepath.Join(wd, "docker-export-metadata.json")
+	if err := os.WriteFile(metadataPath, metadataBytes, 0644); err != nil {
+		return fmt.Errorf("failed to write Docker metadata: %w", err)
+	}
+
+	log.WithField("path", metadataPath).Debug("Created Docker export metadata")
+	return nil
+}
+
+// extractDockerMetadataFromCache extracts Docker image metadata from a cached package
+func extractDockerMetadataFromCache(cacheBundleFN string) (*DockerImageMetadata, error) {
+	f, err := os.Open(cacheBundleFN)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open cache bundle: %w", err)
+	}
+	defer f.Close()
+
+	gzin, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzin.Close()
+
+	tarin := tar.NewReader(gzin)
+	for {
+		hdr, err := tarin.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read tar: %w", err)
+		}
+
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+
+		if filepath.Base(hdr.Name) != "docker-export-metadata.json" {
+			continue
+		}
+
+		metadataBytes := make([]byte, hdr.Size)
+		if _, err := io.ReadFull(tarin, metadataBytes); err != nil {
+			return nil, fmt.Errorf("failed to read metadata: %w", err)
+		}
+
+		var metadata DockerImageMetadata
+		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+
+		return &metadata, nil
+	}
+
+	return nil, fmt.Errorf("docker-export-metadata.json not found in cache bundle")
 }
 
 // Update buildGeneric to use compression arg helper
