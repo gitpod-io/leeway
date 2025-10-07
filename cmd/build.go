@@ -211,6 +211,18 @@ func addBuildFlags(cmd *cobra.Command) {
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
+	// Track if user explicitly set LEEWAY_DOCKER_EXPORT_TO_CACHE before workspace loading.
+	// This allows us to distinguish:
+	// - User set explicitly: High priority (overrides package config)
+	// - Workspace auto-set: Low priority (package config can override)
+	dockerExportEnvSet := false
+	dockerExportEnvValue := false
+	if envVal := os.Getenv("LEEWAY_DOCKER_EXPORT_TO_CACHE"); envVal != "" {
+		dockerExportEnvSet = true
+		dockerExportEnvValue = (envVal == "true" || envVal == "1")
+		log.WithField("value", envVal).Debug("User explicitly set LEEWAY_DOCKER_EXPORT_TO_CACHE before workspace loading")
+	}
+
 	cm, _ := cmd.Flags().GetString("cache")
 	log.WithField("cacheMode", cm).Debug("configuring caches")
 	cacheLevel := leeway.CacheLevel(cm)
@@ -348,23 +360,16 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		inFlightChecksums = inFlightChecksumsDefault
 	}
 
-	// Get docker export to cache setting with proper precedence:
-	// 1. CLI flag (if explicitly set)
-	// 2. Environment variable (if set)
-	// 3. Package config (default)
+	// Get docker export to cache setting - CLI flag takes highest precedence
 	dockerExportToCache := false
 	dockerExportSet := false
 
 	if cmd.Flags().Changed("docker-export-to-cache") {
-		// Flag was explicitly set by user - this takes precedence
+		// Flag was explicitly set by user - this takes precedence over everything
 		dockerExportToCache, err = cmd.Flags().GetBool("docker-export-to-cache")
 		if err != nil {
 			log.Fatal(err)
 		}
-		dockerExportSet = true
-	} else if envVal := os.Getenv("LEEWAY_DOCKER_EXPORT_TO_CACHE"); envVal != "" {
-		// Env var set (flag not set) - env var takes precedence over package config
-		dockerExportToCache = envVal == "true" || envVal == "1"
 		dockerExportSet = true
 	}
 
@@ -384,6 +389,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		leeway.WithDisableCoverage(disableCoverage),
 		leeway.WithInFlightChecksums(inFlightChecksums),
 		leeway.WithDockerExportToCache(dockerExportToCache, dockerExportSet),
+		leeway.WithDockerExportEnv(dockerExportEnvValue, dockerExportEnvSet),
 	}, localCache
 }
 

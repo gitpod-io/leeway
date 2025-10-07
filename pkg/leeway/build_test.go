@@ -10,6 +10,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Helper function for tests
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 const dummyDocker = `#!/bin/bash
 
 POSITIONAL_ARGS=()
@@ -150,6 +155,185 @@ func TestBuildDockerDeps(t *testing.T) {
 	}
 }
 
+func TestDockerExport_PrecedenceHierarchy(t *testing.T) {
+	tests := []struct {
+		name                   string
+		packageConfig          *bool // nil = not set, &true = true, &false = false
+		workspaceEnvSet        bool  // Simulates workspace auto-set
+		userEnvSet             bool  // Simulates user explicit set
+		userEnvValue           bool
+		cliSet                 bool
+		cliValue               bool
+		expectedFinal          bool
+		expectedSource         string
+	}{
+		{
+			name:            "No config, no overrides - global default",
+			packageConfig:   nil,
+			workspaceEnvSet: false,
+			expectedFinal:   false,
+			expectedSource:  "global_default",
+		},
+		{
+			name:            "Workspace SLSA enabled - workspace default",
+			packageConfig:   nil,
+			workspaceEnvSet: true, // provenance.slsa: true
+			expectedFinal:   true,
+			expectedSource:  "workspace_default",
+		},
+		{
+			name:            "Package explicitly false - overrides workspace",
+			packageConfig:   boolPtr(false),
+			workspaceEnvSet: true,
+			expectedFinal:   false,
+			expectedSource:  "package_config",
+		},
+		{
+			name:            "Package explicitly true - overrides workspace",
+			packageConfig:   boolPtr(true),
+			workspaceEnvSet: false,
+			expectedFinal:   true,
+			expectedSource:  "package_config",
+		},
+		{
+			name:          "User env false - overrides package true",
+			packageConfig: boolPtr(true),
+			userEnvSet:    true,
+			userEnvValue:  false,
+			expectedFinal: false,
+			expectedSource: "user_env_var",
+		},
+		{
+			name:          "User env true - overrides package false",
+			packageConfig: boolPtr(false),
+			userEnvSet:    true,
+			userEnvValue:  true,
+			expectedFinal: true,
+			expectedSource: "user_env_var",
+		},
+		{
+			name:           "CLI true - overrides everything (package false, user false)",
+			packageConfig:  boolPtr(false),
+			userEnvSet:     true,
+			userEnvValue:   false,
+			cliSet:         true,
+			cliValue:       true,
+			expectedFinal:  true,
+			expectedSource: "cli_flag",
+		},
+		{
+			name:            "CLI false - overrides everything (workspace true, package true)",
+			packageConfig:   boolPtr(true),
+			workspaceEnvSet: true,
+			cliSet:          true,
+			cliValue:        false,
+			expectedFinal:   false,
+			expectedSource:  "cli_flag",
+		},
+		{
+			name:            "Full hierarchy - CLI wins",
+			packageConfig:   boolPtr(true),
+			workspaceEnvSet: true,
+			userEnvSet:      true,
+			userEnvValue:    true,
+			cliSet:          true,
+			cliValue:        false,
+			expectedFinal:   false,
+			expectedSource:  "cli_flag",
+		},
+		{
+			name:            "User env wins over package and workspace",
+			packageConfig:   boolPtr(true),
+			workspaceEnvSet: true,
+			userEnvSet:      true,
+			userEnvValue:    false,
+			cliSet:          false,
+			expectedFinal:   false,
+			expectedSource:  "user_env_var",
+		},
+		{
+			name:            "Package wins over workspace",
+			packageConfig:   boolPtr(false),
+			workspaceEnvSet: true,
+			userEnvSet:      false,
+			cliSet:          false,
+			expectedFinal:   false,
+			expectedSource:  "package_config",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup environment to simulate workspace auto-set
+			if tt.workspaceEnvSet {
+				t.Setenv("LEEWAY_DOCKER_EXPORT_TO_CACHE", "true")
+			} else {
+				t.Setenv("LEEWAY_DOCKER_EXPORT_TO_CACHE", "")
+			}
+
+			// Create mock build context
+			buildctx := &struct {
+				DockerExportEnvSet   bool
+				DockerExportEnvValue bool
+				DockerExportSet      bool
+				DockerExportToCache  bool
+			}{
+				DockerExportEnvSet:   tt.userEnvSet,
+				DockerExportEnvValue: tt.userEnvValue,
+				DockerExportSet:      tt.cliSet,
+				DockerExportToCache:  tt.cliValue,
+			}
+
+			// Create config
+			cfg := struct {
+				ExportToCache *bool
+			}{
+				ExportToCache: tt.packageConfig,
+			}
+
+			// Simulate the precedence logic from buildDocker
+			var exportToCache bool
+			var source string
+
+			// Layer 5 & 4: Workspace default
+			envExport := os.Getenv("LEEWAY_DOCKER_EXPORT_TO_CACHE")
+			if envExport == "true" || envExport == "1" {
+				exportToCache = true
+				source = "workspace_default"
+			} else {
+				exportToCache = false
+				source = "global_default"
+			}
+
+			// Layer 3: Package config
+			if cfg.ExportToCache != nil {
+				exportToCache = *cfg.ExportToCache
+				source = "package_config"
+			}
+
+			// Layer 2: User env var
+			if buildctx.DockerExportEnvSet {
+				exportToCache = buildctx.DockerExportEnvValue
+				source = "user_env_var"
+			}
+
+			// Layer 1: CLI flag
+			if buildctx.DockerExportSet {
+				exportToCache = buildctx.DockerExportToCache
+				source = "cli_flag"
+			}
+
+			// Verify
+			if exportToCache != tt.expectedFinal {
+				t.Errorf("exportToCache = %v, want %v", exportToCache, tt.expectedFinal)
+			}
+			if source != tt.expectedSource {
+				t.Errorf("source = %v, want %v", source, tt.expectedSource)
+			}
+		})
+	}
+}
+
 func TestDockerPkgConfig_ExportToCache(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -167,7 +351,7 @@ func TestDockerPkgConfig_ExportToCache(t *testing.T) {
 			name: "explicit export to cache",
 			config: leeway.DockerPkgConfig{
 				Image:         []string{"test:latest"},
-				ExportToCache: true,
+				ExportToCache: boolPtr(true),
 			},
 			expectedExport: true,
 		},
@@ -175,7 +359,7 @@ func TestDockerPkgConfig_ExportToCache(t *testing.T) {
 			name: "explicit push directly",
 			config: leeway.DockerPkgConfig{
 				Image:         []string{"test:latest"},
-				ExportToCache: false,
+				ExportToCache: boolPtr(false),
 			},
 			expectedExport: false,
 		},
@@ -183,8 +367,12 @@ func TestDockerPkgConfig_ExportToCache(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.config.ExportToCache != tt.expectedExport {
-				t.Errorf("ExportToCache = %v, want %v", tt.config.ExportToCache, tt.expectedExport)
+			actualExport := false
+			if tt.config.ExportToCache != nil {
+				actualExport = *tt.config.ExportToCache
+			}
+			if actualExport != tt.expectedExport {
+				t.Errorf("ExportToCache = %v, want %v", actualExport, tt.expectedExport)
 			}
 		})
 	}
@@ -230,7 +418,7 @@ func TestBuildDocker_ExportToCache(t *testing.T) {
 								Config: leeway.DockerPkgConfig{
 									Dockerfile:    "Dockerfile",
 									Image:         []string{"test:latest"},
-									ExportToCache: true,
+									ExportToCache: boolPtr(true),
 								},
 							},
 						},
@@ -245,52 +433,60 @@ func TestBuildDocker_ExportToCache(t *testing.T) {
 	}
 }
 
+
 func TestDockerPackage_BuildContextOverride(t *testing.T) {
 	tests := []struct {
 		name                   string
-		packageConfigValue     bool
+		packageConfigValue     *bool // nil = not set
 		buildContextExportFlag bool
 		buildContextExportSet  bool
 		expectedFinal          bool
 	}{
 		{
 			name:                   "no override - use package config false",
-			packageConfigValue:     false,
+			packageConfigValue:     boolPtr(false),
 			buildContextExportFlag: false,
 			buildContextExportSet:  false,
 			expectedFinal:          false,
 		},
 		{
 			name:                   "no override - use package config true",
-			packageConfigValue:     true,
+			packageConfigValue:     boolPtr(true),
 			buildContextExportFlag: false,
 			buildContextExportSet:  false,
 			expectedFinal:          true,
 		},
 		{
+			name:                   "no override - package config not set (nil)",
+			packageConfigValue:     nil,
+			buildContextExportFlag: false,
+			buildContextExportSet:  false,
+			expectedFinal:          false, // defaults to false
+		},
+		{
 			name:                   "CLI flag enables export (overrides package false)",
-			packageConfigValue:     false,
+			packageConfigValue:     boolPtr(false),
 			buildContextExportFlag: true,
 			buildContextExportSet:  true,
 			expectedFinal:          true,
 		},
 		{
 			name:                   "CLI flag keeps export enabled (package true)",
-			packageConfigValue:     true,
+			packageConfigValue:     boolPtr(true),
 			buildContextExportFlag: true,
 			buildContextExportSet:  true,
 			expectedFinal:          true,
 		},
 		{
 			name:                   "CLI flag disables export (overrides package true) - CRITICAL TEST",
-			packageConfigValue:     true,
+			packageConfigValue:     boolPtr(true),
 			buildContextExportFlag: false,
 			buildContextExportSet:  true,
 			expectedFinal:          false,
 		},
 		{
 			name:                   "CLI flag keeps export disabled (package false)",
-			packageConfigValue:     false,
+			packageConfigValue:     boolPtr(false),
 			buildContextExportFlag: false,
 			buildContextExportSet:  true,
 			expectedFinal:          false,
@@ -303,14 +499,19 @@ func TestDockerPackage_BuildContextOverride(t *testing.T) {
 				ExportToCache: tt.packageConfigValue,
 			}
 
-			// Simulate the build context override logic from buildDocker
-			// This mimics: if buildctx.DockerExportSet { cfg.ExportToCache = buildctx.DockerExportToCache }
+			// Simulate the simplified build context override logic
+			// In the new implementation, CLI flag always wins if set
 			if tt.buildContextExportSet {
-				cfg.ExportToCache = tt.buildContextExportFlag
+				cfg.ExportToCache = boolPtr(tt.buildContextExportFlag)
 			}
 
-			if cfg.ExportToCache != tt.expectedFinal {
-				t.Errorf("ExportToCache = %v, want %v", cfg.ExportToCache, tt.expectedFinal)
+			actualFinal := false
+			if cfg.ExportToCache != nil {
+				actualFinal = *cfg.ExportToCache
+			}
+
+			if actualFinal != tt.expectedFinal {
+				t.Errorf("ExportToCache = %v, want %v", actualFinal, tt.expectedFinal)
 			}
 		})
 	}
@@ -398,3 +599,4 @@ func TestDockerPostProcessing(t *testing.T) {
 		test.Run()
 	}
 }
+

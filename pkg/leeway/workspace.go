@@ -59,6 +59,56 @@ type WorkspaceProvenance struct {
 	key     *in_toto.Key `yaml:"-"`
 }
 
+// ApplySLSADefaults automatically enables SLSA L3 runtime features when
+// SLSA provenance is enabled in workspace configuration.
+//
+// Sets environment variables as defaults (only if not already set):
+// - LEEWAY_SLSA_CACHE_VERIFICATION
+// - LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS
+// - LEEWAY_DOCKER_EXPORT_TO_CACHE
+// - LEEWAY_SLSA_SOURCE_URI (from Git origin)
+//
+// These can be overridden by explicit user env vars or CLI flags.
+func (w *Workspace) ApplySLSADefaults() {
+	if !w.Provenance.Enabled || !w.Provenance.SLSA {
+		return
+	}
+
+	log.Info("SLSA provenance enabled - activating SLSA L3 runtime features")
+
+	// Auto-enable cache verification (global feature)
+	if setEnvDefault("LEEWAY_SLSA_CACHE_VERIFICATION", "true") {
+		log.Debug("Auto-enabled: LEEWAY_SLSA_CACHE_VERIFICATION=true")
+	}
+
+	// Auto-enable in-flight checksumming (global feature)
+	if setEnvDefault("LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS", "true") {
+		log.Debug("Auto-enabled: LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS=true")
+	}
+
+	// Auto-enable Docker export mode (workspace default, packages can override)
+	if setEnvDefault("LEEWAY_DOCKER_EXPORT_TO_CACHE", "true") {
+		log.Debug("Auto-enabled: LEEWAY_DOCKER_EXPORT_TO_CACHE=true (package config can override)")
+	}
+
+	// Auto-set source URI from Git origin
+	if w.Git.Origin != "" {
+		if setEnvDefault("LEEWAY_SLSA_SOURCE_URI", w.Git.Origin) {
+			log.WithField("source_uri", w.Git.Origin).Debug("Auto-set SLSA source URI from Git origin")
+		}
+	}
+}
+
+// setEnvDefault sets an environment variable to the given value if not already set.
+// Returns true if the value was set, false if it was already present.
+func setEnvDefault(key, value string) bool {
+	if os.Getenv(key) == "" {
+		os.Setenv(key, value)
+		return true
+	}
+	return false
+}
+
 func DiscoverWorkspaceRoot() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -331,6 +381,9 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		// if there's no Git repo at the root of the workspace, gitnfo will be nil
 		workspace.Git = *gitnfo
 	}
+
+	// Apply SLSA defaults after workspace is fully loaded and Git info is available
+	workspace.ApplySLSADefaults()
 
 	// now that we have all components/packages, we can link things
 	if opts != nil && opts.PrelinkModifier != nil {

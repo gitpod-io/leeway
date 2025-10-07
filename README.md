@@ -517,7 +517,7 @@ variables have an effect on leeway:
 - `LEEWAY_EXPERIMENTAL`: Enables exprimental features
 
 # Provenance (SLSA) - EXPERIMENTAL
-leeway can produce provenance information as part of a build. At the moment only [SLSA](https://slsa.dev/spec/v0.1/) is supported. This supoprt is **experimental**.
+leeway can produce provenance information as part of a build. At the moment only [SLSA Provenance v0.2](https://slsa.dev/provenance/v0.2) is supported. This support is **experimental**.
 
 Provenance generation is enabled in the `WORKSPACE.YAML` file.
 ```YAML
@@ -527,6 +527,100 @@ provenance:
 ```
 
 Once enabled, all packages carry an [attestation bundle](https://github.com/in-toto/attestation/blob/main/spec/bundle.md) which is compliant to the [SLSA v0.2 spec](https://slsa.dev/provenance/v0.2) in their cached archive. The bundle is complete, i.e. not only contains the attestation for the package build, but also those of its dependencies.
+
+## Automatic SLSA L3 Feature Activation
+
+When `provenance.slsa: true` is set, Leeway automatically enables all SLSA L3 runtime features to ensure build integrity and artifact distinguishability:
+
+- ✅ **Cache verification**: Downloads are verified against Sigstore attestations
+- ✅ **In-flight checksums**: Build artifacts are checksummed during the build to prevent tampering
+- ✅ **Docker export mode**: Docker images go through the cache and signing flow (workspace default)
+
+These features are automatically enabled by setting environment variables:
+- `LEEWAY_SLSA_CACHE_VERIFICATION=true`
+- `LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS=true`
+- `LEEWAY_DOCKER_EXPORT_TO_CACHE=true`
+- `LEEWAY_SLSA_SOURCE_URI` (set from Git origin)
+
+### Configuration Precedence
+
+The Docker export mode follows a clear precedence hierarchy (highest to lowest):
+
+1. **CLI flag** - `leeway build --docker-export-to-cache=false`
+2. **Explicit environment variable** - Set before workspace loading
+3. **Package config** - `exportToCache: false` in BUILD.yaml (Docker packages only)
+4. **Workspace default** - Auto-set by `provenance.slsa: true`
+5. **Global default** - `false` (legacy behavior)
+
+### Examples
+
+**Scenario 1: SLSA enabled, all Docker packages export by default**
+```yaml
+# WORKSPACE.yaml
+provenance:
+  enabled: true
+  slsa: true
+
+# backend/BUILD.yaml
+packages:
+  - name: backend
+    type: docker
+    config:
+      dockerfile: Dockerfile
+      image:
+        - registry.example.com/backend:latest
+    # No exportToCache specified → inherits workspace default (export enabled)
+```
+
+**Scenario 2: SLSA enabled, but one package opts out**
+```yaml
+# WORKSPACE.yaml  
+provenance:
+  enabled: true
+  slsa: true
+
+# backend/BUILD.yaml
+packages:
+  - name: backend
+    type: docker
+    config:
+      dockerfile: Dockerfile
+      image:
+        - registry.example.com/backend:latest
+      exportToCache: false  # Explicit opt-out - push directly
+```
+
+**Scenario 3: Force export OFF for testing**
+```bash
+# Set before running leeway - overrides package config and workspace default
+export LEEWAY_DOCKER_EXPORT_TO_CACHE=false
+leeway build :backend
+# User override wins over package config and workspace default
+```
+
+**Scenario 4: CLI flag for one-off override**
+```bash
+# Override everything for this build only
+leeway build :backend --docker-export-to-cache=true
+# CLI flag has highest priority
+```
+
+### Artifact Distinguishability
+
+When SLSA provenance is enabled, the package manifest includes `provenance: version=3 slsa`, which changes the artifact version hash. This ensures artifacts built with SLSA L3 features are automatically distinguishable from legacy artifacts in the cache.
+
+```yaml
+# With SLSA enabled:
+buildProcessVersion: 1
+provenance: version=3 slsa    # ← N.B.
+sbom: version=1
+environment: f92ccd7479251ffa...
+
+# Without SLSA:
+buildProcessVersion: 1
+sbom: version=1
+environment: f92ccd7479251ffa...
+```
 
 ## Dirty vs clean Git working copy
 When building from a clean Git working copy, leeway will use a reference to the Git remote origin as [material](https://github.com/in-toto/in-toto-golang/blob/26b6a96f8a7537f27b7483e19dd68e022b179ea6/in_toto/model.go#L360) (part of the SLSA [link](https://github.com/slsa-framework/slsa/blob/main/controls/attestations.md)).
@@ -559,6 +653,49 @@ leeway provenance export --decode file://some-bundle.jsonl
 ## Caveats
 - provenance is part of the leeway package version, i.e. when you enable provenance that will naturally invalidate previously built packages.
 - if attestation bundle entries grow too large this can break the build process. Use `LEEWAY_MAX_PROVENANCE_BUNDLE_SIZE` to set the buffer size in bytes. This defaults to 2MiB. The larger this buffer is, the larger bundle entries can be used, but the more memory the build process will consume. If you exceed the default, inspect the bundles first (especially the one that fails to load) and see if the produced `subjects` make sense.
+
+## Troubleshooting SLSA L3 Features
+
+**Features not activating?**
+
+Check if SLSA is properly enabled in your workspace:
+```bash
+# Verify workspace config
+cat WORKSPACE.yaml | grep -A2 provenance
+
+# Check environment variables are set
+env | grep LEEWAY_
+
+# Enable verbose logging to see activation
+leeway build -v :package 2>&1 | grep "SLSA\|provenance"
+```
+
+**Docker export not working as expected?**
+
+Verify the precedence hierarchy:
+```bash
+# Check if CLI flag is set
+leeway build :package --docker-export-to-cache=true -v
+
+# Check if environment variable is set
+echo $LEEWAY_DOCKER_EXPORT_TO_CACHE
+
+# Check package config in BUILD.yaml
+grep -A5 "exportToCache" BUILD.yaml
+```
+
+**Environment variables set before workspace loading?**
+
+User environment variables must be set BEFORE running leeway:
+```bash
+# Correct: set before running leeway
+export LEEWAY_DOCKER_EXPORT_TO_CACHE=false
+leeway build :package
+
+# Incorrect: too late, workspace already loaded
+leeway build :package
+export LEEWAY_DOCKER_EXPORT_TO_CACHE=false
+```
 
 # Debugging
 When a build fails, or to get an idea of how leeway assembles dependencies, run your build with `leeway build -c local` (local cache only) and inspect your `$LEEWAY_BUILD_DIR`.

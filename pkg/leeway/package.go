@@ -549,8 +549,10 @@ type DockerPkgConfig struct {
 
 	// ExportToCache controls whether Docker images are exported to cache instead of pushed immediately.
 	// When true, images are saved as .tar files and go through the standard cache flow.
-	// When false (default), images are pushed directly to registries (legacy behavior).
-	ExportToCache bool `yaml:"exportToCache,omitempty"`
+	// When false, images are pushed directly to registries (legacy behavior).
+	// When nil (not set), inherits from workspace SLSA configuration.
+	// Using pointer allows distinguishing "not set" from "explicitly false".
+	ExportToCache *bool `yaml:"exportToCache,omitempty"`
 }
 
 // AdditionalSources returns a list of unresolved sources coming in through this configuration
