@@ -312,3 +312,123 @@ func TestPackageDefinition(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkspace_ApplySLSADefaults(t *testing.T) {
+	tests := []struct {
+		name              string
+		provenanceEnabled bool
+		provenanceSLSA    bool
+		gitOrigin         string
+		existingEnvVars   map[string]string
+		expectedEnvVars   map[string]string
+	}{
+		{
+			name:              "SLSA enabled - sets all defaults",
+			provenanceEnabled: true,
+			provenanceSLSA:    true,
+			gitOrigin:         "github.com/gitpod-io/leeway",
+			existingEnvVars:   map[string]string{},
+			expectedEnvVars: map[string]string{
+				"LEEWAY_SLSA_CACHE_VERIFICATION":    "true",
+				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "true",
+				"LEEWAY_DOCKER_EXPORT_TO_CACHE":     "true",
+				"LEEWAY_SLSA_SOURCE_URI":            "github.com/gitpod-io/leeway",
+			},
+		},
+		{
+			name:              "SLSA disabled - no defaults set",
+			provenanceEnabled: true,
+			provenanceSLSA:    false,
+			existingEnvVars:   map[string]string{},
+			expectedEnvVars: map[string]string{
+				"LEEWAY_SLSA_CACHE_VERIFICATION":    "",
+				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "",
+				"LEEWAY_DOCKER_EXPORT_TO_CACHE":     "",
+				"LEEWAY_SLSA_SOURCE_URI":            "",
+			},
+		},
+		{
+			name:              "Provenance disabled - no defaults set",
+			provenanceEnabled: false,
+			provenanceSLSA:    true,
+			existingEnvVars:   map[string]string{},
+			expectedEnvVars: map[string]string{
+				"LEEWAY_SLSA_CACHE_VERIFICATION":    "",
+				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "",
+				"LEEWAY_DOCKER_EXPORT_TO_CACHE":     "",
+				"LEEWAY_SLSA_SOURCE_URI":            "",
+			},
+		},
+		{
+			name:              "Existing env vars - respects user overrides",
+			provenanceEnabled: true,
+			provenanceSLSA:    true,
+			gitOrigin:         "github.com/gitpod-io/leeway",
+			existingEnvVars: map[string]string{
+				"LEEWAY_SLSA_CACHE_VERIFICATION":    "false",
+				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "false",
+			},
+			expectedEnvVars: map[string]string{
+				"LEEWAY_SLSA_CACHE_VERIFICATION":    "false", // Not overridden
+				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "false", // Not overridden
+				"LEEWAY_DOCKER_EXPORT_TO_CACHE":     "true",  // Set (wasn't present)
+				"LEEWAY_SLSA_SOURCE_URI":            "github.com/gitpod-io/leeway",
+			},
+		},
+		{
+			name:              "SLSA enabled without Git origin",
+			provenanceEnabled: true,
+			provenanceSLSA:    true,
+			gitOrigin:         "",
+			existingEnvVars:   map[string]string{},
+			expectedEnvVars: map[string]string{
+				"LEEWAY_SLSA_CACHE_VERIFICATION":    "true",
+				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "true",
+				"LEEWAY_DOCKER_EXPORT_TO_CACHE":     "true",
+				"LEEWAY_SLSA_SOURCE_URI":            "", // Not set without Git origin
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear environment variables for clean test
+			envVarsToCheck := []string{
+				"LEEWAY_SLSA_CACHE_VERIFICATION",
+				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS",
+				"LEEWAY_DOCKER_EXPORT_TO_CACHE",
+				"LEEWAY_SLSA_SOURCE_URI",
+			}
+			for _, key := range envVarsToCheck {
+				t.Setenv(key, "")
+			}
+
+			// Set existing env vars for this test
+			for key, val := range tt.existingEnvVars {
+				t.Setenv(key, val)
+			}
+
+			// Create test workspace
+			ws := &leeway.Workspace{
+				Provenance: leeway.WorkspaceProvenance{
+					Enabled: tt.provenanceEnabled,
+					SLSA:    tt.provenanceSLSA,
+				},
+				Git: leeway.GitInfo{
+					Origin: tt.gitOrigin,
+				},
+			}
+
+			// Apply defaults
+			ws.ApplySLSADefaults()
+
+			// Verify environment variables
+			for key, expected := range tt.expectedEnvVars {
+				actual := os.Getenv(key)
+				if actual != expected {
+					t.Errorf("%s: expected %q, got %q", key, expected, actual)
+				}
+			}
+		})
+	}
+}

@@ -393,7 +393,13 @@ type buildOptions struct {
 	DisableCoverage        bool
 	InFlightChecksums      bool
 	DockerExportToCache    bool
-	DockerExportSet        bool // Track if explicitly set via CLI flag or env var
+	DockerExportSet        bool // Track if explicitly set via CLI flag
+
+	// Docker export control - User environment variable
+	// These track if the env var was set by the USER (before workspace loading)
+	// vs. auto-set by workspace. This enables proper precedence.
+	DockerExportEnvValue bool // Value from explicit user env var
+	DockerExportEnvSet   bool // Whether user explicitly set env var (before workspace)
 
 	context *buildContext
 }
@@ -522,6 +528,15 @@ func WithDockerExportToCache(exportToCache bool, explicitlySet bool) BuildOption
 	return func(opts *buildOptions) error {
 		opts.DockerExportToCache = exportToCache
 		opts.DockerExportSet = explicitlySet
+		return nil
+	}
+}
+
+// WithDockerExportEnv configures whether user explicitly set DOCKER_EXPORT_TO_CACHE env var
+func WithDockerExportEnv(value, isSet bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DockerExportEnvValue = value
+		opts.DockerExportEnvSet = isSet
 		return nil
 	}
 }
@@ -1701,18 +1716,72 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		return nil, err
 	}
 
-	// Apply global export mode setting from build options (CLI flag or env var)
-	// This overrides the package-level configuration in BOTH directions
-	if buildctx.DockerExportSet {
-		if cfg.ExportToCache != buildctx.DockerExportToCache {
-			log.WithField("package", p.FullName()).
-				WithField("package_config", cfg.ExportToCache).
-				WithField("override_value", buildctx.DockerExportToCache).
-				Info("Docker export mode overridden via CLI flag or environment variable")
-		}
-		cfg.ExportToCache = buildctx.DockerExportToCache
+	// Determine final exportToCache value with proper precedence
+	//
+	// Precedence (highest to lowest):
+	// 1. CLI flag (--docker-export-to-cache)
+	// 2. User environment variable (set before workspace loading)
+	// 3. Package config (exportToCache in BUILD.yaml)
+	// 4. Workspace default (auto-set by provenance.slsa: true)
+	// 5. Global default (false - legacy behavior)
+
+	var exportToCache bool
+	var source string // Track decision source for logging
+
+	// Layer 5 & 4: Start with workspace default
+	// At this point, workspace loading already auto-set LEEWAY_DOCKER_EXPORT_TO_CACHE
+	// if provenance.slsa: true
+	envExport := os.Getenv("LEEWAY_DOCKER_EXPORT_TO_CACHE")
+	if envExport == "true" || envExport == "1" {
+		exportToCache = true
+		source = "workspace_default"
+	} else {
+		exportToCache = false
+		source = "global_default"
 	}
-	// else: respect package config (no override)
+
+	// Layer 3: Package config (if explicitly set)
+	// This OVERRIDES workspace default
+	if cfg.ExportToCache != nil {
+		exportToCache = *cfg.ExportToCache
+		source = "package_config"
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"value":   exportToCache,
+		}).Debug("Using explicit package exportToCache config")
+	}
+
+	// Layer 2: Explicit user environment variable
+	// This OVERRIDES package config and workspace default
+	if buildctx.DockerExportEnvSet {
+		exportToCache = buildctx.DockerExportEnvValue
+		source = "user_env_var"
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"value":   exportToCache,
+		}).Info("Docker export overridden by explicit user environment variable")
+	}
+
+	// Layer 1: CLI flag (highest priority)
+	// This OVERRIDES everything
+	if buildctx.DockerExportSet {
+		exportToCache = buildctx.DockerExportToCache
+		source = "cli_flag"
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"value":   exportToCache,
+		}).Info("Docker export overridden by CLI flag")
+	}
+
+	// Log final decision at debug level
+	log.WithFields(log.Fields{
+		"package": p.FullName(),
+		"value":   exportToCache,
+		"source":  source,
+	}).Debug("Docker export mode determined")
+
+	// Update cfg for use in the rest of the function
+	cfg.ExportToCache = &exportToCache
 
 	var (
 		commands          = make(map[PackageBuildPhase][][]string)
@@ -1874,7 +1943,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		))
 
 		commands[PackageBuildPhasePackage] = pkgcmds
-	} else if len(cfg.Image) > 0 && !cfg.ExportToCache {
+	} else if len(cfg.Image) > 0 && (cfg.ExportToCache == nil || !*cfg.ExportToCache) {
 		// Image push workflow
 		log.WithField("images", cfg.Image).Debug("configuring image push (legacy behavior)")
 
@@ -1931,7 +2000,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 		// Add subjects function for provenance generation
 		res.Subjects = createDockerSubjectsFunction(version, cfg)
-	} else if len(cfg.Image) > 0 && cfg.ExportToCache {
+	} else if len(cfg.Image) > 0 && cfg.ExportToCache != nil && *cfg.ExportToCache {
 		// Export to cache for signing
 		log.WithField("package", p.FullName()).Debug("Exporting Docker image to cache")
 
