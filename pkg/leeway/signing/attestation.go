@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -246,6 +248,17 @@ func signProvenanceWithSigstore(ctx context.Context, statement *in_toto.Statemen
 
 	// Configure Fulcio for GitHub OIDC if we have a token
 	if os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") != "" {
+		// Fetch the GitHub OIDC token for Sigstore
+		idToken, err := fetchGitHubOIDCToken(ctx, "sigstore")
+		if err != nil {
+			return nil, &SigningError{
+				Type:     ErrorTypeSigstore,
+				Artifact: statement.Subject[0].Name,
+				Message:  fmt.Sprintf("failed to fetch GitHub OIDC token: %v", err),
+				Cause:    err,
+			}
+		}
+
 		// Select Fulcio service from signing config
 		fulcioService, err := root.SelectService(signingConfig.FulcioCertificateAuthorityURLs(), sign.FulcioAPIVersions, time.Now())
 		if err != nil {
@@ -264,8 +277,7 @@ func signProvenanceWithSigstore(ctx context.Context, statement *in_toto.Statemen
 		}
 		bundleOpts.CertificateProvider = sign.NewFulcio(fulcioOpts)
 		bundleOpts.CertificateProviderOptions = &sign.CertificateProviderOptions{
-			// Let sigstore-go automatically handle GitHub OIDC
-			// It will use ACTIONS_ID_TOKEN_REQUEST_TOKEN/URL automatically
+			IDToken: idToken,
 		}
 
 		// Configure Rekor transparency log
@@ -354,6 +366,66 @@ func validateSigstoreEnvironment() error {
 
 	log.Debug("Sigstore environment validation passed")
 	return nil
+}
+
+// fetchGitHubOIDCToken fetches an OIDC token from GitHub Actions for Sigstore.
+// It uses the ACTIONS_ID_TOKEN_REQUEST_TOKEN and ACTIONS_ID_TOKEN_REQUEST_URL
+// environment variables to authenticate and retrieve a JWT token with the specified audience.
+func fetchGitHubOIDCToken(ctx context.Context, audience string) (string, error) {
+	requestURL := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
+	requestToken := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+
+	if requestURL == "" || requestToken == "" {
+		return "", fmt.Errorf("GitHub OIDC environment not configured")
+	}
+
+	// Parse the request URL
+	u, err := url.Parse(requestURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse ACTIONS_ID_TOKEN_REQUEST_URL: %w", err)
+	}
+
+	// Add the audience parameter
+	q := u.Query()
+	q.Set("audience", audience)
+	u.RawQuery = q.Encode()
+
+	// Create HTTP request with context
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", requestToken))
+
+	// Execute request with timeout
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("failed to get OIDC token, status: %d, body: %s",
+			resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse response
+	var payload struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if payload.Value == "" {
+		return "", fmt.Errorf("received empty token from GitHub OIDC")
+	}
+
+	return payload.Value, nil
 }
 
 // getEnvOrDefault returns environment variable value or default
