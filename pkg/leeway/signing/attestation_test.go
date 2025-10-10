@@ -6,8 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
@@ -1087,4 +1090,119 @@ func TestSignProvenanceWithSigstore_EnvironmentValidation(t *testing.T) {
 	_, err := GenerateSignedSLSAAttestation(context.Background(), artifactPath, githubCtx)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to sign SLSA provenance")
+}
+
+func TestFetchGitHubOIDCToken(t *testing.T) {
+	tests := []struct {
+		name          string
+		setupEnv      func(*testing.T)
+		mockServer    func(*testing.T) *httptest.Server
+		audience      string
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "successful token fetch",
+			setupEnv: func(t *testing.T) {
+				// Will be set by mockServer
+			},
+			mockServer: func(t *testing.T) *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// Verify audience parameter
+					if r.URL.Query().Get("audience") != "sigstore" {
+						t.Errorf("Expected audience=sigstore, got %s", r.URL.Query().Get("audience"))
+					}
+					// Verify Authorization header
+					if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+						t.Error("Missing or invalid Authorization header")
+					}
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(map[string]string{"value": "test-token-12345"})
+				}))
+			},
+			audience:    "sigstore",
+			expectError: false,
+		},
+		{
+			name: "missing environment variables",
+			setupEnv: func(t *testing.T) {
+				t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+				t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+			},
+			audience:      "sigstore",
+			expectError:   true,
+			errorContains: "GitHub OIDC environment not configured",
+		},
+		{
+			name: "HTTP 500 error",
+			mockServer: func(t *testing.T) *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte(`{"error": "internal error"}`))
+				}))
+			},
+			audience:      "sigstore",
+			expectError:   true,
+			errorContains: "status: 500",
+		},
+		{
+			name: "empty token in response",
+			mockServer: func(t *testing.T) *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(map[string]string{"value": ""})
+				}))
+			},
+			audience:      "sigstore",
+			expectError:   true,
+			errorContains: "received empty token",
+		},
+		{
+			name: "invalid JSON response",
+			mockServer: func(t *testing.T) *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(`invalid json`))
+				}))
+			},
+			audience:      "sigstore",
+			expectError:   true,
+			errorContains: "failed to decode response",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup
+			if tt.setupEnv != nil {
+				tt.setupEnv(t)
+			}
+			
+			var server *httptest.Server
+			if tt.mockServer != nil {
+				server = tt.mockServer(t)
+				defer server.Close()
+				t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", server.URL)
+				t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-request-token")
+			}
+
+			// Execute
+			ctx := context.Background()
+			token, err := fetchGitHubOIDCToken(ctx, tt.audience)
+
+			// Verify
+			if tt.expectError {
+				require.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				require.NoError(t, err)
+				assert.NotEmpty(t, token)
+				if server != nil {
+					assert.Equal(t, "test-token-12345", token)
+				}
+			}
+		})
+	}
 }
