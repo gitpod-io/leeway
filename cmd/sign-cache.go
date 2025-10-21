@@ -76,7 +76,7 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 	}
 
 	log.WithFields(log.Fields{
-		"workspace": ws.Origin,
+		"workspace":  ws.Origin,
 		"cache_type": fmt.Sprintf("%T", remoteCache),
 	}).Info("Initialized workspace and remote cache")
 
@@ -90,7 +90,7 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 	if len(shaDisplay) > 8 {
 		shaDisplay = shaDisplay[:8] + "..."
 	}
-	
+
 	log.WithFields(log.Fields{
 		"repository": githubCtx.Repository,
 		"run_id":     githubCtx.RunID,
@@ -113,7 +113,7 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 	// Process artifacts with bounded concurrency to avoid overwhelming Sigstore
 	const maxConcurrency = 5 // Reasonable limit for Sigstore API
 	semaphore := make(chan struct{}, maxConcurrency)
-	
+
 	var successful []string
 	var failed []*signing.SigningError
 	var mu sync.Mutex
@@ -121,36 +121,33 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 
 	// Track temporary files for cleanup
 	var tempFiles []string
-	var tempMu sync.Mutex
 	defer func() {
 		// Clean up all temporary files
-		tempMu.Lock()
 		for _, tempFile := range tempFiles {
 			if err := os.Remove(tempFile); err != nil && !os.IsNotExist(err) {
 				log.WithError(err).WithField("file", tempFile).Warn("Failed to clean up temporary file")
 			}
 		}
-		tempMu.Unlock()
 	}()
 
 	for _, artifact := range artifacts {
 		wg.Add(1)
 		go func(artifactPath string) {
 			defer wg.Done()
-			
+
 			// Acquire semaphore
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 
 			log.WithField("artifact", artifactPath).Debug("Starting artifact processing")
-			
+
 			if err := processArtifact(ctx, artifactPath, githubCtx, remoteCache, dryRun); err != nil {
 				signingErr := signing.CategorizeError(artifactPath, err)
-				
+
 				mu.Lock()
 				failed = append(failed, signingErr)
 				mu.Unlock()
-				
+
 				log.WithFields(log.Fields{
 					"artifact":   artifactPath,
 					"error_type": signingErr.Type,
@@ -159,7 +156,7 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 				mu.Lock()
 				successful = append(successful, artifactPath)
 				mu.Unlock()
-				
+
 				log.WithField("artifact", artifactPath).Debug("Successfully processed artifact")
 			}
 		}(artifact)
@@ -178,7 +175,7 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 	// Determine exit strategy based on failure ratio
 	if len(failed) > 0 {
 		failureRate := float64(len(failed)) / float64(len(artifacts))
-		
+
 		// Log detailed failure information
 		for _, failure := range failed {
 			log.WithFields(log.Fields{
@@ -186,9 +183,9 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 				"artifact": failure.Artifact,
 			}).Error(failure.Message)
 		}
-		
+
 		if failureRate > 0.5 {
-			return fmt.Errorf("signing failed for %d/%d artifacts (%.1f%% failure rate)", 
+			return fmt.Errorf("signing failed for %d/%d artifacts (%.1f%% failure rate)",
 				len(failed), len(artifacts), failureRate*100)
 		} else {
 			log.WithField("failure_rate", fmt.Sprintf("%.1f%%", failureRate*100)).
@@ -219,9 +216,9 @@ func processArtifact(ctx context.Context, artifactPath string, githubCtx *signin
 	}
 
 	log.WithFields(log.Fields{
-		"artifact":        artifactPath,
-		"artifact_name":   signedAttestation.ArtifactName,
-		"checksum":        signedAttestation.Checksum[:16] + "...",
+		"artifact":         artifactPath,
+		"artifact_name":    signedAttestation.ArtifactName,
+		"checksum":         signedAttestation.Checksum[:16] + "...",
 		"attestation_size": len(signedAttestation.AttestationBytes),
 	}).Info("Successfully generated signed SLSA attestation")
 
@@ -252,13 +249,13 @@ func parseManifest(manifestPath string) ([]string, error) {
 	lines := strings.Split(string(content), "\n")
 	var artifacts []string
 	var validationErrors []string
-	
+
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue // Skip empty lines
 		}
-		
+
 		// Validate artifact path exists and is readable
 		if stat, err := os.Stat(line); os.IsNotExist(err) {
 			validationErrors = append(validationErrors, fmt.Sprintf("line %d: artifact not found: %s", i+1, line))
@@ -270,12 +267,12 @@ func parseManifest(manifestPath string) ([]string, error) {
 			validationErrors = append(validationErrors, fmt.Sprintf("line %d: path is a directory, not a file: %s", i+1, line))
 			continue
 		}
-		
+
 		// Validate it looks like a cache artifact (basic heuristic)
 		if !strings.HasSuffix(line, ".tar.gz") && !strings.HasSuffix(line, ".tar") {
 			log.WithField("artifact", line).Warn("Artifact does not have expected extension (.tar.gz or .tar)")
 		}
-		
+
 		artifacts = append(artifacts, line)
 	}
 
