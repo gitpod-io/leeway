@@ -1893,8 +1893,8 @@ github.com/therootcompany/xz v1.0.1 h1:CmOtsn1CbtmyYiusbfmhmkpAAETj0wBIH6kCYaX+x
 github.com/therootcompany/xz v1.0.1/go.mod h1:3K3UH1yCKgBneZYhuQUvJ9HPD19UEXEI0BWbMn8qNMY=
 github.com/theupdateframework/go-tuf v0.7.0 h1:CqbQFrWo1ae3/I0UCblSbczevCCbS31Qvs5LdxRWqRI=
 github.com/theupdateframework/go-tuf v0.7.0/go.mod h1:uEB7WSY+7ZIugK6R1hiBMBjQftaFzn7ZCDJcp1tCUug=
-github.com/theupdateframework/go-tuf/v2 v2.0.0-20240207172116-f5cf71290141 h1:SsiWxSpJ9AD71/vqiZVUjXW1Uusv1wlKn4zPKFNq25w=
-github.com/theupdateframework/go-tuf/v2 v2.0.0-20240207172116-f5cf71290141/go.mod h1:D7dcS4bZMmF3pXOgUo8Vs6GLYM9sdrFFd37JqiP3hN4=
+github.com/theupdateframework/go-tuf/v2 v2.0.1 h1:11p9tXpq10KQEujxjcIjDSivMKCMLguls7erXHZnxJQ=
+github.com/theupdateframework/go-tuf/v2 v2.0.1/go.mod h1:baB22nBHeHBCeuGZcIlctNq4P61PcOdyARlplg5xmLA=
 github.com/tidwall/gjson v1.18.0 h1:FIDeeyB800efLX89e5a8Y0BNH+LOngJyGrIWxG2FKQY=
 github.com/tidwall/gjson v1.18.0/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
 github.com/tidwall/match v1.1.1 h1:+Ho715JplO36QYgwN9PGYNhgZvoUSc9X2c80KVTi+GA=
