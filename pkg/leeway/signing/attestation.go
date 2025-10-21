@@ -88,8 +88,7 @@ func GenerateSignedSLSAAttestation(ctx context.Context, artifactPath string, git
 	}
 
 	sourceURI := fmt.Sprintf("%s/%s", githubCtx.ServerURL, githubCtx.Repository)
-	builderID := fmt.Sprintf("%s/%s/.github/workflows/build.yml@%s",
-		githubCtx.ServerURL, githubCtx.Repository, githubCtx.Ref)
+	builderID := fmt.Sprintf("%s/%s", githubCtx.ServerURL, githubCtx.WorkflowRef)
 
 	log.WithFields(log.Fields{
 		"artifact":   filepath.Base(artifactPath),
