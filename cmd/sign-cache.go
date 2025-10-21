@@ -111,7 +111,8 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 	log.WithField("artifacts", len(artifacts)).Info("Found artifacts to sign")
 
 	// Process artifacts with bounded concurrency to avoid overwhelming Sigstore
-	const maxConcurrency = 5 // Reasonable limit for Sigstore API
+	const maxConcurrency = 5             // Reasonable limit for Sigstore API
+	const maxAcceptableFailureRate = 0.5 // Fail command if more than 50% of artifacts fail
 	semaphore := make(chan struct{}, maxConcurrency)
 
 	var successful []string
@@ -184,7 +185,7 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 			}).Error(failure.Message)
 		}
 
-		if failureRate > 0.5 {
+		if failureRate > maxAcceptableFailureRate {
 			return fmt.Errorf("signing failed for %d/%d artifacts (%.1f%% failure rate)",
 				len(failed), len(artifacts), failureRate*100)
 		} else {
