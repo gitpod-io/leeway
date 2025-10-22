@@ -28,3 +28,8 @@ func (NoRemoteCache) Download(ctx context.Context, dst cache.LocalCache, pkgs []
 func (NoRemoteCache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
 	return nil
 }
+
+// UploadFile uploads a single file to the remote cache with the given key
+func (NoRemoteCache) UploadFile(ctx context.Context, filePath string, key string) error {
+	return nil
+}

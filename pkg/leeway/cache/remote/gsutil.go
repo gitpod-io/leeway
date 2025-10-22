@@ -173,6 +173,25 @@ func (rs *GSUtilCache) Upload(ctx context.Context, src cache.LocalCache, pkgs []
 	return gsutilTransfer(fmt.Sprintf("gs://%s", rs.BucketName), files)
 }
 
+// UploadFile uploads a single file to the remote cache with the given key
+func (rs *GSUtilCache) UploadFile(ctx context.Context, filePath string, key string) error {
+	target := fmt.Sprintf("gs://%s/%s", rs.BucketName, key)
+	log.WithFields(log.Fields{
+		"file":   filePath,
+		"target": target,
+	}).Debug("Uploading file using gsutil")
+
+	cmd := exec.CommandContext(ctx, "gsutil", "cp", filePath, target)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to upload file %s to %s: %w", filePath, target, err)
+	}
+
+	return nil
+}
+
 func parseGSUtilStatOutput(reader io.Reader) map[string]struct{} {
 	exists := make(map[string]struct{})
 	scanner := bufio.NewScanner(reader)

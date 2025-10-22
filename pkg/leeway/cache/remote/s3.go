@@ -58,7 +58,7 @@ type S3Cache struct {
 	cfg          *cache.RemoteConfig
 	workerCount  int
 	slsaVerifier slsa.VerifierInterface
-	cleanupMu    sync.Mutex // Protects concurrent file cleanup operations
+	cleanupMu    sync.Mutex    // Protects concurrent file cleanup operations
 	rateLimiter  *rate.Limiter // Rate limiter for S3 API calls
 	semaphore    chan struct{} // Semaphore for limiting concurrent operations
 }
@@ -79,7 +79,7 @@ func NewS3Cache(cfg *cache.RemoteConfig) (*S3Cache, error) {
 	}
 
 	storage := NewS3Storage(cfg.BucketName, &awsCfg)
-	
+
 	// Initialize SLSA verifier if enabled
 	var slsaVerifier slsa.VerifierInterface
 	if cfg.SLSA != nil && cfg.SLSA.Verification && cfg.SLSA.SourceURI != "" {
@@ -89,13 +89,13 @@ func NewS3Cache(cfg *cache.RemoteConfig) (*S3Cache, error) {
 			"trustedRoots": len(cfg.SLSA.TrustedRoots),
 		}).Debug("SLSA verification enabled for cache")
 	}
-	
+
 	// Initialize rate limiter with default limits
 	rateLimiter := rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit)
-	
+
 	// Initialize semaphore for goroutine limiting
 	semaphore := make(chan struct{}, maxConcurrentOperations)
-	
+
 	return &S3Cache{
 		storage:      storage,
 		cfg:          cfg,
@@ -208,7 +208,7 @@ func (s *S3Cache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (m
 			log.WithError(err).Debug("Rate limiter error during .tar.gz check")
 			// Continue to .tar check even if rate limited
 		}
-		
+
 		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		exists, err := s.storage.HasObject(timeoutCtx, gzKey)
@@ -236,7 +236,7 @@ func (s *S3Cache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (m
 		if err := s.waitForRateLimit(ctx); err != nil {
 			log.WithError(err).Debug("Rate limiter error during .tar check")
 		}
-		
+
 		timeoutCtx2, cancel2 := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel2()
 		exists, err = s.storage.HasObject(timeoutCtx2, tarKey)
@@ -363,7 +363,7 @@ func (s *S3Cache) downloadOriginal(ctx context.Context, p cache.Package, version
 		if err := s.waitForRateLimit(ctx); err != nil {
 			return err
 		}
-		
+
 		timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 		_, err := s.storage.GetObject(timeoutCtx, gzKey, localPath)
@@ -400,7 +400,7 @@ func (s *S3Cache) downloadOriginal(ctx context.Context, p cache.Package, version
 		if err := s.waitForRateLimit(ctx); err != nil {
 			return err
 		}
-		
+
 		timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 		_, err := s.storage.GetObject(timeoutCtx, tarKey, localPath)
@@ -534,7 +534,7 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 				"attestation": attestationKey,
 				"duration":    verifyDuration,
 			}).Warn("SLSA verification failed, artifact rejected")
-			
+
 			s.cleanupTempFiles(tmpArtifactPath, tmpAttestationPath)
 			continue
 		}
@@ -551,11 +551,11 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 
 		totalDuration := time.Since(downloadStart)
 		log.WithFields(log.Fields{
-			"package":         p.FullName(),
-			"key":             artifactKey,
-			"path":            localPath,
-			"verified":        true,
-			"downloadTime":    totalDuration,
+			"package":          p.FullName(),
+			"key":              artifactKey,
+			"path":             localPath,
+			"verified":         true,
+			"downloadTime":     totalDuration,
 			"verificationTime": verifyDuration,
 		}).Info("Successfully downloaded and verified package with SLSA attestation")
 
@@ -589,7 +589,7 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 	// Check artifact existence with timeout protection
 	go func() {
 		defer wg.Done()
-		
+
 		// Acquire semaphore slot
 		if err := s.acquireSemaphore(ctx); err != nil {
 			select {
@@ -599,7 +599,7 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 			return
 		}
 		defer s.releaseSemaphore()
-		
+
 		// Wait for rate limiter permission
 		if err := s.waitForRateLimit(ctx); err != nil {
 			select {
@@ -608,11 +608,11 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 			}
 			return
 		}
-		
+
 		// Create timeout context for storage operation
 		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		
+
 		exists, err := s.storage.HasObject(timeoutCtx, artifactKey)
 		select {
 		case results <- existResult{artifactKey, exists, err}:
@@ -623,7 +623,7 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 	// Check attestation existence with timeout protection
 	go func() {
 		defer wg.Done()
-		
+
 		// Acquire semaphore slot
 		if err := s.acquireSemaphore(ctx); err != nil {
 			select {
@@ -633,7 +633,7 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 			return
 		}
 		defer s.releaseSemaphore()
-		
+
 		// Wait for rate limiter permission
 		if err := s.waitForRateLimit(ctx); err != nil {
 			select {
@@ -642,11 +642,11 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 			}
 			return
 		}
-		
+
 		// Create timeout context for storage operation
 		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		
+
 		exists, err := s.storage.HasObject(timeoutCtx, attestationKey)
 		select {
 		case results <- existResult{attestationKey, exists, err}:
@@ -670,7 +670,7 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 
 	var artifactExists, attestationExists bool
 	var artifactErr, attestationErr error
-	
+
 	// Block until all results arrive - no default case to avoid race condition
 	for i := 0; i < 2; i++ {
 		select {
@@ -686,7 +686,7 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 			return false, false, ctx.Err()
 		}
 	}
-	
+
 	// Log any errors but don't fail the check - let caller decide
 	if artifactErr != nil {
 		log.WithError(artifactErr).WithField("key", artifactKey).Debug("Failed to check artifact existence")
@@ -699,10 +699,10 @@ func (s *S3Cache) checkBothExist(ctx context.Context, artifactKey, attestationKe
 }
 
 // downloadFileAsync downloads a single file asynchronously with proper concurrency control
-func (s *S3Cache) downloadFileAsync(ctx context.Context, key, localPath, kind string, 
+func (s *S3Cache) downloadFileAsync(ctx context.Context, key, localPath, kind string,
 	wg *sync.WaitGroup, resultChan chan<- downloadResult) {
 	defer wg.Done()
-	
+
 	// Acquire semaphore for concurrency control
 	if err := s.acquireSemaphore(ctx); err != nil {
 		resultChan <- downloadResult{
@@ -712,7 +712,7 @@ func (s *S3Cache) downloadFileAsync(ctx context.Context, key, localPath, kind st
 		return
 	}
 	defer s.releaseSemaphore()
-	
+
 	// Download with retry logic
 	err := withRetry(3, func() error {
 		select {
@@ -723,7 +723,7 @@ func (s *S3Cache) downloadFileAsync(ctx context.Context, key, localPath, kind st
 			if err := s.waitForRateLimit(ctx); err != nil {
 				return err
 			}
-			
+
 			// Create timeout context for storage operation
 			timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 			defer cancel()
@@ -731,7 +731,7 @@ func (s *S3Cache) downloadFileAsync(ctx context.Context, key, localPath, kind st
 			return err
 		}
 	})
-	
+
 	// NEW: Structured result reporting
 	if err != nil {
 		// Clean up on error with race protection
@@ -754,24 +754,24 @@ func (s *S3Cache) downloadFileAsync(ctx context.Context, key, localPath, kind st
 func (s *S3Cache) downloadBothParallel(ctx context.Context, artifactKey, attestationKey, artifactPath, attestationPath string) (error, error) {
 	resultChan := make(chan downloadResult, 2)
 	var wg sync.WaitGroup
-	
+
 	// Download artifact
 	wg.Add(1)
 	go s.downloadFileAsync(ctx, artifactKey, artifactPath, "artifact", &wg, resultChan)
-	
-	// Download attestation  
+
+	// Download attestation
 	wg.Add(1)
 	go s.downloadFileAsync(ctx, attestationKey, attestationPath, "attestation", &wg, resultChan)
-	
+
 	// Wait and close channel when done
 	go func() {
 		wg.Wait()
 		close(resultChan)
 	}()
-	
+
 	var artifactErr, attestationErr error
 	var resultsCollected int
-	
+
 	// Collect results with proper context handling
 	for resultsCollected < 2 {
 		select {
@@ -787,11 +787,11 @@ func (s *S3Cache) downloadBothParallel(ctx context.Context, artifactKey, attesta
 			case "attestation":
 				attestationErr = result.err
 			}
-			
+
 		case <-ctx.Done():
 			// Context cancelled - provide specific errors based on what we know
 			ctxErr := ctx.Err()
-			
+
 			// Set errors for operations that haven't completed
 			if resultsCollected < 2 {
 				if artifactErr == nil {
@@ -801,11 +801,11 @@ func (s *S3Cache) downloadBothParallel(ctx context.Context, artifactKey, attesta
 					attestationErr = fmt.Errorf("attestation download cancelled: %w", ctxErr)
 				}
 			}
-			
+
 			return artifactErr, attestationErr
 		}
 	}
-	
+
 	return artifactErr, attestationErr
 }
 
@@ -815,7 +815,7 @@ func (s *S3Cache) atomicMove(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
-	
+
 	// On Windows, os.Rename fails if destination exists
 	if runtime.GOOS == "windows" {
 		if _, err := os.Stat(dst); err == nil {
@@ -827,7 +827,7 @@ func (s *S3Cache) atomicMove(src, dst string) error {
 			}
 		}
 	}
-	
+
 	return os.Rename(src, dst)
 }
 
@@ -835,7 +835,7 @@ func (s *S3Cache) atomicMove(src, dst string) error {
 func (s *S3Cache) cleanupTempFiles(paths ...string) {
 	s.cleanupMu.Lock()
 	defer s.cleanupMu.Unlock()
-	
+
 	for _, path := range paths {
 		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
 			log.WithError(removeErr).WithField("path", path).Debug("Failed to cleanup temporary file")
@@ -846,13 +846,13 @@ func (s *S3Cache) cleanupTempFiles(paths ...string) {
 // downloadUnverified handles backward compatibility for missing attestations
 func (s *S3Cache) downloadUnverified(ctx context.Context, p cache.Package, version, localPath, extension string) error {
 	key := fmt.Sprintf("%s%s", version, extension)
-	
+
 	err := withRetry(3, func() error {
 		// Wait for rate limiter permission
 		if err := s.waitForRateLimit(ctx); err != nil {
 			return err
 		}
-		
+
 		timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 		_, err := s.storage.GetObject(timeoutCtx, key, localPath)
@@ -906,7 +906,7 @@ func (s *S3Cache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache
 			uploadErrors = append(uploadErrors, fmt.Errorf("package %s: rate limit error: %w", p.FullName(), err))
 			return nil // Don't fail the entire operation
 		}
-		
+
 		timeoutCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 		defer cancel()
 		if err := s.storage.UploadObject(timeoutCtx, key, localPath); err != nil {
@@ -935,6 +935,29 @@ func (s *S3Cache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache
 	}
 
 	return nil // Always return nil to allow the build to continue
+}
+
+// UploadFile uploads a single file to the remote cache with the given key
+func (s *S3Cache) UploadFile(ctx context.Context, filePath string, key string) error {
+	// Wait for rate limiter permission
+	if err := s.waitForRateLimit(ctx); err != nil {
+		return fmt.Errorf("rate limiter error: %w", err)
+	}
+
+	// Use timeout for the upload operation
+	timeoutCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	if err := s.storage.UploadObject(timeoutCtx, key, filePath); err != nil {
+		return fmt.Errorf("failed to upload file %s with key %s: %w", filePath, key, err)
+	}
+
+	log.WithFields(log.Fields{
+		"file": filePath,
+		"key":  key,
+	}).Debug("successfully uploaded file to remote cache")
+
+	return nil
 }
 
 // s3ClientAPI is a subset of the S3 client interface we need

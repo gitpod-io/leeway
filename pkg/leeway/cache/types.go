@@ -48,6 +48,10 @@ type RemoteCache interface {
 
 	// Upload makes a best effort to upload the build artifacts to a remote cache
 	Upload(ctx context.Context, src LocalCache, pkgs []Package) error
+
+	// UploadFile uploads a single file to the remote cache with the given key
+	// This is useful for uploading individual files like attestations without Package abstraction
+	UploadFile(ctx context.Context, filePath string, key string) error
 }
 
 // ObjectStorage represents a generic object storage interface
