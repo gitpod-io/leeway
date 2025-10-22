@@ -128,11 +128,13 @@ func GenerateSignedSLSAAttestation(ctx context.Context, artifactPath string, git
 	}
 
 	// Set metadata
-	now := time.Now().UTC()
+	// Note: BuildStartedOn and BuildFinishedOn are set to nil because sign-cache runs
+	// in a separate job after the build completes, and we don't have access to the
+	// actual build times. Using signing time or artifact mtime would be misleading.
 	pred.Metadata = &slsa.ProvenanceMetadata{
 		BuildInvocationID: githubCtx.RunID,
-		BuildStartedOn:    &now,
-		BuildFinishedOn:   &now,
+		BuildStartedOn:    nil,
+		BuildFinishedOn:   nil,
 		Completeness: slsa.ProvenanceComplete{
 			Parameters:  true,
 			Environment: false,
