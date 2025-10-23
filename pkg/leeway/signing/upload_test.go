@@ -55,6 +55,30 @@ func (m *mockRemoteCacheUpload) ExistingPackages(ctx context.Context, pkgs []cac
 	return make(map[cache.Package]struct{}), nil
 }
 
+func (m *mockRemoteCacheUpload) UploadFile(ctx context.Context, filePath string, key string) error {
+	m.callCount++
+	
+	// Check if this key should fail
+	if err, exists := m.uploadErrors[key]; exists {
+		return err
+	}
+	
+	// Simulate successful upload by storing the file content
+	if m.uploadedFiles == nil {
+		m.uploadedFiles = make(map[string][]byte)
+	}
+	
+	// Read the file content
+	if content, err := os.ReadFile(filePath); err == nil {
+		m.uploadedFiles[key] = content
+	} else {
+		// For testing, just store a placeholder
+		m.uploadedFiles[key] = []byte("mock content for " + key)
+	}
+	
+	return nil
+}
+
 // Mock local cache for testing
 type mockLocalCacheUpload struct {
 	files map[string]string // package name -> file path
