@@ -49,7 +49,7 @@ func init() {
 	plumbingCmd.AddCommand(signCacheCmd)
 	signCacheCmd.Flags().String("from-manifest", "", "Path to newline-separated artifact paths file")
 	signCacheCmd.Flags().Bool("dry-run", false, "Log actions without signing or uploading")
-	signCacheCmd.MarkFlagRequired("from-manifest")
+	_ = signCacheCmd.MarkFlagRequired("from-manifest")
 }
 
 // runSignCache implements the main signing logic

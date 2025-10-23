@@ -356,11 +356,3 @@ func validateSigstoreEnvironment() error {
 	log.Debug("Sigstore environment validation passed")
 	return nil
 }
-
-// getEnvOrDefault returns environment variable value or default
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
