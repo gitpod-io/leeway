@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 )
 
 // Test helper: Create test artifact with known content
@@ -28,7 +28,7 @@ func createTestArtifact(t *testing.T, content string) string {
 func calculateSHA256(t *testing.T, path string) string {
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
-	
+
 	hash := sha256.Sum256(content)
 	return hex.EncodeToString(hash[:])
 }
@@ -114,41 +114,41 @@ func generateSLSAAttestationContent(artifactPath string, githubCtx *GitHubContex
 func TestGenerateSLSAAttestation_Format(t *testing.T) {
 	artifactPath := createTestArtifact(t, "test content for SLSA attestation")
 	githubCtx := createMockGitHubContext()
-	
+
 	// Generate attestation (without signing for format test)
 	attestation, err := generateSLSAAttestationContent(artifactPath, githubCtx)
 	require.NoError(t, err)
 	require.NotNil(t, attestation)
-	
+
 	// Parse as JSON to verify structure
 	var parsed map[string]interface{}
 	err = json.Unmarshal(attestation, &parsed)
 	require.NoError(t, err, "Attestation should be valid JSON")
-	
+
 	// Verify SLSA v0.2 or v1.0 predicateType
 	predicateType, ok := parsed["predicateType"].(string)
 	require.True(t, ok, "predicateType should be a string")
 	assert.Contains(t, predicateType, "slsa.dev/provenance",
 		"predicateType should be SLSA provenance")
-	
+
 	// Verify subject exists and has correct structure
 	subject, ok := parsed["subject"].([]interface{})
 	require.True(t, ok, "subject should be an array")
 	require.NotEmpty(t, subject, "subject should not be empty")
-	
+
 	// Verify first subject has required fields
 	firstSubject := subject[0].(map[string]interface{})
 	assert.Contains(t, firstSubject, "name", "subject should have name")
 	assert.Contains(t, firstSubject, "digest", "subject should have digest")
-	
+
 	// Verify digest contains sha256
 	digest := firstSubject["digest"].(map[string]interface{})
 	assert.Contains(t, digest, "sha256", "digest should contain sha256")
-	
+
 	// Verify predicate exists
 	predicate, ok := parsed["predicate"].(map[string]interface{})
 	require.True(t, ok, "predicate should be an object")
-	
+
 	// Verify predicate has required SLSA fields
 	assert.Contains(t, predicate, "buildType", "predicate should have buildType")
 	assert.Contains(t, predicate, "builder", "predicate should have builder")
@@ -158,22 +158,22 @@ func TestGenerateSLSAAttestation_Format(t *testing.T) {
 // TestGenerateSLSAAttestation_RequiredFields verifies all required fields
 func TestGenerateSLSAAttestation_RequiredFields(t *testing.T) {
 	requiredFields := []string{
-		"_type",           // Statement type
-		"predicateType",   // SLSA provenance type
-		"subject",         // Artifact being attested
-		"predicate",       // The provenance claim
+		"_type",         // Statement type
+		"predicateType", // SLSA provenance type
+		"subject",       // Artifact being attested
+		"predicate",     // The provenance claim
 	}
-	
+
 	artifactPath := createTestArtifact(t, "field validation content")
 	githubCtx := createMockGitHubContext()
-	
+
 	attestation, err := generateSLSAAttestationContent(artifactPath, githubCtx)
 	require.NoError(t, err)
-	
+
 	var parsed map[string]interface{}
 	err = json.Unmarshal(attestation, &parsed)
 	require.NoError(t, err)
-	
+
 	// Verify all required fields present
 	for _, field := range requiredFields {
 		assert.Contains(t, parsed, field, "Attestation should contain field: %s", field)
@@ -184,30 +184,30 @@ func TestGenerateSLSAAttestation_RequiredFields(t *testing.T) {
 func TestGenerateSLSAAttestation_PredicateContent(t *testing.T) {
 	artifactPath := createTestArtifact(t, "predicate test content")
 	githubCtx := createMockGitHubContext()
-	
+
 	attestation, err := generateSLSAAttestationContent(artifactPath, githubCtx)
 	require.NoError(t, err)
-	
+
 	var parsed map[string]interface{}
 	err = json.Unmarshal(attestation, &parsed)
 	require.NoError(t, err)
-	
+
 	predicate := parsed["predicate"].(map[string]interface{})
-	
+
 	// Verify buildType
 	buildType, ok := predicate["buildType"].(string)
 	assert.True(t, ok, "buildType should be a string")
 	assert.NotEmpty(t, buildType, "buildType should not be empty")
-	
+
 	// Verify builder information
 	builder, ok := predicate["builder"].(map[string]interface{})
 	require.True(t, ok, "builder should be an object")
 	assert.Contains(t, builder, "id", "builder should have id")
-	
+
 	// Verify invocation
 	invocation, ok := predicate["invocation"].(map[string]interface{})
 	require.True(t, ok, "invocation should be an object")
-	
+
 	// Verify GitHub context embedded
 	configSource := invocation["configSource"].(map[string]interface{})
 	assert.Equal(t, githubCtx.Repository, configSource["repository"])
@@ -237,28 +237,28 @@ func TestGenerateSLSAAttestation_ChecksumAccuracy(t *testing.T) {
 			content: "",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			artifactPath := createTestArtifact(t, tt.content)
 			githubCtx := createMockGitHubContext()
-			
+
 			// Calculate expected checksum
 			expectedChecksum := calculateSHA256(t, artifactPath)
-			
+
 			// Generate attestation
 			attestation, err := generateSLSAAttestationContent(artifactPath, githubCtx)
 			require.NoError(t, err)
-			
+
 			var parsed map[string]interface{}
 			err = json.Unmarshal(attestation, &parsed)
 			require.NoError(t, err)
-			
+
 			// Extract checksum from attestation
 			subject := parsed["subject"].([]interface{})[0].(map[string]interface{})
 			digest := subject["digest"].(map[string]interface{})
 			actualChecksum := digest["sha256"].(string)
-			
+
 			// Verify checksum matches
 			assert.Equal(t, expectedChecksum, actualChecksum,
 				"Attestation checksum should match calculated SHA256")
@@ -270,29 +270,29 @@ func TestGenerateSLSAAttestation_ChecksumAccuracy(t *testing.T) {
 func TestGenerateSLSAAttestation_ChecksumConsistency(t *testing.T) {
 	artifactPath := createTestArtifact(t, "consistency test content")
 	githubCtx := createMockGitHubContext()
-	
+
 	// Generate attestation multiple times
 	attestation1, err := generateSLSAAttestationContent(artifactPath, githubCtx)
 	require.NoError(t, err)
-	
+
 	attestation2, err := generateSLSAAttestationContent(artifactPath, githubCtx)
 	require.NoError(t, err)
-	
+
 	// Extract checksums
 	var parsed1, parsed2 map[string]interface{}
 	err = json.Unmarshal(attestation1, &parsed1)
 	require.NoError(t, err)
 	err = json.Unmarshal(attestation2, &parsed2)
 	require.NoError(t, err)
-	
+
 	subject1 := parsed1["subject"].([]interface{})[0].(map[string]interface{})
 	digest1 := subject1["digest"].(map[string]interface{})
 	checksum1 := digest1["sha256"].(string)
-	
+
 	subject2 := parsed2["subject"].([]interface{})[0].(map[string]interface{})
 	digest2 := subject2["digest"].(map[string]interface{})
 	checksum2 := digest2["sha256"].(string)
-	
+
 	// Verify consistency
 	assert.Equal(t, checksum1, checksum2,
 		"Checksums should be consistent across multiple generations")
@@ -301,7 +301,7 @@ func TestGenerateSLSAAttestation_ChecksumConsistency(t *testing.T) {
 // TestGenerateSLSAAttestation_GitHubContextIntegration verifies context embedding
 func TestGenerateSLSAAttestation_GitHubContextIntegration(t *testing.T) {
 	artifactPath := createTestArtifact(t, "github context test")
-	
+
 	tests := []struct {
 		name    string
 		context *GitHubContext
@@ -333,24 +333,24 @@ func TestGenerateSLSAAttestation_GitHubContextIntegration(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			attestation, err := generateSLSAAttestationContent(artifactPath, tt.context)
 			require.NoError(t, err)
-			
+
 			var parsed map[string]interface{}
 			err = json.Unmarshal(attestation, &parsed)
 			require.NoError(t, err)
-			
+
 			predicate := parsed["predicate"].(map[string]interface{})
 			invocation := predicate["invocation"].(map[string]interface{})
 			configSource := invocation["configSource"].(map[string]interface{})
-			
+
 			// Verify all context fields embedded
 			assert.Equal(t, tt.context.Repository, configSource["repository"])
 			assert.Equal(t, tt.context.Ref, configSource["ref"])
-			
+
 			// Verify metadata contains GitHub information
 			metadata := predicate["metadata"].(map[string]interface{})
 			buildInvocationID := metadata["buildInvocationId"].(string)
@@ -362,7 +362,7 @@ func TestGenerateSLSAAttestation_GitHubContextIntegration(t *testing.T) {
 // TestGenerateSLSAAttestation_InvalidGitHubContext tests error handling
 func TestGenerateSLSAAttestation_InvalidGitHubContext(t *testing.T) {
 	artifactPath := createTestArtifact(t, "invalid context test")
-	
+
 	tests := []struct {
 		name        string
 		context     *GitHubContext
@@ -392,11 +392,11 @@ func TestGenerateSLSAAttestation_InvalidGitHubContext(t *testing.T) {
 			expectError: true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := generateSLSAAttestationContent(artifactPath, tt.context)
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 			} else {
@@ -409,7 +409,7 @@ func TestGenerateSLSAAttestation_InvalidGitHubContext(t *testing.T) {
 // TestGenerateSLSAAttestation_FileErrors tests file-related error handling
 func TestGenerateSLSAAttestation_FileErrors(t *testing.T) {
 	githubCtx := createMockGitHubContext()
-	
+
 	tests := []struct {
 		name         string
 		artifactPath string
@@ -431,11 +431,11 @@ func TestGenerateSLSAAttestation_FileErrors(t *testing.T) {
 			expectError:  true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := generateSLSAAttestationContent(tt.artifactPath, githubCtx)
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 			} else {
@@ -473,7 +473,7 @@ func TestComputeSHA256_EdgeCases(t *testing.T) {
 			expectError: false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.expectError {
@@ -487,7 +487,7 @@ func TestComputeSHA256_EdgeCases(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotEmpty(t, checksum)
 				assert.Len(t, checksum, 64) // SHA256 hex string length
-				
+
 				// Verify it matches our helper calculation
 				expectedChecksum := calculateSHA256(t, artifactPath)
 				assert.Equal(t, expectedChecksum, checksum)
@@ -571,11 +571,11 @@ func TestGitHubContext_Validation(t *testing.T) {
 			errorMsg:    "GITHUB_WORKFLOW_REF",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.context.Validate()
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 				if tt.errorMsg != "" {
@@ -593,11 +593,11 @@ func TestGenerateSignedSLSAAttestation_Integration(t *testing.T) {
 	// This test verifies the integration without actually signing (which requires Sigstore setup)
 	artifactPath := createTestArtifact(t, "integration test content")
 	githubCtx := createMockGitHubContext()
-	
+
 	// Test that the function exists and has the right signature
 	// We expect it to fail due to missing Sigstore environment, but that's expected
 	_, err := GenerateSignedSLSAAttestation(context.Background(), artifactPath, githubCtx)
-	
+
 	// We expect an error related to Sigstore/signing, not basic validation
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "sign", "Error should be related to signing process")
@@ -611,11 +611,11 @@ func TestSignedAttestationResult_Structure(t *testing.T) {
 		Checksum:         "abc123",
 		ArtifactName:     "test.tar.gz",
 	}
-	
+
 	assert.NotNil(t, result.AttestationBytes)
 	assert.NotEmpty(t, result.Checksum)
 	assert.NotEmpty(t, result.ArtifactName)
-	
+
 	// Test JSON marshaling
 	jsonData, err := json.Marshal(result)
 	assert.NoError(t, err)
@@ -637,7 +637,7 @@ func TestGetGitHubContext(t *testing.T) {
 		"GITHUB_SERVER_URL":   os.Getenv("GITHUB_SERVER_URL"),
 		"GITHUB_WORKFLOW_REF": os.Getenv("GITHUB_WORKFLOW_REF"),
 	}
-	
+
 	// Clean up after test
 	defer func() {
 		for k, v := range originalEnv {
@@ -648,7 +648,7 @@ func TestGetGitHubContext(t *testing.T) {
 			}
 		}
 	}()
-	
+
 	// Set test environment
 	testEnv := map[string]string{
 		"GITHUB_RUN_ID":       "test-run-id",
@@ -660,14 +660,14 @@ func TestGetGitHubContext(t *testing.T) {
 		"GITHUB_SERVER_URL":   "test-server",
 		"GITHUB_WORKFLOW_REF": "test-workflow",
 	}
-	
+
 	for k, v := range testEnv {
 		_ = os.Setenv(k, v)
 	}
-	
+
 	// Test GetGitHubContext
 	ctx := GetGitHubContext()
-	
+
 	assert.Equal(t, testEnv["GITHUB_RUN_ID"], ctx.RunID)
 	assert.Equal(t, testEnv["GITHUB_RUN_NUMBER"], ctx.RunNumber)
 	assert.Equal(t, testEnv["GITHUB_ACTOR"], ctx.Actor)
@@ -691,7 +691,7 @@ func TestGetGitHubContext_EmptyEnvironment(t *testing.T) {
 		"GITHUB_SERVER_URL":   os.Getenv("GITHUB_SERVER_URL"),
 		"GITHUB_WORKFLOW_REF": os.Getenv("GITHUB_WORKFLOW_REF"),
 	}
-	
+
 	// Clean up after test
 	defer func() {
 		for k, v := range originalEnv {
@@ -702,21 +702,21 @@ func TestGetGitHubContext_EmptyEnvironment(t *testing.T) {
 			}
 		}
 	}()
-	
+
 	// Clear all GitHub environment variables
 	githubVars := []string{
 		"GITHUB_RUN_ID", "GITHUB_RUN_NUMBER", "GITHUB_ACTOR",
 		"GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_SHA",
 		"GITHUB_SERVER_URL", "GITHUB_WORKFLOW_REF",
 	}
-	
+
 	for _, v := range githubVars {
 		_ = os.Unsetenv(v)
 	}
-	
+
 	// Test GetGitHubContext with empty environment
 	ctx := GetGitHubContext()
-	
+
 	assert.Empty(t, ctx.RunID)
 	assert.Empty(t, ctx.RunNumber)
 	assert.Empty(t, ctx.Actor)
@@ -758,22 +758,22 @@ func TestSigningError(t *testing.T) {
 			retryable: false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			originalErr := fmt.Errorf("original cause")
 			err := NewSigningError(tt.errType, tt.artifact, tt.message, originalErr)
-			
+
 			assert.Equal(t, tt.errType, err.Type)
 			assert.Equal(t, tt.message, err.Message)
 			assert.Equal(t, tt.artifact, err.Artifact)
 			assert.Equal(t, tt.retryable, err.IsRetryable())
-			
+
 			// Test Error() method
 			errorStr := err.Error()
 			assert.Contains(t, errorStr, tt.message)
 			assert.Contains(t, errorStr, tt.artifact)
-			
+
 			// Test Unwrap
 			assert.Equal(t, originalErr, err.Unwrap())
 		})
@@ -789,7 +789,7 @@ func TestSigningError_Unwrap(t *testing.T) {
 		Artifact: "test.tar.gz",
 		Cause:    originalErr,
 	}
-	
+
 	unwrapped := signingErr.Unwrap()
 	assert.Equal(t, originalErr, unwrapped)
 }
@@ -802,24 +802,24 @@ func TestWithRetry(t *testing.T) {
 			callCount++
 			return nil
 		}
-		
+
 		err := WithRetry(3, operation)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, callCount)
 	})
-	
+
 	t.Run("non-retryable error", func(t *testing.T) {
 		callCount := 0
 		operation := func() error {
 			callCount++
 			return NewSigningError(ErrorTypePermission, "test.tar.gz", "access denied", fmt.Errorf("permission denied"))
 		}
-		
+
 		err := WithRetry(3, operation)
 		assert.Error(t, err)
 		assert.Equal(t, 1, callCount) // Should not retry
 	})
-	
+
 	t.Run("retryable error that eventually succeeds", func(t *testing.T) {
 		callCount := 0
 		operation := func() error {
@@ -829,7 +829,7 @@ func TestWithRetry(t *testing.T) {
 			}
 			return nil
 		}
-		
+
 		err := WithRetry(5, operation)
 		assert.NoError(t, err)
 		assert.Equal(t, 3, callCount)
@@ -869,11 +869,11 @@ func TestCategorizeError(t *testing.T) {
 			retryable:    true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			categorized := CategorizeError("test.tar.gz", tt.inputError)
-			
+
 			assert.Equal(t, tt.expectedType, categorized.Type)
 			assert.Equal(t, tt.retryable, categorized.IsRetryable())
 			assert.Equal(t, "test.tar.gz", categorized.Artifact)
@@ -887,7 +887,7 @@ func TestArtifactUploader(t *testing.T) {
 	// Create a mock remote cache
 	mockCache := &mockRemoteCache{}
 	uploader := NewArtifactUploader(mockCache)
-	
+
 	assert.NotNil(t, uploader)
 	assert.Equal(t, mockCache, uploader.remoteCache)
 }
@@ -920,7 +920,7 @@ func TestValidateSigstoreEnvironment(t *testing.T) {
 		"ACTIONS_ID_TOKEN_REQUEST_URL":   os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"),
 		"GITHUB_ACTIONS":                 os.Getenv("GITHUB_ACTIONS"),
 	}
-	
+
 	// Clean up after test
 	defer func() {
 		for k, v := range originalEnv {
@@ -931,34 +931,34 @@ func TestValidateSigstoreEnvironment(t *testing.T) {
 			}
 		}
 	}()
-	
+
 	t.Run("missing required environment", func(t *testing.T) {
 		// Clear all Sigstore environment variables
 		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
 		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
 		_ = os.Unsetenv("GITHUB_ACTIONS")
-		
+
 		err := validateSigstoreEnvironment()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "ACTIONS_ID_TOKEN_REQUEST_TOKEN")
 	})
-	
+
 	t.Run("partial environment", func(t *testing.T) {
 		// Set some but not all required variables
 		_ = os.Setenv("GITHUB_ACTIONS", "true")
 		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
 		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
-		
+
 		err := validateSigstoreEnvironment()
 		assert.Error(t, err)
 	})
-	
+
 	t.Run("complete environment", func(t *testing.T) {
 		// Set all required variables
 		_ = os.Setenv("GITHUB_ACTIONS", "true")
 		_ = os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
 		_ = os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://test.url")
-		
+
 		err := validateSigstoreEnvironment()
 		assert.NoError(t, err)
 	})
@@ -977,7 +977,7 @@ func TestSigningError_IsRetryable_AllTypes(t *testing.T) {
 		{ErrorTypeFileSystem, false},
 		{SigningErrorType("unknown"), false},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(string(tt.errorType), func(t *testing.T) {
 			err := &SigningError{Type: tt.errorType}
@@ -993,9 +993,9 @@ func TestCategorizeError_ExistingSigningError(t *testing.T) {
 		Artifact: "test.tar.gz",
 		Message:  "access denied",
 	}
-	
+
 	result := CategorizeError("different.tar.gz", originalErr)
-	
+
 	// Should return the original error unchanged
 	assert.Equal(t, originalErr, result)
 	assert.Equal(t, ErrorTypePermission, result.Type)
@@ -1009,7 +1009,7 @@ func TestWithRetry_MaxAttemptsExceeded(t *testing.T) {
 		callCount++
 		return NewSigningError(ErrorTypeNetwork, "test.tar.gz", "network timeout", fmt.Errorf("timeout"))
 	}
-	
+
 	err := WithRetry(3, operation)
 	assert.Error(t, err)
 	assert.Equal(t, 3, callCount)
@@ -1021,11 +1021,11 @@ func TestUploadArtifactWithAttestation(t *testing.T) {
 	// Create a test artifact
 	artifactPath := createTestArtifact(t, "test upload content")
 	attestationBytes := []byte("test attestation")
-	
+
 	// Create uploader with mock cache
 	mockCache := &mockRemoteCache{}
 	uploader := NewArtifactUploader(mockCache)
-	
+
 	// Test upload with mock cache (should succeed)
 	err := uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestationBytes)
 	assert.NoError(t, err)
@@ -1034,7 +1034,7 @@ func TestUploadArtifactWithAttestation(t *testing.T) {
 // TestGenerateSignedSLSAAttestation_ChecksumError tests checksum calculation error
 func TestGenerateSignedSLSAAttestation_ChecksumError(t *testing.T) {
 	githubCtx := createMockGitHubContext()
-	
+
 	// Test with non-existent file (should fail at checksum calculation)
 	_, err := GenerateSignedSLSAAttestation(context.Background(), "/nonexistent/file.tar.gz", githubCtx)
 	assert.Error(t, err)
@@ -1044,12 +1044,12 @@ func TestGenerateSignedSLSAAttestation_ChecksumError(t *testing.T) {
 // TestGenerateSignedSLSAAttestation_InvalidContext tests with invalid GitHub context
 func TestGenerateSignedSLSAAttestation_InvalidContext(t *testing.T) {
 	artifactPath := createTestArtifact(t, "test content")
-	
+
 	// Test with invalid GitHub context
 	invalidCtx := &GitHubContext{
 		// Missing required fields
 	}
-	
+
 	_, err := GenerateSignedSLSAAttestation(context.Background(), artifactPath, invalidCtx)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "incomplete GitHub context")
@@ -1063,7 +1063,7 @@ func TestSignProvenanceWithSigstore_EnvironmentValidation(t *testing.T) {
 		"ACTIONS_ID_TOKEN_REQUEST_URL":   os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"),
 		"GITHUB_ACTIONS":                 os.Getenv("GITHUB_ACTIONS"),
 	}
-	
+
 	// Clean up after test
 	defer func() {
 		for k, v := range originalEnv {
@@ -1074,15 +1074,15 @@ func TestSignProvenanceWithSigstore_EnvironmentValidation(t *testing.T) {
 			}
 		}
 	}()
-	
+
 	// Clear Sigstore environment to trigger validation error
 	_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
 	_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
 	_ = os.Unsetenv("GITHUB_ACTIONS")
-	
+
 	artifactPath := createTestArtifact(t, "test content")
 	githubCtx := createMockGitHubContext()
-	
+
 	// This should fail at Sigstore environment validation
 	_, err := GenerateSignedSLSAAttestation(context.Background(), artifactPath, githubCtx)
 	assert.Error(t, err)

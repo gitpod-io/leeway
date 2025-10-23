@@ -21,14 +21,14 @@ import (
 
 // GitHubContext contains GitHub Actions environment information
 type GitHubContext struct {
-	RunID        string // GITHUB_RUN_ID
-	RunNumber    string // GITHUB_RUN_NUMBER
-	Actor        string // GITHUB_ACTOR
-	Repository   string // GITHUB_REPOSITORY
-	Ref          string // GITHUB_REF
-	SHA          string // GITHUB_SHA
-	ServerURL    string // GITHUB_SERVER_URL
-	WorkflowRef  string // GITHUB_WORKFLOW_REF
+	RunID       string // GITHUB_RUN_ID
+	RunNumber   string // GITHUB_RUN_NUMBER
+	Actor       string // GITHUB_ACTOR
+	Repository  string // GITHUB_REPOSITORY
+	Ref         string // GITHUB_REF
+	SHA         string // GITHUB_SHA
+	ServerURL   string // GITHUB_SERVER_URL
+	WorkflowRef string // GITHUB_WORKFLOW_REF
 }
 
 // Validate ensures all required GitHub context fields are present
@@ -71,8 +71,6 @@ type SignedAttestationResult struct {
 	Checksum         string `json:"checksum"`          // SHA256 of the artifact
 	ArtifactName     string `json:"artifact_name"`     // Name of the artifact
 }
-
-
 
 // GenerateSignedSLSAAttestation generates and signs SLSA provenance in one integrated step
 func GenerateSignedSLSAAttestation(ctx context.Context, artifactPath string, githubCtx *GitHubContext) (*SignedAttestationResult, error) {

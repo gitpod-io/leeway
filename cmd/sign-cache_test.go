@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/spf13/cobra"
 
 	"github.com/gitpod-io/leeway/pkg/leeway/signing"
 )
@@ -18,8 +18,6 @@ import (
 // workspaceMutex serializes access to workspace initialization to prevent
 // concurrent file descriptor issues when multiple tests access BUILD.yaml
 var workspaceMutex sync.Mutex
-
-
 
 // Test helper: Create test manifest file
 func createTestManifest(t *testing.T, dir string, artifacts []string) string {
@@ -59,17 +57,17 @@ func TestSignCacheCommand_Exists(t *testing.T) {
 // TestSignCacheCommand_FlagDefinitions verifies all required flags
 func TestSignCacheCommand_FlagDefinitions(t *testing.T) {
 	cmd := signCacheCmd
-	
+
 	// Verify --from-manifest flag exists
 	manifestFlag := cmd.Flags().Lookup("from-manifest")
 	require.NotNil(t, manifestFlag, "from-manifest flag should exist")
 	assert.Equal(t, "string", manifestFlag.Value.Type())
-	
+
 	// Verify --dry-run flag exists
 	dryRunFlag := cmd.Flags().Lookup("dry-run")
 	require.NotNil(t, dryRunFlag, "dry-run flag should exist")
 	assert.Equal(t, "bool", dryRunFlag.Value.Type())
-	
+
 	// Verify from-manifest is required
 	annotations := cmd.Flags().Lookup("from-manifest").Annotations
 	assert.NotNil(t, annotations, "from-manifest should have required annotation")
@@ -96,7 +94,7 @@ func TestSignCacheCommand_FlagParsing(t *testing.T) {
 			errorMsg:    "manifest file does not exist",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create new command instance for testing
@@ -107,13 +105,13 @@ func TestSignCacheCommand_FlagParsing(t *testing.T) {
 			cmd.Flags().String("from-manifest", "", "Path to manifest")
 			cmd.Flags().Bool("dry-run", false, "Dry run mode")
 			cmd.SetArgs(tt.args)
-			
+
 			// Capture output to prevent spam
 			cmd.SetOut(os.NewFile(0, os.DevNull))
 			cmd.SetErr(os.NewFile(0, os.DevNull))
-			
+
 			err := cmd.Execute()
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 				if tt.errorMsg != "" {
@@ -169,11 +167,11 @@ func TestParseManifest_ValidInputs(t *testing.T) {
 			expectedCount: 2,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
-			
+
 			// Create actual artifact files
 			for _, line := range tt.manifestLines {
 				trimmed := strings.TrimSpace(line)
@@ -185,7 +183,7 @@ func TestParseManifest_ValidInputs(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			
+
 			// Update manifest to use actual paths
 			var actualLines []string
 			for _, line := range tt.manifestLines {
@@ -197,9 +195,9 @@ func TestParseManifest_ValidInputs(t *testing.T) {
 					actualLines = append(actualLines, line)
 				}
 			}
-			
+
 			manifestPath := createTestManifest(t, tmpDir, actualLines)
-			
+
 			artifacts, err := parseManifest(manifestPath)
 			require.NoError(t, err)
 			assert.Len(t, artifacts, tt.expectedCount)
@@ -248,13 +246,12 @@ func TestParseManifest_InvalidInputs(t *testing.T) {
 			expectError:   true,
 			errorContains: "validation failed",
 		},
-
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
-			
+
 			// Replace placeholders and create files
 			var processedLines []string
 			for _, line := range tt.manifestLines {
@@ -272,11 +269,11 @@ func TestParseManifest_InvalidInputs(t *testing.T) {
 					processedLines = append(processedLines, line)
 				}
 			}
-			
+
 			manifestPath := createTestManifest(t, tmpDir, processedLines)
-			
+
 			artifacts, err := parseManifest(manifestPath)
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 				if tt.errorContains != "" && err != nil {
@@ -326,23 +323,23 @@ func TestParseManifest_EdgeCases(t *testing.T) {
 			setup: func(t *testing.T, dir string) string {
 				artifactPath := filepath.Join(dir, "artifact.tar.gz")
 				_ = os.WriteFile(artifactPath, []byte("test"), 0644)
-				
+
 				symlinkPath := filepath.Join(dir, "artifact-link.tar.gz")
 				_ = os.Symlink(artifactPath, symlinkPath)
-				
+
 				return createTestManifest(t, dir, []string{symlinkPath})
 			},
 			expectError: false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			manifestPath := tt.setup(t, tmpDir)
-			
+
 			artifacts, err := parseManifest(manifestPath)
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 			} else {
@@ -364,13 +361,13 @@ func TestGitHubContext_Validation(t *testing.T) {
 		{
 			name: "all required vars present",
 			envVars: map[string]string{
-				"GITHUB_RUN_ID":      "1234567890",
-				"GITHUB_RUN_NUMBER":  "42",
-				"GITHUB_ACTOR":       "test-user",
-				"GITHUB_REPOSITORY":  "gitpod-io/leeway",
-				"GITHUB_REF":         "refs/heads/main",
-				"GITHUB_SHA":         "abc123def456",
-				"GITHUB_SERVER_URL":  "https://github.com",
+				"GITHUB_RUN_ID":       "1234567890",
+				"GITHUB_RUN_NUMBER":   "42",
+				"GITHUB_ACTOR":        "test-user",
+				"GITHUB_REPOSITORY":   "gitpod-io/leeway",
+				"GITHUB_REF":          "refs/heads/main",
+				"GITHUB_SHA":          "abc123def456",
+				"GITHUB_SERVER_URL":   "https://github.com",
 				"GITHUB_WORKFLOW_REF": ".github/workflows/build.yml@refs/heads/main",
 			},
 			expectError: false,
@@ -408,9 +405,8 @@ func TestGitHubContext_Validation(t *testing.T) {
 			expectError: true,
 			errorMsg:    "GITHUB_SHA",
 		},
-
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clear all GitHub env vars first
@@ -420,18 +416,18 @@ func TestGitHubContext_Validation(t *testing.T) {
 				"GITHUB_SERVER_URL", "GITHUB_WORKFLOW_REF",
 			}
 			for _, v := range githubVars {
-				os.Unsetenv(v)
+				_ = os.Unsetenv(v)
 			}
-			
+
 			// Set test environment
 			for k, v := range tt.envVars {
 				t.Setenv(k, v)
 			}
-			
+
 			// Get and validate context
 			ctx := signing.GetGitHubContext()
 			err := ctx.Validate()
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 				if tt.errorMsg != "" {
@@ -450,34 +446,34 @@ func TestGitHubContext_Validation(t *testing.T) {
 // TestSignCache_DryRunMode verifies dry-run doesn't perform actual operations
 func TestSignCache_DryRunMode(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create test artifacts
 	artifact1 := createMockArtifact(t, tmpDir, "artifact1.tar.gz")
 	artifact2 := createMockArtifact(t, tmpDir, "artifact2.tar.gz")
-	
+
 	manifestPath := createTestManifest(t, tmpDir, []string{artifact1, artifact2})
-	
+
 	// Set up minimal GitHub environment
 	setupGitHubEnv(t)
-	
+
 	// Track if any real operations occurred
 	operationsPerformed := false
-	
+
 	// Run in dry-run mode (serialize workspace access)
 	workspaceMutex.Lock()
 	err := runSignCache(context.Background(), nil, manifestPath, true)
 	workspaceMutex.Unlock()
-	
+
 	// Should succeed without errors
 	assert.NoError(t, err)
-	
+
 	// Verify no actual signing occurred (no .att files created)
 	attFile1 := artifact1 + ".att"
 	attFile2 := artifact2 + ".att"
-	
+
 	assert.NoFileExists(t, attFile1, "Should not create attestation in dry-run")
 	assert.NoFileExists(t, attFile2, "Should not create attestation in dry-run")
-	
+
 	// Verify no operations flag
 	assert.False(t, operationsPerformed, "No real operations should occur in dry-run")
 }
@@ -515,10 +511,10 @@ func TestSignCache_ErrorScenarios(t *testing.T) {
 				tmpDir := t.TempDir()
 				artifact := createMockArtifact(t, tmpDir, "test.tar.gz")
 				manifestPath := createTestManifest(t, tmpDir, []string{artifact})
-				
+
 				// Ensure no cache env vars set
 				os.Unsetenv("LEEWAY_REMOTE_CACHE_BUCKET")
-				
+
 				return manifestPath, func() {}
 			},
 			expectError: true,
@@ -527,35 +523,35 @@ func TestSignCache_ErrorScenarios(t *testing.T) {
 			name: "partial signing failure",
 			setup: func(t *testing.T) (string, func()) {
 				tmpDir := t.TempDir()
-				
+
 				// Create one valid artifact
 				valid := createMockArtifact(t, tmpDir, "valid.tar.gz")
-				
+
 				// Create one that will fail (simulate by using invalid format)
 				invalid := filepath.Join(tmpDir, "invalid.txt")
 				_ = os.WriteFile(invalid, []byte("not a tar"), 0644)
-				
+
 				manifestPath := createTestManifest(t, tmpDir, []string{valid, invalid})
-				
+
 				return manifestPath, func() {}
 			},
 			expectError:   true, // Will fail because both artifacts fail (100% failure rate > 50%)
 			expectPartial: false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manifestPath, cleanup := tt.setup(t)
 			defer cleanup()
-			
+
 			setupGitHubEnv(t)
-			
+
 			// Serialize workspace access to prevent concurrent file descriptor issues
 			workspaceMutex.Lock()
 			err := runSignCache(context.Background(), nil, manifestPath, false)
 			workspaceMutex.Unlock()
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 			} else if tt.expectPartial {
