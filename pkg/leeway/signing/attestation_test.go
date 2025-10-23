@@ -171,7 +171,8 @@ func TestGenerateSLSAAttestation_RequiredFields(t *testing.T) {
 	require.NoError(t, err)
 	
 	var parsed map[string]interface{}
-	json.Unmarshal(attestation, &parsed)
+	err = json.Unmarshal(attestation, &parsed)
+	require.NoError(t, err)
 	
 	// Verify all required fields present
 	for _, field := range requiredFields {
@@ -188,7 +189,8 @@ func TestGenerateSLSAAttestation_PredicateContent(t *testing.T) {
 	require.NoError(t, err)
 	
 	var parsed map[string]interface{}
-	json.Unmarshal(attestation, &parsed)
+	err = json.Unmarshal(attestation, &parsed)
+	require.NoError(t, err)
 	
 	predicate := parsed["predicate"].(map[string]interface{})
 	
@@ -249,7 +251,8 @@ func TestGenerateSLSAAttestation_ChecksumAccuracy(t *testing.T) {
 			require.NoError(t, err)
 			
 			var parsed map[string]interface{}
-			json.Unmarshal(attestation, &parsed)
+			err = json.Unmarshal(attestation, &parsed)
+			require.NoError(t, err)
 			
 			// Extract checksum from attestation
 			subject := parsed["subject"].([]interface{})[0].(map[string]interface{})
@@ -277,8 +280,10 @@ func TestGenerateSLSAAttestation_ChecksumConsistency(t *testing.T) {
 	
 	// Extract checksums
 	var parsed1, parsed2 map[string]interface{}
-	json.Unmarshal(attestation1, &parsed1)
-	json.Unmarshal(attestation2, &parsed2)
+	err = json.Unmarshal(attestation1, &parsed1)
+	require.NoError(t, err)
+	err = json.Unmarshal(attestation2, &parsed2)
+	require.NoError(t, err)
 	
 	subject1 := parsed1["subject"].([]interface{})[0].(map[string]interface{})
 	digest1 := subject1["digest"].(map[string]interface{})
@@ -335,7 +340,8 @@ func TestGenerateSLSAAttestation_GitHubContextIntegration(t *testing.T) {
 			require.NoError(t, err)
 			
 			var parsed map[string]interface{}
-			json.Unmarshal(attestation, &parsed)
+			err = json.Unmarshal(attestation, &parsed)
+			require.NoError(t, err)
 			
 			predicate := parsed["predicate"].(map[string]interface{})
 			invocation := predicate["invocation"].(map[string]interface{})

@@ -79,19 +79,6 @@ func (m *mockRemoteCacheUpload) UploadFile(ctx context.Context, filePath string,
 	return nil
 }
 
-// Mock local cache for testing
-type mockLocalCacheUpload struct {
-	files map[string]string // package name -> file path
-}
-
-func (m *mockLocalCacheUpload) Location(pkg cache.Package) (path string, exists bool) {
-	if m.files == nil {
-		return "", false
-	}
-	path, exists = m.files[pkg.FullName()]
-	return path, exists
-}
-
 // Test helper to create a test artifact file
 func createTestArtifactFile(t *testing.T, dir, name, content string) string {
 	path := filepath.Join(dir, name)
@@ -145,11 +132,12 @@ func TestArtifactUploader_MultipleArtifacts(t *testing.T) {
 	// Upload multiple artifacts
 	for _, name := range artifacts {
 		artifactPath := filepath.Join(tmpDir, name)
-		os.WriteFile(artifactPath, []byte("content "+name), 0644)
+		err := os.WriteFile(artifactPath, []byte("content "+name), 0644)
+		require.NoError(t, err)
 		
 		attestation := []byte(`{"artifact":"` + name + `"}`)
 		
-		err := uploader.UploadArtifactWithAttestation(ctx, artifactPath, attestation)
+		err = uploader.UploadArtifactWithAttestation(ctx, artifactPath, attestation)
 		// Current implementation doesn't support non-S3 caches
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported remote cache type")
@@ -246,7 +234,8 @@ func TestArtifactUploader_HandlesLargeFiles(t *testing.T) {
 func TestArtifactUploader_NetworkFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	artifactPath := filepath.Join(tmpDir, "test.tar.gz")
-	os.WriteFile(artifactPath, []byte("test"), 0644)
+	err := os.WriteFile(artifactPath, []byte("test"), 0644)
+	require.NoError(t, err)
 	
 	// Configure mock to simulate network failure
 	mockCache := &mockRemoteCacheUpload{
@@ -259,7 +248,7 @@ func TestArtifactUploader_NetworkFailure(t *testing.T) {
 	uploader := NewArtifactUploader(mockCache)
 	attestation := []byte(`{"test":"attestation"}`)
 	
-	err := uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestation)
+	err = uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestation)
 	
 	// Should return error (either network error or unsupported cache type)
 	assert.Error(t, err)
@@ -269,7 +258,8 @@ func TestArtifactUploader_NetworkFailure(t *testing.T) {
 func TestArtifactUploader_PartialUploadFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	artifactPath := filepath.Join(tmpDir, "test.tar.gz")
-	os.WriteFile(artifactPath, []byte("test"), 0644)
+	err := os.WriteFile(artifactPath, []byte("test"), 0644)
+	require.NoError(t, err)
 	
 	// Simulate: artifact upload succeeds, attestation upload fails
 	mockCache := &mockRemoteCacheUpload{
@@ -282,7 +272,7 @@ func TestArtifactUploader_PartialUploadFailure(t *testing.T) {
 	uploader := NewArtifactUploader(mockCache)
 	attestation := []byte(`{"test":"attestation"}`)
 	
-	err := uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestation)
+	err = uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestation)
 	
 	// Should return error
 	assert.Error(t, err)
@@ -292,7 +282,8 @@ func TestArtifactUploader_PartialUploadFailure(t *testing.T) {
 func TestArtifactUploader_PermissionDenied(t *testing.T) {
 	tmpDir := t.TempDir()
 	artifactPath := filepath.Join(tmpDir, "test.tar.gz")
-	os.WriteFile(artifactPath, []byte("test"), 0644)
+	err := os.WriteFile(artifactPath, []byte("test"), 0644)
+	require.NoError(t, err)
 	
 	// Simulate permission error
 	mockCache := &mockRemoteCacheUpload{
@@ -305,7 +296,7 @@ func TestArtifactUploader_PermissionDenied(t *testing.T) {
 	uploader := NewArtifactUploader(mockCache)
 	attestation := []byte(`{"test":"attestation"}`)
 	
-	err := uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestation)
+	err = uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestation)
 	
 	assert.Error(t, err)
 }
@@ -314,7 +305,8 @@ func TestArtifactUploader_PermissionDenied(t *testing.T) {
 func TestArtifactUploader_ContextCancellation(t *testing.T) {
 	tmpDir := t.TempDir()
 	artifactPath := filepath.Join(tmpDir, "test.tar.gz")
-	os.WriteFile(artifactPath, []byte("test"), 0644)
+	err := os.WriteFile(artifactPath, []byte("test"), 0644)
+	require.NoError(t, err)
 	
 	mockCache := &mockRemoteCacheUpload{
 		uploadedFiles: make(map[string][]byte),
@@ -327,7 +319,7 @@ func TestArtifactUploader_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 	
-	err := uploader.UploadArtifactWithAttestation(ctx, artifactPath, attestation)
+	err = uploader.UploadArtifactWithAttestation(ctx, artifactPath, attestation)
 	
 	// Should handle cancellation gracefully
 	assert.Error(t, err)
