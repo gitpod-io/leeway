@@ -38,7 +38,7 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 			Message: "attestation bytes cannot be empty",
 		}
 	}
-	
+
 	// Check artifact exists before creating temp file (fail fast)
 	if _, err := os.Stat(artifactPath); err != nil {
 		return &SigningError{
@@ -48,7 +48,7 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 			Cause:    err,
 		}
 	}
-	
+
 	// Extract artifact name for key generation
 	artifactName := filepath.Base(artifactPath)
 
@@ -86,7 +86,7 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 		return fmt.Errorf("context cancelled before upload: %w", err)
 	}
 
-	// Upload artifact first using the new UploadFile method
+	// Upload artifact first
 	if err := u.remoteCache.UploadFile(ctx, artifactPath, artifactKey); err != nil {
 		return fmt.Errorf("failed to upload artifact: %w", err)
 	}
@@ -96,7 +96,7 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 		return fmt.Errorf("context cancelled between uploads: %w", err)
 	}
 
-	// Upload .att file using the new UploadFile method
+	// Upload attestation file
 	if err := u.remoteCache.UploadFile(ctx, attestationPath, attestationKey); err != nil {
 		return fmt.Errorf("failed to upload .att file: %w", err)
 	}

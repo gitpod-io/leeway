@@ -11,20 +11,20 @@ import (
 // SigningError represents a categorized error during the signing process
 type SigningError struct {
 	Type     SigningErrorType `json:"type"`
-	Artifact string          `json:"artifact"`
-	Message  string          `json:"message"`
-	Cause    error           `json:"-"`
+	Artifact string           `json:"artifact"`
+	Message  string           `json:"message"`
+	Cause    error            `json:"-"`
 }
 
 // SigningErrorType categorizes different types of signing errors
 type SigningErrorType string
 
 const (
-	ErrorTypeNetwork     SigningErrorType = "network"
-	ErrorTypeSigstore    SigningErrorType = "sigstore"
-	ErrorTypePermission  SigningErrorType = "permission"
-	ErrorTypeValidation  SigningErrorType = "validation"
-	ErrorTypeFileSystem  SigningErrorType = "filesystem"
+	ErrorTypeNetwork    SigningErrorType = "network"
+	ErrorTypeSigstore   SigningErrorType = "sigstore"
+	ErrorTypePermission SigningErrorType = "permission"
+	ErrorTypeValidation SigningErrorType = "validation"
+	ErrorTypeFileSystem SigningErrorType = "filesystem"
 )
 
 // Error implements the error interface
@@ -107,7 +107,7 @@ func CategorizeError(artifact string, err error) *SigningError {
 
 	// Try to categorize based on error message patterns
 	errMsg := err.Error()
-	
+
 	// Network-related errors
 	if containsAny(errMsg, []string{"connection", "timeout", "network", "dial", "dns"}) {
 		return &SigningError{
@@ -117,7 +117,7 @@ func CategorizeError(artifact string, err error) *SigningError {
 			Cause:    err,
 		}
 	}
-	
+
 	// Permission-related errors
 	if containsAny(errMsg, []string{"permission", "access denied", "forbidden", "unauthorized"}) {
 		return &SigningError{
@@ -127,7 +127,7 @@ func CategorizeError(artifact string, err error) *SigningError {
 			Cause:    err,
 		}
 	}
-	
+
 	// File system errors
 	if containsAny(errMsg, []string{"no such file", "not found", "is a directory", "read-only"}) {
 		return &SigningError{
@@ -137,7 +137,7 @@ func CategorizeError(artifact string, err error) *SigningError {
 			Cause:    err,
 		}
 	}
-	
+
 	// Default to network error for unknown errors (most likely to be retryable)
 	return &SigningError{
 		Type:     ErrorTypeNetwork,
