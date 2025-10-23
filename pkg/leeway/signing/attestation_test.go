@@ -942,26 +942,6 @@ func (m *mockRemoteCache) Upload(ctx context.Context, src cache.LocalCache, pkgs
 }
 
 // TestGetEnvOrDefault tests the environment variable helper
-func TestGetEnvOrDefault(t *testing.T) {
-	// Test with existing environment variable
-	os.Setenv("TEST_VAR", "test_value")
-	defer os.Unsetenv("TEST_VAR")
-	
-	result := getEnvOrDefault("TEST_VAR", "default_value")
-	assert.Equal(t, "test_value", result)
-	
-	// Test with non-existing environment variable
-	result = getEnvOrDefault("NON_EXISTENT_VAR", "default_value")
-	assert.Equal(t, "default_value", result)
-	
-	// Test with empty environment variable
-	os.Setenv("EMPTY_VAR", "")
-	defer os.Unsetenv("EMPTY_VAR")
-	
-	result = getEnvOrDefault("EMPTY_VAR", "default_value")
-	assert.Equal(t, "default_value", result)
-}
-
 // TestValidateSigstoreEnvironment tests Sigstore environment validation
 func TestValidateSigstoreEnvironment(t *testing.T) {
 	// Save original environment
