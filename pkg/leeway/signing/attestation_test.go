@@ -886,46 +886,6 @@ func TestArtifactUploader(t *testing.T) {
 	assert.Equal(t, mockCache, uploader.remoteCache)
 }
 
-// TestMockCachePackage tests the mock cache package structure
-func TestMockCachePackage(t *testing.T) {
-	pkg := &mockCachePackage{
-		version:  "1.0.0",
-		fullName: "test-artifact:1.0.0",
-		filePath: "/path/to/artifact",
-	}
-	
-	version, err := pkg.Version()
-	assert.NoError(t, err)
-	assert.Equal(t, "1.0.0", version)
-	assert.Equal(t, "test-artifact:1.0.0", pkg.FullName())
-}
-
-// TestMockLocalCache tests the mock local cache structure
-func TestMockLocalCache(t *testing.T) {
-	cache := &mockLocalCache{
-		packages: map[string]string{
-			"test-artifact:1.0.0": "/path/to/artifact",
-		},
-	}
-	
-	pkg := &mockCachePackage{
-		fullName: "test-artifact:1.0.0",
-	}
-	
-	path, exists := cache.Location(pkg)
-	assert.True(t, exists)
-	assert.Equal(t, "/path/to/artifact", path)
-	
-	// Test non-existent package
-	pkg2 := &mockCachePackage{
-		fullName: "nonexistent:1.0.0",
-	}
-	
-	path2, exists2 := cache.Location(pkg2)
-	assert.False(t, exists2)
-	assert.Empty(t, path2)
-}
-
 // Mock implementations for testing
 type mockRemoteCache struct{}
 
@@ -938,6 +898,10 @@ func (m *mockRemoteCache) Download(ctx context.Context, dst cache.LocalCache, pk
 }
 
 func (m *mockRemoteCache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
+	return nil
+}
+
+func (m *mockRemoteCache) UploadFile(ctx context.Context, filePath string, key string) error {
 	return nil
 }
 
