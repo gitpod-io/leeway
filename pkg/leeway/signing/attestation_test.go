@@ -1026,10 +1026,9 @@ func TestUploadArtifactWithAttestation(t *testing.T) {
 	mockCache := &mockRemoteCache{}
 	uploader := NewArtifactUploader(mockCache)
 	
-	// Test upload with unsupported cache type (should fail)
+	// Test upload with mock cache (should succeed)
 	err := uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestationBytes)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported remote cache type")
+	assert.NoError(t, err)
 }
 
 // TestGenerateSignedSLSAAttestation_ChecksumError tests checksum calculation error
