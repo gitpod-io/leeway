@@ -185,24 +185,6 @@ func (m *mockPackageResilience) FullName() string {
 	return "test-package:" + m.version
 }
 
-// Mock SLSA verifier for testing
-type mockSLSAVerifier struct {
-	simulateOutage bool
-	verifyDelay    time.Duration
-}
-
-func (m *mockSLSAVerifier) VerifyAttestation(ctx context.Context, artifactPath, attestationPath string) error {
-	if m.simulateOutage {
-		return errors.New("Sigstore service unavailable")
-	}
-	
-	if m.verifyDelay > 0 {
-		time.Sleep(m.verifyDelay)
-	}
-	
-	return nil
-}
-
 // Helper to create a mock S3 cache with configurable behavior
 func createMockS3Cache(storage *mockS3WithFailures, config *cache.RemoteConfig) *S3Cache {
 	if config == nil {

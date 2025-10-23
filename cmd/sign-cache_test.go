@@ -261,11 +261,11 @@ func TestParseManifest_InvalidInputs(t *testing.T) {
 				switch line {
 				case "{{DIR}}":
 					dirPath := filepath.Join(tmpDir, "testdir")
-					os.Mkdir(dirPath, 0755)
+					_ = os.Mkdir(dirPath, 0755)
 					processedLines = append(processedLines, dirPath)
 				case "{{VALID}}":
 					validPath := filepath.Join(tmpDir, "valid.tar.gz")
-					os.WriteFile(validPath, []byte("test"), 0644)
+					_ = os.WriteFile(validPath, []byte("test"), 0644)
 					processedLines = append(processedLines, validPath)
 
 				default:
@@ -305,9 +305,9 @@ func TestParseManifest_EdgeCases(t *testing.T) {
 				for i := 0; i < 50; i++ {
 					longPath = filepath.Join(longPath, "subdir")
 				}
-				os.MkdirAll(longPath, 0755)
+				_ = os.MkdirAll(longPath, 0755)
 				artifactPath := filepath.Join(longPath, "artifact.tar.gz")
-				os.WriteFile(artifactPath, []byte("test"), 0644)
+				_ = os.WriteFile(artifactPath, []byte("test"), 0644)
 				return createTestManifest(t, dir, []string{artifactPath})
 			},
 			expectError: false,
@@ -316,7 +316,7 @@ func TestParseManifest_EdgeCases(t *testing.T) {
 			name: "special characters in filename",
 			setup: func(t *testing.T, dir string) string {
 				artifactPath := filepath.Join(dir, "artifact-v1.0.0_linux-amd64.tar.gz")
-				os.WriteFile(artifactPath, []byte("test"), 0644)
+				_ = os.WriteFile(artifactPath, []byte("test"), 0644)
 				return createTestManifest(t, dir, []string{artifactPath})
 			},
 			expectError: false,
@@ -325,10 +325,10 @@ func TestParseManifest_EdgeCases(t *testing.T) {
 			name: "symlink to artifact",
 			setup: func(t *testing.T, dir string) string {
 				artifactPath := filepath.Join(dir, "artifact.tar.gz")
-				os.WriteFile(artifactPath, []byte("test"), 0644)
+				_ = os.WriteFile(artifactPath, []byte("test"), 0644)
 				
 				symlinkPath := filepath.Join(dir, "artifact-link.tar.gz")
-				os.Symlink(artifactPath, symlinkPath)
+				_ = os.Symlink(artifactPath, symlinkPath)
 				
 				return createTestManifest(t, dir, []string{symlinkPath})
 			},
@@ -533,7 +533,7 @@ func TestSignCache_ErrorScenarios(t *testing.T) {
 				
 				// Create one that will fail (simulate by using invalid format)
 				invalid := filepath.Join(tmpDir, "invalid.txt")
-				os.WriteFile(invalid, []byte("not a tar"), 0644)
+				_ = os.WriteFile(invalid, []byte("not a tar"), 0644)
 				
 				manifestPath := createTestManifest(t, tmpDir, []string{valid, invalid})
 				
