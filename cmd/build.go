@@ -364,6 +364,10 @@ func (c *pushOnlyRemoteCache) Upload(ctx context.Context, src cache.LocalCache, 
 	return c.C.Upload(ctx, src, pkgs)
 }
 
+func (c *pushOnlyRemoteCache) UploadFile(ctx context.Context, filePath string, key string) error {
+	return c.C.UploadFile(ctx, filePath, key)
+}
+
 type pullOnlyRemoteCache struct {
 	C cache.RemoteCache
 }
@@ -377,6 +381,10 @@ func (c *pullOnlyRemoteCache) Download(ctx context.Context, dst cache.LocalCache
 }
 
 func (c *pullOnlyRemoteCache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
+	return nil
+}
+
+func (c *pullOnlyRemoteCache) UploadFile(ctx context.Context, filePath string, key string) error {
 	return nil
 }
 
