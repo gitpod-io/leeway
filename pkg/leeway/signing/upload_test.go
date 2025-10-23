@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
@@ -17,9 +18,13 @@ type mockRemoteCacheUpload struct {
 	uploadedFiles map[string][]byte
 	uploadErrors  map[string]error
 	callCount     int
+	mu            sync.Mutex
 }
 
 func (m *mockRemoteCacheUpload) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
 	m.callCount++
 	
 	for _, pkg := range pkgs {
@@ -56,6 +61,9 @@ func (m *mockRemoteCacheUpload) ExistingPackages(ctx context.Context, pkgs []cac
 }
 
 func (m *mockRemoteCacheUpload) UploadFile(ctx context.Context, filePath string, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
 	m.callCount++
 	
 	// Check if this key should fail
@@ -260,24 +268,6 @@ func TestArtifactUploader_ContextCancellation(t *testing.T) {
 // Note: Mock implementation doesn't validate file system errors
 func TestArtifactUploader_InvalidArtifactPath(t *testing.T) {
 	t.Skip("Mock implementation doesn't validate file system errors")
-}
-
-// Helper function to create a file with restricted permissions
-func createRestrictedFile(t *testing.T) string {
-	tmpDir := t.TempDir()
-	restrictedPath := filepath.Join(tmpDir, "restricted.tar.gz")
-	
-	// Create file
-	err := os.WriteFile(restrictedPath, []byte("test"), 0644)
-	require.NoError(t, err)
-	
-	// Remove read permissions (this may not work on all systems)
-	err = os.Chmod(restrictedPath, 0000)
-	if err != nil {
-		t.Skip("Cannot create restricted file on this system")
-	}
-	
-	return restrictedPath
 }
 
 // TestArtifactUploader_ConcurrentUploads tests concurrent upload handling
