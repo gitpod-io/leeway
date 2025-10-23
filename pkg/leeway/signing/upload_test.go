@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/stretchr/testify/assert"
@@ -151,10 +152,52 @@ func TestArtifactUploader_MultipleArtifacts(t *testing.T) {
 }
 
 // TestArtifactUploader_ValidatesInputs tests input validation
-// Note: Mock implementation doesn't validate inputs, so this test is skipped
-// Real validation would happen in the actual S3/GCS implementations
 func TestArtifactUploader_ValidatesInputs(t *testing.T) {
-	t.Skip("Mock implementation doesn't validate inputs - validation happens in real cache implementations")
+	mockCache := &mockRemoteCacheUpload{
+		uploadedFiles: make(map[string][]byte),
+	}
+	uploader := NewArtifactUploader(mockCache)
+	ctx := context.Background()
+	
+	t.Run("empty artifact path", func(t *testing.T) {
+		err := uploader.UploadArtifactWithAttestation(ctx, "", []byte("attestation"))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "artifact path cannot be empty")
+	})
+	
+	t.Run("empty attestation bytes", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		artifactPath := filepath.Join(tmpDir, "test.tar.gz")
+		_ = os.WriteFile(artifactPath, []byte("test"), 0644)
+		
+		err := uploader.UploadArtifactWithAttestation(ctx, artifactPath, []byte{})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "attestation bytes cannot be empty")
+	})
+	
+	t.Run("nil attestation bytes", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		artifactPath := filepath.Join(tmpDir, "test.tar.gz")
+		_ = os.WriteFile(artifactPath, []byte("test"), 0644)
+		
+		err := uploader.UploadArtifactWithAttestation(ctx, artifactPath, nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "attestation bytes cannot be empty")
+	})
+	
+	t.Run("non-existent artifact file", func(t *testing.T) {
+		err := uploader.UploadArtifactWithAttestation(ctx, "/nonexistent/file.tar.gz", []byte("attestation"))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "artifact file not accessible")
+	})
+	
+	t.Run("directory instead of file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		err := uploader.UploadArtifactWithAttestation(ctx, tmpDir, []byte("attestation"))
+		// os.Stat succeeds for directories, but upload will fail later
+		// This is acceptable - the backend will catch it
+		assert.NoError(t, err)
+	})
 }
 
 // TestArtifactUploader_HandlesLargeFiles tests large file handling
@@ -261,14 +304,39 @@ func TestArtifactUploader_PermissionDenied(t *testing.T) {
 
 // TestArtifactUploader_ContextCancellation tests context handling
 func TestArtifactUploader_ContextCancellation(t *testing.T) {
-	t.Skip("Mock implementation doesn't respect context cancellation")
+	tmpDir := t.TempDir()
+	artifactPath := filepath.Join(tmpDir, "test.tar.gz")
+	_ = os.WriteFile(artifactPath, []byte("test"), 0644)
+	
+	mockCache := &mockRemoteCacheUpload{
+		uploadedFiles: make(map[string][]byte),
+	}
+	uploader := NewArtifactUploader(mockCache)
+	attestation := []byte(`{"test":"attestation"}`)
+	
+	t.Run("context cancelled before upload", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+		
+		err := uploader.UploadArtifactWithAttestation(ctx, artifactPath, attestation)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "context cancelled")
+	})
+	
+	t.Run("context timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+		defer cancel()
+		time.Sleep(10 * time.Millisecond) // Ensure timeout
+		
+		err := uploader.UploadArtifactWithAttestation(ctx, artifactPath, attestation)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "context")
+	})
 }
 
 // TestArtifactUploader_InvalidArtifactPath tests file system errors
-// Note: Mock implementation doesn't validate file system errors
-func TestArtifactUploader_InvalidArtifactPath(t *testing.T) {
-	t.Skip("Mock implementation doesn't validate file system errors")
-}
+// This is now covered by TestArtifactUploader_ValidatesInputs
+// which tests non-existent files and directories
 
 // TestArtifactUploader_ConcurrentUploads tests concurrent upload handling
 func TestArtifactUploader_ConcurrentUploads(t *testing.T) {
