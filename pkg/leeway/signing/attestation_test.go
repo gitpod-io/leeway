@@ -642,9 +642,9 @@ func TestGetGitHubContext(t *testing.T) {
 	defer func() {
 		for k, v := range originalEnv {
 			if v == "" {
-				os.Unsetenv(k)
+				_ = os.Unsetenv(k)
 			} else {
-				os.Setenv(k, v)
+				_ = os.Setenv(k, v)
 			}
 		}
 	}()
@@ -662,7 +662,7 @@ func TestGetGitHubContext(t *testing.T) {
 	}
 	
 	for k, v := range testEnv {
-		os.Setenv(k, v)
+		_ = os.Setenv(k, v)
 	}
 	
 	// Test GetGitHubContext
@@ -696,9 +696,9 @@ func TestGetGitHubContext_EmptyEnvironment(t *testing.T) {
 	defer func() {
 		for k, v := range originalEnv {
 			if v == "" {
-				os.Unsetenv(k)
+				_ = os.Unsetenv(k)
 			} else {
-				os.Setenv(k, v)
+				_ = os.Setenv(k, v)
 			}
 		}
 	}()
@@ -711,7 +711,7 @@ func TestGetGitHubContext_EmptyEnvironment(t *testing.T) {
 	}
 	
 	for _, v := range githubVars {
-		os.Unsetenv(v)
+		_ = os.Unsetenv(v)
 	}
 	
 	// Test GetGitHubContext with empty environment
@@ -925,18 +925,18 @@ func TestValidateSigstoreEnvironment(t *testing.T) {
 	defer func() {
 		for k, v := range originalEnv {
 			if v == "" {
-				os.Unsetenv(k)
+				_ = os.Unsetenv(k)
 			} else {
-				os.Setenv(k, v)
+				_ = os.Setenv(k, v)
 			}
 		}
 	}()
 	
 	t.Run("missing required environment", func(t *testing.T) {
 		// Clear all Sigstore environment variables
-		os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-		os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
-		os.Unsetenv("GITHUB_ACTIONS")
+		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
+		_ = os.Unsetenv("GITHUB_ACTIONS")
 		
 		err := validateSigstoreEnvironment()
 		assert.Error(t, err)
@@ -945,9 +945,9 @@ func TestValidateSigstoreEnvironment(t *testing.T) {
 	
 	t.Run("partial environment", func(t *testing.T) {
 		// Set some but not all required variables
-		os.Setenv("GITHUB_ACTIONS", "true")
-		os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-		os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
+		_ = os.Setenv("GITHUB_ACTIONS", "true")
+		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
 		
 		err := validateSigstoreEnvironment()
 		assert.Error(t, err)
@@ -955,9 +955,9 @@ func TestValidateSigstoreEnvironment(t *testing.T) {
 	
 	t.Run("complete environment", func(t *testing.T) {
 		// Set all required variables
-		os.Setenv("GITHUB_ACTIONS", "true")
-		os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
-		os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://test.url")
+		_ = os.Setenv("GITHUB_ACTIONS", "true")
+		_ = os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
+		_ = os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://test.url")
 		
 		err := validateSigstoreEnvironment()
 		assert.NoError(t, err)
@@ -1068,17 +1068,17 @@ func TestSignProvenanceWithSigstore_EnvironmentValidation(t *testing.T) {
 	defer func() {
 		for k, v := range originalEnv {
 			if v == "" {
-				os.Unsetenv(k)
+				_ = os.Unsetenv(k)
 			} else {
-				os.Setenv(k, v)
+				_ = os.Setenv(k, v)
 			}
 		}
 	}()
 	
 	// Clear Sigstore environment to trigger validation error
-	os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-	os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
-	os.Unsetenv("GITHUB_ACTIONS")
+	_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+	_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
+	_ = os.Unsetenv("GITHUB_ACTIONS")
 	
 	artifactPath := createTestArtifact(t, "test content")
 	githubCtx := createMockGitHubContext()
