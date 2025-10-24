@@ -485,8 +485,17 @@ CMD ["cat", "/test-file.txt"]`
 
 	// Load the image back into Docker
 	loadCmd := exec.Command("docker", "load", "-i", imageTarPath)
-	if output, err := loadCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to load image: %v\nOutput: %s", err, string(output))
+	loadOutput, err := loadCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to load image: %v\nOutput: %s", err, string(loadOutput))
+	}
+	t.Logf("Docker load output: %s", string(loadOutput))
+
+	// Tag the loaded image with the expected name
+	// The image is loaded with its build version name, we need to tag it
+	tagCmd := exec.Command("docker", "tag", metadata.BuiltVersion+":latest", testImage)
+	if output, err := tagCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to tag image: %v\nOutput: %s", err, string(output))
 	}
 
 	// Step 5: Verify the loaded image works
