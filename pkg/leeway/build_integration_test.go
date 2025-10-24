@@ -84,25 +84,28 @@ func TestDockerPackage_ExportToCache_Integration(t *testing.T) {
 		hasImages     bool
 		expectFiles   []string
 		skipReason    string
+		expectError   bool
 	}{
 		{
 			name:          "legacy push behavior",
 			exportToCache: false,
 			hasImages:     true,
 			expectFiles:   []string{"imgnames.txt", "metadata.yaml"},
-			skipReason:    "Requires Docker Hub credentials - skipping legacy push test",
+			expectError:   true, // Expected to fail at push step without credentials
 		},
 		{
 			name:          "new export behavior",
 			exportToCache: true,
 			hasImages:     true,
 			expectFiles:   []string{"image.tar", "imgnames.txt", "docker-export-metadata.json"},
+			expectError:   false,
 		},
 		{
 			name:          "export without image config",
 			exportToCache: true,
 			hasImages:     false,
 			expectFiles:   []string{"content"},
+			expectError:   false,
 		},
 	}
 
@@ -187,6 +190,19 @@ CMD ["echo", "test"]`
 				WithLocalCache(localCache),
 				WithDontTest(true),
 			)
+			
+			// Handle expected errors (e.g., push failures without credentials)
+			if tt.expectError {
+				if err == nil {
+					t.Fatal("Expected build to fail but it succeeded")
+				}
+				t.Logf("Build failed as expected: %v", err)
+				// For legacy push test, we expect it to fail at push step
+				// but the image should still be built locally
+				// Skip further validation for this test case
+				return
+			}
+			
 			if err != nil {
 				t.Fatalf("Build failed: %v", err)
 			}
