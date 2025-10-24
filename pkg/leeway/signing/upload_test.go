@@ -324,10 +324,6 @@ func TestArtifactUploader_ContextCancellation(t *testing.T) {
 	})
 }
 
-// TestArtifactUploader_InvalidArtifactPath tests file system errors
-// This is now covered by TestArtifactUploader_ValidatesInputs
-// which tests non-existent files and directories
-
 // TestArtifactUploader_ConcurrentUploads tests concurrent upload handling
 func TestArtifactUploader_ConcurrentUploads(t *testing.T) {
 	tmpDir := t.TempDir()
