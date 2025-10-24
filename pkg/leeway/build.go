@@ -1955,7 +1955,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		))
 
 		commands[PackageBuildPhasePackage] = pkgcmds
-	} else if len(cfg.Image) > 0 && (cfg.ExportToCache == nil || !*cfg.ExportToCache) {
+	} else if len(cfg.Image) > 0 && !*cfg.ExportToCache {
 		// Image push workflow
 		log.WithField("images", cfg.Image).Debug("configuring image push (legacy behavior)")
 
@@ -2012,7 +2012,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 		// Add subjects function for provenance generation
 		res.Subjects = createDockerSubjectsFunction(version, cfg)
-	} else if len(cfg.Image) > 0 && cfg.ExportToCache != nil && *cfg.ExportToCache {
+	} else if len(cfg.Image) > 0 && *cfg.ExportToCache {
 		// Export to cache for signing
 		log.WithField("package", p.FullName()).Debug("Exporting Docker image to cache")
 
