@@ -109,36 +109,46 @@ func TestDockerPackage_ExportToCache_Integration(t *testing.T) {
 			// Create temporary workspace
 			tmpDir := t.TempDir()
 
+			// Create WORKSPACE.yaml
+			workspaceYAML := `defaultTarget: "app:docker"`
+			workspacePath := filepath.Join(tmpDir, "WORKSPACE.yaml")
+			if err := os.WriteFile(workspacePath, []byte(workspaceYAML), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			// Create component directory
+			appDir := filepath.Join(tmpDir, "app")
+			if err := os.MkdirAll(appDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+
 			// Create a simple Dockerfile
 			dockerfile := `FROM alpine:latest
 LABEL test="true"
 CMD ["echo", "test"]`
 
-			dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
+			dockerfilePath := filepath.Join(appDir, "Dockerfile")
 			if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 				t.Fatal(err)
 			}
 
-			// Create WORKSPACE.yaml with proper formatting
+			// Create BUILD.yaml with proper formatting
 			imageSection := ""
 			if tt.hasImages {
 				imageSection = `
-          image:
-            - test-leeway:latest`
+    image:
+      - test-leeway:latest`
 			}
 
-			workspaceYAML := fmt.Sprintf(`defaultTarget: ":app"
-components:
-  - name: "."
-    packages:
-      - name: app
-        type: docker
-        config:
-          dockerfile: Dockerfile
-          exportToCache: %t%s`, tt.exportToCache, imageSection)
+			buildYAML := fmt.Sprintf(`packages:
+- name: docker
+  type: docker
+  config:
+    dockerfile: Dockerfile
+    exportToCache: %t%s`, tt.exportToCache, imageSection)
 
-			workspacePath := filepath.Join(tmpDir, "WORKSPACE.yaml")
-			if err := os.WriteFile(workspacePath, []byte(workspaceYAML), 0644); err != nil {
+			buildPath := filepath.Join(appDir, "BUILD.yaml")
+			if err := os.WriteFile(buildPath, []byte(buildYAML), 0644); err != nil {
 				t.Fatal(err)
 			}
 
@@ -149,9 +159,9 @@ components:
 			}
 
 			// Get package
-			pkg, ok := workspace.Packages[":app"]
+			pkg, ok := workspace.Packages["app:docker"]
 			if !ok {
-				t.Fatalf("Package :app not found in workspace")
+				t.Fatalf("Package app:docker not found in workspace")
 			}
 
 			// Create local cache
@@ -279,31 +289,41 @@ func TestDockerPackage_CacheRoundTrip_Integration(t *testing.T) {
 	tmpDir := t.TempDir()
 	testImage := "test-leeway-roundtrip:latest"
 
+	// Create WORKSPACE.yaml
+	workspaceYAML := `defaultTarget: "app:docker"`
+	workspacePath := filepath.Join(tmpDir, "WORKSPACE.yaml")
+	if err := os.WriteFile(workspacePath, []byte(workspaceYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create component directory
+	appDir := filepath.Join(tmpDir, "app")
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
 	// Create a simple Dockerfile with identifiable content
 	dockerfile := `FROM alpine:latest
 RUN echo "test-content-12345" > /test-file.txt
 CMD ["cat", "/test-file.txt"]`
 
-	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
+	dockerfilePath := filepath.Join(appDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create WORKSPACE.yaml with exportToCache enabled
-	workspaceYAML := fmt.Sprintf(`defaultTarget: ":app"
-components:
-  - name: "."
-    packages:
-      - name: app
-        type: docker
-        config:
-          dockerfile: Dockerfile
-          exportToCache: true
-          image:
-            - %s`, testImage)
+	// Create BUILD.yaml with exportToCache enabled
+	buildYAML := fmt.Sprintf(`packages:
+- name: docker
+  type: docker
+  config:
+    dockerfile: Dockerfile
+    exportToCache: true
+    image:
+      - %s`, testImage)
 
-	workspacePath := filepath.Join(tmpDir, "WORKSPACE.yaml")
-	if err := os.WriteFile(workspacePath, []byte(workspaceYAML), 0644); err != nil {
+	buildPath := filepath.Join(appDir, "BUILD.yaml")
+	if err := os.WriteFile(buildPath, []byte(buildYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -314,9 +334,9 @@ components:
 		t.Fatalf("Failed to load workspace: %v", err)
 	}
 
-	pkg, ok := workspace.Packages[":app"]
+	pkg, ok := workspace.Packages["app:docker"]
 	if !ok {
-		t.Fatal("Package :app not found in workspace")
+		t.Fatal("Package app:docker not found in workspace")
 	}
 
 	cacheDir := filepath.Join(tmpDir, ".cache")
