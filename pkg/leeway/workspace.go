@@ -30,6 +30,17 @@ import (
 	"github.com/gitpod-io/leeway/pkg/doublestar"
 )
 
+const (
+	// EnvvarSLSACacheVerification enables SLSA verification for cached artifacts
+	EnvvarSLSACacheVerification = "LEEWAY_SLSA_CACHE_VERIFICATION"
+
+	// EnvvarSLSASourceURI configures the expected source URI for SLSA verification
+	EnvvarSLSASourceURI = "LEEWAY_SLSA_SOURCE_URI"
+
+	// EnvvarEnableInFlightChecksums enables in-flight checksumming of cache artifacts
+	EnvvarEnableInFlightChecksums = "LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS"
+)
+
 // Workspace is the root container of all compoments. All components are named relative
 // to the origin of this workspace.
 type Workspace struct {
@@ -77,23 +88,23 @@ func (w *Workspace) ApplySLSADefaults() {
 	log.Info("SLSA provenance enabled - activating SLSA L3 runtime features")
 
 	// Auto-enable cache verification (global feature)
-	if setEnvDefault("LEEWAY_SLSA_CACHE_VERIFICATION", "true") {
+	if setEnvDefault(EnvvarSLSACacheVerification, "true") {
 		log.Debug("Auto-enabled: LEEWAY_SLSA_CACHE_VERIFICATION=true")
 	}
 
 	// Auto-enable in-flight checksumming (global feature)
-	if setEnvDefault("LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS", "true") {
+	if setEnvDefault(EnvvarEnableInFlightChecksums, "true") {
 		log.Debug("Auto-enabled: LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS=true")
 	}
 
 	// Auto-enable Docker export mode (workspace default, packages can override)
-	if setEnvDefault("LEEWAY_DOCKER_EXPORT_TO_CACHE", "true") {
+	if setEnvDefault(EnvvarDockerExportToCache, "true") {
 		log.Debug("Auto-enabled: LEEWAY_DOCKER_EXPORT_TO_CACHE=true (package config can override)")
 	}
 
 	// Auto-set source URI from Git origin
 	if w.Git.Origin != "" {
-		if setEnvDefault("LEEWAY_SLSA_SOURCE_URI", w.Git.Origin) {
+		if setEnvDefault(EnvvarSLSASourceURI, w.Git.Origin) {
 			log.WithField("source_uri", w.Git.Origin).Debug("Auto-set SLSA source URI from Git origin")
 		}
 	}

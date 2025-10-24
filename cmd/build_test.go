@@ -116,7 +116,7 @@ func TestInFlightChecksumsEnvironmentVariable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set environment variable using t.Setenv for proper cleanup
 			if tt.envValue != "" {
-				t.Setenv("LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS", tt.envValue)
+				t.Setenv(EnvvarEnableInFlightChecksums, tt.envValue)
 			}
 
 			// Create test command
@@ -136,7 +136,7 @@ func TestInFlightChecksumsEnvironmentVariable(t *testing.T) {
 			}
 
 			// Test the actual logic from getBuildOpts
-			inFlightChecksumsDefault := os.Getenv("LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS") == "true"
+			inFlightChecksumsDefault := os.Getenv(EnvvarEnableInFlightChecksums) == "true"
 			inFlightChecksums, err := cmd.Flags().GetBool("in-flight-checksums")
 			if err != nil {
 				t.Fatalf("failed to get flag: %v", err)

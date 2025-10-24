@@ -329,10 +329,10 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 			gitOrigin:         "github.com/gitpod-io/leeway",
 			existingEnvVars:   map[string]string{},
 			expectedEnvVars: map[string]string{
-				"LEEWAY_SLSA_CACHE_VERIFICATION":    "true",
-				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "true",
-				"LEEWAY_DOCKER_EXPORT_TO_CACHE":     "true",
-				"LEEWAY_SLSA_SOURCE_URI":            "github.com/gitpod-io/leeway",
+				leeway.EnvvarSLSACacheVerification:    "true",
+				leeway.EnvvarEnableInFlightChecksums: "true",
+				leeway.EnvvarDockerExportToCache:     "true",
+				leeway.EnvvarSLSASourceURI:            "github.com/gitpod-io/leeway",
 			},
 		},
 		{
@@ -341,10 +341,10 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 			provenanceSLSA:    false,
 			existingEnvVars:   map[string]string{},
 			expectedEnvVars: map[string]string{
-				"LEEWAY_SLSA_CACHE_VERIFICATION":    "",
-				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "",
-				"LEEWAY_DOCKER_EXPORT_TO_CACHE":     "",
-				"LEEWAY_SLSA_SOURCE_URI":            "",
+				leeway.EnvvarSLSACacheVerification:    "",
+				leeway.EnvvarEnableInFlightChecksums: "",
+				leeway.EnvvarDockerExportToCache:     "",
+				leeway.EnvvarSLSASourceURI:            "",
 			},
 		},
 		{
@@ -353,10 +353,10 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 			provenanceSLSA:    true,
 			existingEnvVars:   map[string]string{},
 			expectedEnvVars: map[string]string{
-				"LEEWAY_SLSA_CACHE_VERIFICATION":    "",
-				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "",
-				"LEEWAY_DOCKER_EXPORT_TO_CACHE":     "",
-				"LEEWAY_SLSA_SOURCE_URI":            "",
+				leeway.EnvvarSLSACacheVerification:    "",
+				leeway.EnvvarEnableInFlightChecksums: "",
+				leeway.EnvvarDockerExportToCache:     "",
+				leeway.EnvvarSLSASourceURI:            "",
 			},
 		},
 		{
@@ -365,14 +365,14 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 			provenanceSLSA:    true,
 			gitOrigin:         "github.com/gitpod-io/leeway",
 			existingEnvVars: map[string]string{
-				"LEEWAY_SLSA_CACHE_VERIFICATION":    "false",
-				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "false",
+				leeway.EnvvarSLSACacheVerification:    "false",
+				leeway.EnvvarEnableInFlightChecksums: "false",
 			},
 			expectedEnvVars: map[string]string{
-				"LEEWAY_SLSA_CACHE_VERIFICATION":    "false", // Not overridden
-				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "false", // Not overridden
-				"LEEWAY_DOCKER_EXPORT_TO_CACHE":     "true",  // Set (wasn't present)
-				"LEEWAY_SLSA_SOURCE_URI":            "github.com/gitpod-io/leeway",
+				leeway.EnvvarSLSACacheVerification:    "false", // Not overridden
+				leeway.EnvvarEnableInFlightChecksums: "false", // Not overridden
+				leeway.EnvvarDockerExportToCache:     "true",  // Set (wasn't present)
+				leeway.EnvvarSLSASourceURI:            "github.com/gitpod-io/leeway",
 			},
 		},
 		{
@@ -382,10 +382,10 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 			gitOrigin:         "",
 			existingEnvVars:   map[string]string{},
 			expectedEnvVars: map[string]string{
-				"LEEWAY_SLSA_CACHE_VERIFICATION":    "true",
-				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS": "true",
-				"LEEWAY_DOCKER_EXPORT_TO_CACHE":     "true",
-				"LEEWAY_SLSA_SOURCE_URI":            "", // Not set without Git origin
+				leeway.EnvvarSLSACacheVerification:    "true",
+				leeway.EnvvarEnableInFlightChecksums: "true",
+				leeway.EnvvarDockerExportToCache:     "true",
+				leeway.EnvvarSLSASourceURI:            "", // Not set without Git origin
 			},
 		},
 	}
@@ -394,10 +394,10 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clear environment variables for clean test
 			envVarsToCheck := []string{
-				"LEEWAY_SLSA_CACHE_VERIFICATION",
-				"LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS",
-				"LEEWAY_DOCKER_EXPORT_TO_CACHE",
-				"LEEWAY_SLSA_SOURCE_URI",
+				leeway.EnvvarSLSACacheVerification,
+				leeway.EnvvarEnableInFlightChecksums,
+				leeway.EnvvarDockerExportToCache,
+				leeway.EnvvarSLSASourceURI,
 			}
 			for _, key := range envVarsToCheck {
 				t.Setenv(key, "")
