@@ -1117,7 +1117,7 @@ func TestFetchGitHubOIDCToken(t *testing.T) {
 						t.Error("Missing or invalid Authorization header")
 					}
 					w.WriteHeader(http.StatusOK)
-					json.NewEncoder(w).Encode(map[string]string{"value": "test-token-12345"})
+					_ = json.NewEncoder(w).Encode(map[string]string{"value": "test-token-12345"})
 				}))
 			},
 			audience:    "sigstore",
@@ -1138,7 +1138,7 @@ func TestFetchGitHubOIDCToken(t *testing.T) {
 			mockServer: func(t *testing.T) *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusInternalServerError)
-					w.Write([]byte(`{"error": "internal error"}`))
+					_, _ = w.Write([]byte(`{"error": "internal error"}`))
 				}))
 			},
 			audience:      "sigstore",
@@ -1150,7 +1150,7 @@ func TestFetchGitHubOIDCToken(t *testing.T) {
 			mockServer: func(t *testing.T) *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
-					json.NewEncoder(w).Encode(map[string]string{"value": ""})
+					_ = json.NewEncoder(w).Encode(map[string]string{"value": ""})
 				}))
 			},
 			audience:      "sigstore",
@@ -1162,7 +1162,7 @@ func TestFetchGitHubOIDCToken(t *testing.T) {
 			mockServer: func(t *testing.T) *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
-					w.Write([]byte(`invalid json`))
+					_, _ = w.Write([]byte(`invalid json`))
 				}))
 			},
 			audience:      "sigstore",
