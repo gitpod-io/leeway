@@ -33,6 +33,24 @@ const (
 
 	// EnvvarEnableInFlightChecksums enables in-flight checksumming of cache artifacts
 	EnvvarEnableInFlightChecksums = "LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS"
+
+	// EnvvarDockerExportToCache controls whether Docker images are exported to cache instead of pushed directly
+	EnvvarDockerExportToCache = "LEEWAY_DOCKER_EXPORT_TO_CACHE"
+
+	// EnvvarDefaultCacheLevel sets the default cache level
+	EnvvarDefaultCacheLevel = "LEEWAY_DEFAULT_CACHE_LEVEL"
+
+	// EnvvarSegmentKey configures Segment analytics key
+	EnvvarSegmentKey = "LEEWAY_SEGMENT_KEY"
+
+	// EnvvarTrace enables tracing output
+	EnvvarTrace = "LEEWAY_TRACE"
+
+	// EnvvarProvenanceKeypath configures provenance key path
+	EnvvarProvenanceKeypath = "LEEWAY_PROVENANCE_KEYPATH"
+
+	// EnvvarExperimental enables experimental features
+	EnvvarExperimental = "LEEWAY_EXPERIMENTAL"
 )
 
 const (
@@ -116,7 +134,7 @@ variables have an effect on leeway:
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
-	tp := os.Getenv("LEEWAY_TRACE")
+	tp := os.Getenv(EnvvarTrace)
 	if tp != "" {
 		f, err := os.OpenFile(tp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 		if err != nil {
@@ -166,7 +184,7 @@ func getWorkspace() (leeway.Workspace, error) {
 		return leeway.Workspace{}, err
 	}
 
-	return leeway.FindWorkspace(workspace, args, variant, os.Getenv("LEEWAY_PROVENANCE_KEYPATH"))
+	return leeway.FindWorkspace(workspace, args, variant, os.Getenv(EnvvarProvenanceKeypath))
 }
 
 func getBuildArgs() (leeway.Arguments, error) {
@@ -186,7 +204,7 @@ func getBuildArgs() (leeway.Arguments, error) {
 }
 
 func addExperimentalCommand(parent, child *cobra.Command) {
-	if os.Getenv("LEEWAY_EXPERIMENTAL") != "true" {
+	if os.Getenv(EnvvarExperimental) != "true" {
 		return
 	}
 

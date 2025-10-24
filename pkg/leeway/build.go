@@ -90,6 +90,12 @@ const (
 	// Defaults to "network".
 	EnvvarYarnMutex = "LEEWAY_YARN_MUTEX"
 
+	// EnvvarDockerExportToCache controls whether Docker images are exported to cache instead of pushed directly
+	EnvvarDockerExportToCache = "LEEWAY_DOCKER_EXPORT_TO_CACHE"
+
+	// EnvvarWorkspaceRoot names the environment variable for workspace root path
+	EnvvarWorkspaceRoot = "LEEWAY_WORKSPACE_ROOT"
+
 	// dockerImageNamesFiles is the name of the file store in poushed Docker build artifacts
 	// which contains the names of the Docker images we just pushed
 	dockerImageNamesFiles = "imgnames.txt"
@@ -1716,7 +1722,7 @@ func determineDockerExportMode(p *Package, cfg *DockerPkgConfig, buildctx *build
 	// Layer 5 & 4: Start with workspace default
 	// At this point, workspace loading already auto-set LEEWAY_DOCKER_EXPORT_TO_CACHE
 	// if provenance.slsa: true
-	envExport := os.Getenv("LEEWAY_DOCKER_EXPORT_TO_CACHE")
+	envExport := os.Getenv(EnvvarDockerExportToCache)
 	if envExport == "true" || envExport == "1" {
 		exportToCache = true
 		source = "workspace_default"
@@ -2380,7 +2386,7 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 	}
 
 	env := append(os.Environ(), p.Environment...)
-	env = append(env, fmt.Sprintf("LEEWAY_WORKSPACE_ROOT=%s", p.C.W.Origin))
+	env = append(env, fmt.Sprintf("%s=%s", EnvvarWorkspaceRoot, p.C.W.Origin))
 	for _, cmd := range commands {
 		if len(cmd) == 0 {
 			continue // Skip empty commands

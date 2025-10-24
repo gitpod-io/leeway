@@ -266,9 +266,9 @@ func TestDockerExport_PrecedenceHierarchy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup environment to simulate workspace auto-set
 			if tt.workspaceEnvSet {
-				t.Setenv("LEEWAY_DOCKER_EXPORT_TO_CACHE", "true")
+				t.Setenv(leeway.EnvvarDockerExportToCache, "true")
 			} else {
-				t.Setenv("LEEWAY_DOCKER_EXPORT_TO_CACHE", "")
+				t.Setenv(leeway.EnvvarDockerExportToCache, "")
 			}
 
 			// Create mock build context
@@ -296,7 +296,7 @@ func TestDockerExport_PrecedenceHierarchy(t *testing.T) {
 			var source string
 
 			// Layer 5 & 4: Workspace default
-			envExport := os.Getenv("LEEWAY_DOCKER_EXPORT_TO_CACHE")
+			envExport := os.Getenv(leeway.EnvvarDockerExportToCache)
 			if envExport == "true" || envExport == "1" {
 				exportToCache = true
 				source = "workspace_default"
