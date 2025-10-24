@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -79,33 +80,37 @@ func TestDockerPackage_ExportToCache_Integration(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		exportToCache bool
-		hasImages     bool
-		expectFiles   []string
-		skipReason    string
-		expectError   bool
+		name             string
+		exportToCache    bool
+		hasImages        bool
+		expectFiles      []string
+		skipReason       string
+		expectError      bool
+		expectErrorMatch string // Regex pattern to match expected error
 	}{
 		{
-			name:          "legacy push behavior",
-			exportToCache: false,
-			hasImages:     true,
-			expectFiles:   []string{"imgnames.txt", "metadata.yaml"},
-			expectError:   true, // Expected to fail at push step without credentials
+			name:             "legacy push behavior",
+			exportToCache:    false,
+			hasImages:        true,
+			expectFiles:      []string{"imgnames.txt", "metadata.yaml"},
+			expectError:      true,
+			expectErrorMatch: "(?i)(push access denied|authorization failed|insufficient_scope)", // Expected Docker Hub auth error
 		},
 		{
-			name:          "new export behavior",
-			exportToCache: true,
-			hasImages:     true,
-			expectFiles:   []string{"image.tar", "imgnames.txt", "docker-export-metadata.json"},
-			expectError:   false,
+			name:             "new export behavior",
+			exportToCache:    true,
+			hasImages:        true,
+			expectFiles:      []string{"image.tar", "imgnames.txt", "docker-export-metadata.json"},
+			expectError:      false,
+			expectErrorMatch: "",
 		},
 		{
-			name:          "export without image config",
-			exportToCache: true,
-			hasImages:     false,
-			expectFiles:   []string{"content"},
-			expectError:   false,
+			name:             "export without image config",
+			exportToCache:    true,
+			hasImages:        false,
+			expectFiles:      []string{"content"},
+			expectError:      false,
+			expectErrorMatch: "",
 		},
 	}
 
@@ -196,7 +201,22 @@ CMD ["echo", "test"]`
 				if err == nil {
 					t.Fatal("Expected build to fail but it succeeded")
 				}
-				t.Logf("Build failed as expected: %v", err)
+				
+				// Validate error matches expected pattern
+				if tt.expectErrorMatch != "" {
+					matched, regexErr := regexp.MatchString(tt.expectErrorMatch, err.Error())
+					if regexErr != nil {
+						t.Fatalf("Invalid error regex pattern: %v", regexErr)
+					}
+					if !matched {
+						t.Fatalf("Error doesn't match expected pattern.\nExpected pattern: %s\nActual error: %v", 
+							tt.expectErrorMatch, err)
+					}
+					t.Logf("Build failed as expected with correct error: %v", err)
+				} else {
+					t.Logf("Build failed as expected: %v", err)
+				}
+				
 				// For legacy push test, we expect it to fail at push step
 				// but the image should still be built locally
 				// Skip further validation for this test case
