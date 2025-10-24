@@ -1699,32 +1699,17 @@ func parseGoCoverOutput(input string) (coverage, funcsWithoutTest, funcsWithTest
 	return
 }
 
-// buildDocker implements the build process for Docker packages.
-// If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
-func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
-	cfg, ok := p.Config.(DockerPkgConfig)
-	if !ok {
-		return nil, xerrors.Errorf("package should have Docker config")
-	}
-
-	if cfg.Dockerfile == "" {
-		return nil, xerrors.Errorf("dockerfile is required")
-	}
-
-	dockerfile := filepath.Join(p.C.Origin, cfg.Dockerfile)
-	if _, err := os.Stat(dockerfile); os.IsNotExist(err) {
-		return nil, err
-	}
-
-	// Determine final exportToCache value with proper precedence
-	//
-	// Precedence (highest to lowest):
-	// 1. CLI flag (--docker-export-to-cache)
-	// 2. User environment variable (set before workspace loading)
-	// 3. Package config (exportToCache in BUILD.yaml)
-	// 4. Workspace default (auto-set by provenance.slsa: true)
-	// 5. Global default (false - legacy behavior)
-
+// determineDockerExportMode determines the final exportToCache value using a 5-layer precedence hierarchy.
+//
+// Precedence (highest to lowest):
+// 1. CLI flag (--docker-export-to-cache)
+// 2. User environment variable (set before workspace loading)
+// 3. Package config (exportToCache in BUILD.yaml)
+// 4. Workspace default (auto-set by provenance.slsa: true)
+// 5. Global default (false - legacy behavior)
+//
+// The function updates cfg.ExportToCache with the final determined value.
+func determineDockerExportMode(p *Package, cfg *DockerPkgConfig, buildctx *buildContext) {
 	var exportToCache bool
 	var source string // Track decision source for logging
 
@@ -1782,6 +1767,27 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 	// Update cfg for use in the rest of the function
 	cfg.ExportToCache = &exportToCache
+}
+
+// buildDocker implements the build process for Docker packages.
+// If you change anything in this process that's not backwards compatible, make sure you increment buildProcessVersions accordingly.
+func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
+	cfg, ok := p.Config.(DockerPkgConfig)
+	if !ok {
+		return nil, xerrors.Errorf("package should have Docker config")
+	}
+
+	if cfg.Dockerfile == "" {
+		return nil, xerrors.Errorf("dockerfile is required")
+	}
+
+	dockerfile := filepath.Join(p.C.Origin, cfg.Dockerfile)
+	if _, err := os.Stat(dockerfile); os.IsNotExist(err) {
+		return nil, err
+	}
+
+	// Determine final exportToCache value with proper precedence
+	determineDockerExportMode(p, &cfg, buildctx)
 
 	var (
 		commands          = make(map[PackageBuildPhase][][]string)
