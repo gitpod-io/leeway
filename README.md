@@ -533,14 +533,40 @@ Once enabled, all packages carry an [attestation bundle](https://github.com/in-t
 When `provenance.slsa: true` is set, Leeway automatically enables all SLSA L3 runtime features to ensure build integrity and artifact distinguishability:
 
 - ✅ **Cache verification**: Downloads are verified against Sigstore attestations
+- ✅ **Require attestation**: Missing/invalid attestations trigger local rebuilds (strict mode)
 - ✅ **In-flight checksums**: Build artifacts are checksummed during the build to prevent tampering
 - ✅ **Docker export mode**: Docker images go through the cache and signing flow (workspace default)
 
 These features are automatically enabled by setting environment variables:
 - `LEEWAY_SLSA_CACHE_VERIFICATION=true`
+- `LEEWAY_SLSA_REQUIRE_ATTESTATION=true`
 - `LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS=true`
 - `LEEWAY_DOCKER_EXPORT_TO_CACHE=true`
 - `LEEWAY_SLSA_SOURCE_URI` (set from Git origin)
+
+### SLSA Cache Verification Modes
+
+When cache verification is enabled, Leeway can operate in two modes:
+
+**Permissive Mode** (`LEEWAY_SLSA_REQUIRE_ATTESTATION=false`, default when manually enabling):
+- Missing/invalid attestation → Download artifact without verification (with warning)
+- Provides graceful degradation and backward compatibility
+- Useful during migration or when some artifacts lack attestations
+
+**Strict Mode** (`LEEWAY_SLSA_REQUIRE_ATTESTATION=true`, auto-enabled with `provenance.slsa: true`):
+- Missing/invalid attestation → Skip download, build locally with correct attestation
+- Enforces strict security and enables self-healing (e.g., cross-PR attestation mismatches)
+- Recommended for production environments requiring SLSA L3 compliance
+
+You can override the mode using:
+```bash
+# Disable strict mode temporarily
+leeway build :app --slsa-require-attestation=false
+
+# Or via environment variable
+export LEEWAY_SLSA_REQUIRE_ATTESTATION=false
+leeway build :app
+```
 
 ### Configuration Precedence
 
