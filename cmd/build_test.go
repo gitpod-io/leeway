@@ -32,6 +32,24 @@ func TestBuildCommandFlags(t *testing.T) {
 			wantFlag: "in-flight-checksums",
 			wantVal:  false,
 		},
+		{
+			name:     "slsa-require-attestation flag default",
+			args:     []string{},
+			wantFlag: "slsa-require-attestation",
+			wantVal:  false,
+		},
+		{
+			name:     "slsa-require-attestation flag enabled",
+			args:     []string{"--slsa-require-attestation"},
+			wantFlag: "slsa-require-attestation",
+			wantVal:  true,
+		},
+		{
+			name:     "slsa-require-attestation flag explicitly disabled",
+			args:     []string{"--slsa-require-attestation=false"},
+			wantFlag: "slsa-require-attestation",
+			wantVal:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -239,4 +257,138 @@ func TestGetBuildOptsWithInFlightChecksums(t *testing.T) {
 			// to be done through integration tests or by exposing the option state
 		})
 	}
+}
+
+func TestParseSLSAConfig(t *testing.T) {
+	tests := []struct {
+		name                   string
+		envVerification        string
+		envSourceURI           string
+		envRequireAttestation  string
+		flagVerification       *bool
+		flagSourceURI          *string
+		flagRequireAttestation *bool
+		wantConfig             bool
+		wantRequireAttestation bool
+		wantError              bool
+	}{
+		{
+			name:       "verification disabled",
+			wantConfig: false,
+		},
+		{
+			name:            "verification enabled via env, no source URI",
+			envVerification: "true",
+			wantError:       true,
+		},
+		{
+			name:            "verification enabled via env with source URI",
+			envVerification: "true",
+			envSourceURI:    "https://github.com/gitpod-io/leeway",
+			wantConfig:      true,
+		},
+		{
+			name:                   "require attestation via env",
+			envVerification:        "true",
+			envSourceURI:           "https://github.com/gitpod-io/leeway",
+			envRequireAttestation:  "true",
+			wantConfig:             true,
+			wantRequireAttestation: true,
+		},
+		{
+			name:                   "require attestation via flag overrides env",
+			envVerification:        "true",
+			envSourceURI:           "https://github.com/gitpod-io/leeway",
+			envRequireAttestation:  "false",
+			flagRequireAttestation: boolPtr(true),
+			wantConfig:             true,
+			wantRequireAttestation: true,
+		},
+		{
+			name:                   "flag disables require attestation",
+			envVerification:        "true",
+			envSourceURI:           "https://github.com/gitpod-io/leeway",
+			envRequireAttestation:  "true",
+			flagRequireAttestation: boolPtr(false),
+			wantConfig:             true,
+			wantRequireAttestation: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set environment variables
+			if tt.envVerification != "" {
+				t.Setenv(EnvvarSLSACacheVerification, tt.envVerification)
+			}
+			if tt.envSourceURI != "" {
+				t.Setenv(EnvvarSLSASourceURI, tt.envSourceURI)
+			}
+			if tt.envRequireAttestation != "" {
+				t.Setenv(EnvvarSLSARequireAttestation, tt.envRequireAttestation)
+			}
+
+			// Create test command
+			cmd := &cobra.Command{
+				Use: "build",
+				Run: func(cmd *cobra.Command, args []string) {},
+			}
+			addBuildFlags(cmd)
+
+			// Set flags if specified
+			if tt.flagVerification != nil {
+				if err := cmd.Flags().Set("slsa-cache-verification", boolToString(*tt.flagVerification)); err != nil {
+					t.Fatalf("failed to set verification flag: %v", err)
+				}
+			}
+			if tt.flagSourceURI != nil {
+				if err := cmd.Flags().Set("slsa-source-uri", *tt.flagSourceURI); err != nil {
+					t.Fatalf("failed to set source URI flag: %v", err)
+				}
+			}
+			if tt.flagRequireAttestation != nil {
+				if err := cmd.Flags().Set("slsa-require-attestation", boolToString(*tt.flagRequireAttestation)); err != nil {
+					t.Fatalf("failed to set require attestation flag: %v", err)
+				}
+			}
+
+			// Test parseSLSAConfig
+			config, err := parseSLSAConfig(cmd)
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantConfig {
+				if config == nil {
+					t.Fatal("expected config but got nil")
+				}
+				if config.RequireAttestation != tt.wantRequireAttestation {
+					t.Errorf("expected RequireAttestation=%v, got %v", tt.wantRequireAttestation, config.RequireAttestation)
+				}
+			} else {
+				if config != nil {
+					t.Errorf("expected nil config but got %+v", config)
+				}
+			}
+		})
+	}
+}
+
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+func boolToString(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
