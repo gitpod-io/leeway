@@ -442,7 +442,11 @@ func (s *S3Cache) downloadOriginal(ctx context.Context, p cache.Package, version
 // This function tries multiple extensions (.tar.gz, .tar) and their corresponding attestations.
 // Returns nil (not an error) when no suitable artifacts are found to allow graceful fallback to local builds.
 //
-// Future CLI flag consideration: --slsa-require-attestation could set RequireAttestation=true
+// Configuration:
+// RequireAttestation can be set via:
+//   - Environment variable: LEEWAY_SLSA_REQUIRE_ATTESTATION=true
+//   - CLI flag: --slsa-require-attestation
+//   - Workspace config: Automatically enabled when provenance.slsa=true in WORKSPACE.yaml
 func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Package, version, localPath string) error {
 	log.WithFields(log.Fields{
 		"package": p.FullName(),

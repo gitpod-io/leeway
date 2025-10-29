@@ -37,6 +37,9 @@ const (
 	// EnvvarSLSASourceURI configures the expected source URI for SLSA verification
 	EnvvarSLSASourceURI = "LEEWAY_SLSA_SOURCE_URI"
 
+	// EnvvarSLSARequireAttestation requires SLSA attestations (missing/invalid → build locally)
+	EnvvarSLSARequireAttestation = "LEEWAY_SLSA_REQUIRE_ATTESTATION"
+
 	// EnvvarEnableInFlightChecksums enables in-flight checksumming of cache artifacts
 	EnvvarEnableInFlightChecksums = "LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS"
 )
@@ -75,6 +78,7 @@ type WorkspaceProvenance struct {
 //
 // Sets environment variables as defaults (only if not already set):
 // - LEEWAY_SLSA_CACHE_VERIFICATION
+// - LEEWAY_SLSA_REQUIRE_ATTESTATION
 // - LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS
 // - LEEWAY_DOCKER_EXPORT_TO_CACHE
 // - LEEWAY_SLSA_SOURCE_URI (from Git origin)
@@ -90,6 +94,11 @@ func (w *Workspace) ApplySLSADefaults() {
 	// Auto-enable cache verification (global feature)
 	if setEnvDefault(EnvvarSLSACacheVerification, "true") {
 		log.Debug("Auto-enabled: LEEWAY_SLSA_CACHE_VERIFICATION=true")
+	}
+
+	// Auto-enable require attestation for strict SLSA compliance (global feature)
+	if setEnvDefault(EnvvarSLSARequireAttestation, "true") {
+		log.Debug("Auto-enabled: LEEWAY_SLSA_REQUIRE_ATTESTATION=true")
 	}
 
 	// Auto-enable in-flight checksumming (global feature)
