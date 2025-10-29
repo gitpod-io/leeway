@@ -31,6 +31,9 @@ const (
 	// EnvvarSLSASourceURI configures the expected source URI for SLSA verification
 	EnvvarSLSASourceURI = "LEEWAY_SLSA_SOURCE_URI"
 
+	// EnvvarSLSARequireAttestation requires SLSA attestations (missing/invalid → build locally)
+	EnvvarSLSARequireAttestation = "LEEWAY_SLSA_REQUIRE_ATTESTATION"
+
 	// EnvvarEnableInFlightChecksums enables in-flight checksumming of cache artifacts
 	EnvvarEnableInFlightChecksums = "LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS"
 
@@ -120,6 +123,7 @@ variables have an effect on leeway:
     <light_blue>LEEWAY_DEFAULT_CACHE_LEVEL</>  Sets the default cache level for builds. Defaults to "remote".
 <light_blue>LEEWAY_SLSA_CACHE_VERIFICATION</>  Enables SLSA verification for cached artifacts (true/false).
         <light_blue>LEEWAY_SLSA_SOURCE_URI</>  Expected source URI for SLSA verification (github.com/owner/repo).
+<light_blue>LEEWAY_SLSA_REQUIRE_ATTESTATION</>  Require valid attestations; missing/invalid → build locally (true/false).
 <light_blue>LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS</>  Enable checksumming of cache artifacts (true/false).
            <light_blue>LEEWAY_EXPERIMENTAL</>  Enables experimental leeway features and commands.
 `),

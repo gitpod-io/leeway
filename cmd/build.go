@@ -202,6 +202,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
 	cmd.Flags().Bool("slsa-cache-verification", false, "Enable SLSA verification for cached artifacts")
 	cmd.Flags().String("slsa-source-uri", "", "Expected source URI for SLSA verification (required when verification enabled)")
+	cmd.Flags().Bool("slsa-require-attestation", false, "Require SLSA attestations (missing/invalid → build locally)")
 	cmd.Flags().Bool("in-flight-checksums", false, "Enable checksumming of cache artifacts to prevent TOCTU attacks")
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
 	cmd.Flags().String("report-segment", os.Getenv(EnvvarSegmentKey), "Report build events to segment using the segment key (defaults to $LEEWAY_SEGMENT_KEY)")
@@ -442,6 +443,7 @@ func parseSLSAConfig(cmd *cobra.Command) (*cache.SLSAConfig, error) {
 	// Get SLSA verification settings from environment variables (defaults)
 	slsaVerificationEnabled := os.Getenv(EnvvarSLSACacheVerification) == "true"
 	slsaSourceURI := os.Getenv(EnvvarSLSASourceURI)
+	requireAttestation := os.Getenv(EnvvarSLSARequireAttestation) == "true"
 	
 	// CLI flags override environment variables (if cmd is provided)
 	if cmd != nil {
@@ -453,6 +455,11 @@ func parseSLSAConfig(cmd *cobra.Command) (*cache.SLSAConfig, error) {
 		if cmd.Flags().Changed("slsa-source-uri") {
 			if flagValue, err := cmd.Flags().GetString("slsa-source-uri"); err == nil && flagValue != "" {
 				slsaSourceURI = flagValue
+			}
+		}
+		if cmd.Flags().Changed("slsa-require-attestation") {
+			if flagValue, err := cmd.Flags().GetBool("slsa-require-attestation"); err == nil {
+				requireAttestation = flagValue
 			}
 		}
 	}
@@ -471,7 +478,7 @@ func parseSLSAConfig(cmd *cobra.Command) (*cache.SLSAConfig, error) {
 		Verification:       true,
 		SourceURI:          slsaSourceURI,
 		TrustedRoots:       []string{"https://fulcio.sigstore.dev"},
-		RequireAttestation: false, // Default: missing attestation → download without verification
+		RequireAttestation: requireAttestation,
 	}, nil
 }
 

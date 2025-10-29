@@ -4,19 +4,23 @@
 // The cache system supports SLSA (Supply-chain Levels for Software Artifacts) verification
 // for enhanced security. The behavior is controlled by the SLSAConfig.RequireAttestation field:
 //
-//   - RequireAttestation=false (default): Missing attestation → download without verification
-//     This provides graceful degradation and backward compatibility.
+//   - RequireAttestation=false (default): Missing/invalid attestation → download without verification
+//     This provides graceful degradation and backward compatibility. The artifact is downloaded
+//     and used, but a warning is logged about the missing or invalid attestation.
 //
-//   - RequireAttestation=true: Missing attestation → skip download, allow local build fallback
-//     This enforces strict security but may impact build performance.
+//   - RequireAttestation=true: Missing/invalid attestation → skip download, allow local build fallback
+//     This enforces strict security but may impact build performance. When verification fails,
+//     the artifact is not downloaded, forcing a local rebuild with proper attestation.
 //
 // The cache system is designed to never fail builds due to cache issues. When artifacts
 // cannot be downloaded (missing, verification failed, network issues), the system gracefully
 // falls back to local builds.
 //
-// Future Evolution:
-// A CLI flag like --slsa-require-attestation could be added to set RequireAttestation=true
-// for environments that require strict SLSA compliance.
+// Configuration:
+// RequireAttestation can be controlled via:
+// - Environment variable: LEEWAY_SLSA_REQUIRE_ATTESTATION=true
+// - CLI flag: --slsa-require-attestation
+// - Workspace SLSA config: Automatically enabled when provenance.slsa=true in WORKSPACE.yaml
 package cache
 
 import (
