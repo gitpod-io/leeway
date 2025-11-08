@@ -86,6 +86,12 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 			continue
 		}
 
+		// Skip meta packages as they don't produce SBOMs
+		if p.Type == MetaPackage {
+			buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Skipping vulnerability scan for meta package %s\n", p.FullName())))
+			continue
+		}
+
 		location, exists := buildctx.LocalCache.Location(p)
 		if !exists {
 			errMsg := fmt.Appendf(nil, "Package %s not found in local cache, cannot scan for vulnerabilities\n", p.FullName())

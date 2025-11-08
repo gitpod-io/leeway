@@ -175,6 +175,13 @@ func (p *Package) link(idx map[string]*Package) error {
 		return nil
 	}
 
+	// Validate meta package constraints
+	if p.Type == MetaPackage {
+		if len(p.Sources) > 0 {
+			return xerrors.Errorf("meta packages must not have sources")
+		}
+	}
+
 	p.dependencies = make([]*Package, len(p.Dependencies))
 	p.layout = make(map[*Package]string)
 	for i, dep := range p.Dependencies {
@@ -183,6 +190,11 @@ func (p *Package) link(idx map[string]*Package) error {
 			return PackageNotFoundErr{dep}
 		}
 		p.dependencies[i] = deppkg
+
+		// Validate that no package depends on a meta package
+		if deppkg.Type == MetaPackage {
+			return xerrors.Errorf("packages cannot depend on meta packages (dependency: %s)", dep)
+		}
 
 		// if the user hasn't specified a layout, tie it down at this point
 		p.layout[deppkg], ok = p.Layout[dep]
@@ -402,6 +414,14 @@ func unmarshalTypeDependentConfig(tpe PackageType, unmarshal func(interface{}) e
 			return nil, err
 		}
 		return cfg.Config, nil
+	case MetaPackage:
+		var cfg struct {
+			Config MetaPkgConfig `yaml:"config"`
+		}
+		if err := unmarshal(&cfg); err != nil {
+			return nil, err
+		}
+		return cfg.Config, nil
 	default:
 		return nil, xerrors.Errorf("unknown package type \"%s\"", tpe)
 	}
@@ -565,6 +585,15 @@ func (cfg GenericPkgConfig) AdditionalSources(workspaceOrigin string) []string {
 	return []string{}
 }
 
+// MetaPkgConfig configures a meta package
+type MetaPkgConfig struct {
+}
+
+// AdditionalSources returns a list of unresolved sources coming in through this configuration
+func (cfg MetaPkgConfig) AdditionalSources(workspaceOrigin string) []string {
+	return []string{}
+}
+
 // PackageType describes the way a package is built and what it produces
 type PackageType string
 
@@ -580,6 +609,9 @@ const (
 
 	// GenericPackage runs an arbitary shell command
 	GenericPackage PackageType = "generic"
+
+	// MetaPackage is used to group dependencies without any build steps
+	MetaPackage PackageType = "meta"
 )
 
 // UnmarshalYAML unmarshals and validates a package type
@@ -592,7 +624,7 @@ func (p *PackageType) UnmarshalYAML(unmarshal func(interface{}) error) (err erro
 
 	*p = PackageType(val)
 	switch *p {
-	case YarnPackage, GoPackage, DockerPackage, GenericPackage:
+	case YarnPackage, GoPackage, DockerPackage, GenericPackage, MetaPackage:
 	default:
 		return fmt.Errorf("invalid package type: %s", err)
 	}

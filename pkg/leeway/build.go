@@ -856,6 +856,8 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		bld, err = p.buildDocker(buildctx, builddir, result)
 	case GenericPackage:
 		bld, err = p.buildGeneric(buildctx, builddir, result)
+	case MetaPackage:
+		bld, err = p.buildMeta(buildctx, builddir, result)
 	default:
 		return xerrors.Errorf("cannot build package type: %s", p.Type)
 	}
@@ -900,8 +902,8 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
-	// Generate SBOM if enabled
-	if p.C.W.SBOM.Enabled {
+	// Generate SBOM if enabled (skip for meta packages)
+	if p.C.W.SBOM.Enabled && p.Type != MetaPackage {
 		if err := writeSBOM(buildctx, p, builddir); err != nil {
 			return err
 		}
@@ -1099,8 +1101,8 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	// 			as we also need components/gitpod-protocol:gitpod-schema to be available on disk to perform the build.
 	case YarnPackage, GoPackage:
 		deps = p.GetTransitiveDependencies()
-	// For Generic and Docker packages it is sufficient to have the direct dependencies.
-	case GenericPackage, DockerPackage:
+	// For Generic, Docker, and Meta packages it is sufficient to have the direct dependencies.
+	case GenericPackage, DockerPackage, MetaPackage:
 		deps = p.GetDependencies()
 	}
 
@@ -2157,6 +2159,36 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 					WithCompression(!buildctx.DontCompress),
 				),
 			},
+		},
+	}, nil
+}
+
+func (p *Package) buildMeta(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
+	_, ok := p.Config.(MetaPkgConfig)
+	if !ok {
+		return nil, xerrors.Errorf("package should have meta config")
+	}
+
+	log.WithField("package", p.FullName()).Debug("meta package - collecting dependencies")
+
+	// Meta packages don't extract tar files - they just verify dependencies are built
+	for _, dep := range p.GetDependencies() {
+		_, exists := buildctx.LocalCache.Location(dep)
+		if !exists {
+			return nil, PkgNotBuiltErr{dep}
+		}
+	}
+
+	// Create an empty tar file
+	tarCmd := BuildTarCommand(
+		WithOutputFile(result),
+		WithFilesFrom("/dev/null"),
+		WithCompression(!buildctx.DontCompress),
+	)
+
+	return &packageBuild{
+		Commands: map[PackageBuildPhase][][]string{
+			PackageBuildPhasePackage: {tarCmd},
 		},
 	}, nil
 }

@@ -1,6 +1,6 @@
 ![Leeway](logo.png)
 
-Leeway is a heavily caching build system for Go, Yarn and Docker projects.
+Leeway is a heavily caching build system for Go, Yarn, Docker and generic projects.
 Its features are:
 - **source dependent versions**: leeway computes the version of a package based on the sources, dependencies and configuration that make up this package. There's no need (or means) to manually version packages.
 - **two-level package cache**: leeway caches its build results locally and remotely. The remote cache (a Google Cloud Storage bucket) means builds can share their results and thus become drastically faster.
@@ -99,7 +99,7 @@ A package is an entry in a `BUILD.yaml` in the `packages` section. All packages 
 ```YAML
 # name is the component-wide unique name of this package
 name: must-not-contain-spaces
-# Package type must be one of: go, yarn, docker, generic
+# Package type must be one of: go, yarn, docker, generic, meta
 type: generic
 # Sources list all sources of this package. Entries can be double-star globs and are relative to the component root.
 # Avoid listing sources outside the component folder.
@@ -200,6 +200,31 @@ config:
   - ["echo", "hello world"]
   - ["sh", "-c", "ls *"]
 ```
+
+### Meta packages
+Meta packages are used to group dependencies without executing any build steps. They are useful for creating logical groupings of packages or defining build targets that collect multiple packages together.
+
+```YAML
+# Meta packages don't require a config section
+# They simply collect their dependencies
+name: all-services
+type: meta
+deps:
+- :service-a
+- :service-b
+- :service-c
+```
+
+**Important constraints:**
+- Meta packages **must not have sources** (`srcs` field must be empty or omitted)
+- Other packages **cannot depend on meta packages** (meta packages are terminal nodes in the dependency graph)
+- Meta packages **do not extract dependency tar files** during build
+- Meta packages **do not produce SBOMs** (Software Bill of Materials)
+
+Meta packages produce an empty tar file and are particularly useful for:
+- Creating "meta" build targets that build multiple related packages
+- Grouping packages for easier dependency management
+- Defining workspace-level build targets
 
 ## Dynaimc package scripts
 Packages can be dynamically produced within a component using a dynamic package script named `BUILD.js`. This ECMAScript 5.1 file is executed using [Goja](https://github.com/dop251/goja) and produces a `packages` array which contains the package struct much like they'd exist within the `BUILD.yaml`. For example:
