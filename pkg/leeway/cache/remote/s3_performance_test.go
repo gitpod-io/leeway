@@ -132,24 +132,6 @@ func (m *realisticMockVerifier) VerifyArtifact(ctx context.Context, artifactPath
 	return nil // Success
 }
 
-// Test helper: Create realistic mock S3 storage for performance testing
-func createRealisticMockS3Storage(t testing.TB, artifactPath string, attestation []byte) *realisticMockS3Storage {
-	data, err := os.ReadFile(artifactPath)
-	require.NoError(t, err)
-
-	storage := &realisticMockS3Storage{
-		objects: map[string][]byte{
-			"test-package:v1.tar.gz": data,
-		},
-	}
-
-	if attestation != nil {
-		storage.objects["test-package:v1.tar.gz.att"] = attestation
-	}
-
-	return storage
-}
-
 // Test helper: Create realistic mock S3 storage for multiple packages
 func createRealisticMockS3StorageMultiple(t testing.TB, packageCount int) *realisticMockS3Storage {
 	storage := &realisticMockS3Storage{
