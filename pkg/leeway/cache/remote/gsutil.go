@@ -192,6 +192,27 @@ func (rs *GSUtilCache) UploadFile(ctx context.Context, filePath string, key stri
 	return nil
 }
 
+// HasFile checks if a file exists in the remote cache with the given key
+func (rs *GSUtilCache) HasFile(ctx context.Context, key string) (bool, error) {
+	target := fmt.Sprintf("gs://%s/%s", rs.BucketName, key)
+	
+	cmd := exec.CommandContext(ctx, "gsutil", "stat", target)
+	if err := cmd.Run(); err != nil {
+		// gsutil stat returns non-zero exit code if file doesn't exist
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+				if status.ExitStatus() == 1 {
+					// File doesn't exist
+					return false, nil
+				}
+			}
+		}
+		return false, fmt.Errorf("failed to check if file exists at %s: %w", target, err)
+	}
+	
+	return true, nil
+}
+
 func parseGSUtilStatOutput(reader io.Reader) map[string]struct{} {
 	exists := make(map[string]struct{})
 	scanner := bufio.NewScanner(reader)

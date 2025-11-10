@@ -83,6 +83,18 @@ func (m *mockRemoteCacheUpload) UploadFile(ctx context.Context, filePath string,
 	return nil
 }
 
+func (m *mockRemoteCacheUpload) HasFile(ctx context.Context, key string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.uploadedFiles == nil {
+		return false, nil
+	}
+
+	_, exists := m.uploadedFiles[key]
+	return exists, nil
+}
+
 // Test helper to create a test artifact file
 func createTestArtifactFile(t *testing.T, dir, name, content string) string {
 	path := filepath.Join(dir, name)
@@ -360,4 +372,60 @@ func TestArtifactUploader_ConcurrentUploads(t *testing.T) {
 
 		assert.NoError(t, err)
 	}
+}
+
+// TestArtifactUploader_SkipsExistingArtifacts tests that existing artifacts are not re-uploaded
+func TestArtifactUploader_SkipsExistingArtifacts(t *testing.T) {
+	tmpDir := t.TempDir()
+	artifactPath := filepath.Join(tmpDir, "existing.tar.gz")
+	artifactContent := []byte("existing artifact content")
+	err := os.WriteFile(artifactPath, artifactContent, 0644)
+	require.NoError(t, err)
+
+	mockCache := &mockRemoteCacheUpload{
+		uploadedFiles: make(map[string][]byte),
+	}
+
+	// Pre-populate the cache with the artifact (simulating it already exists)
+	mockCache.uploadedFiles["existing.tar.gz"] = artifactContent
+
+	uploader := NewArtifactUploader(mockCache)
+	attestation := []byte(`{"test":"attestation"}`)
+
+	err = uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestation)
+	require.NoError(t, err)
+
+	// Verify that the artifact was NOT re-uploaded (content should be unchanged)
+	assert.Equal(t, artifactContent, mockCache.uploadedFiles["existing.tar.gz"], "Artifact should not be re-uploaded")
+
+	// Verify that the attestation WAS uploaded
+	assert.Contains(t, mockCache.uploadedFiles, "existing.tar.gz.att", "Attestation should be uploaded")
+	assert.Equal(t, attestation, mockCache.uploadedFiles["existing.tar.gz.att"], "Attestation content should match")
+}
+
+// TestArtifactUploader_UploadsNewArtifacts tests that new artifacts are uploaded
+func TestArtifactUploader_UploadsNewArtifacts(t *testing.T) {
+	tmpDir := t.TempDir()
+	artifactPath := filepath.Join(tmpDir, "new.tar.gz")
+	artifactContent := []byte("new artifact content")
+	err := os.WriteFile(artifactPath, artifactContent, 0644)
+	require.NoError(t, err)
+
+	mockCache := &mockRemoteCacheUpload{
+		uploadedFiles: make(map[string][]byte),
+	}
+
+	uploader := NewArtifactUploader(mockCache)
+	attestation := []byte(`{"test":"attestation"}`)
+
+	err = uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestation)
+	require.NoError(t, err)
+
+	// Verify that the artifact WAS uploaded
+	assert.Contains(t, mockCache.uploadedFiles, "new.tar.gz", "New artifact should be uploaded")
+	assert.Equal(t, artifactContent, mockCache.uploadedFiles["new.tar.gz"], "Artifact content should match")
+
+	// Verify that the attestation WAS uploaded
+	assert.Contains(t, mockCache.uploadedFiles, "new.tar.gz.att", "Attestation should be uploaded")
+	assert.Equal(t, attestation, mockCache.uploadedFiles["new.tar.gz.att"], "Attestation content should match")
 }

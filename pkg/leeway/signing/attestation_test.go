@@ -914,6 +914,10 @@ func (m *mockRemoteCache) UploadFile(ctx context.Context, filePath string, key s
 	return nil
 }
 
+func (m *mockRemoteCache) HasFile(ctx context.Context, key string) (bool, error) {
+	return false, nil
+}
+
 // TestGetEnvOrDefault tests the environment variable helper
 // TestValidateSigstoreEnvironment tests Sigstore environment validation
 func TestValidateSigstoreEnvironment(t *testing.T) {

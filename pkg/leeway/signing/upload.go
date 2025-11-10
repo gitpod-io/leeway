@@ -86,9 +86,28 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 		return fmt.Errorf("context cancelled before upload: %w", err)
 	}
 
-	// Upload artifact first
-	if err := u.remoteCache.UploadFile(ctx, artifactPath, artifactKey); err != nil {
-		return fmt.Errorf("failed to upload artifact: %w", err)
+	// Check if artifact already exists in remote cache
+	// Only upload if it doesn't exist (avoid re-uploading downloaded artifacts)
+	artifactExists, err := u.remoteCache.HasFile(ctx, artifactKey)
+	if err != nil {
+		log.WithError(err).WithField("key", artifactKey).Warn("Failed to check if artifact exists, will attempt upload")
+		artifactExists = false // Assume it doesn't exist and try to upload
+	}
+
+	if artifactExists {
+		log.WithFields(log.Fields{
+			"artifact":     artifactPath,
+			"artifact_key": artifactKey,
+		}).Info("Artifact already exists in remote cache, skipping upload")
+	} else {
+		// Upload artifact only if it doesn't exist
+		if err := u.remoteCache.UploadFile(ctx, artifactPath, artifactKey); err != nil {
+			return fmt.Errorf("failed to upload artifact: %w", err)
+		}
+		log.WithFields(log.Fields{
+			"artifact":     artifactPath,
+			"artifact_key": artifactKey,
+		}).Info("Successfully uploaded artifact to remote cache")
 	}
 
 	// Check context between uploads
@@ -96,7 +115,7 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 		return fmt.Errorf("context cancelled between uploads: %w", err)
 	}
 
-	// Upload attestation file
+	// Always upload attestation file (it's new)
 	if err := u.remoteCache.UploadFile(ctx, attestationPath, attestationKey); err != nil {
 		return fmt.Errorf("failed to upload .att file: %w", err)
 	}
@@ -105,7 +124,7 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 		"artifact":     artifactPath,
 		"artifact_key": artifactKey,
 		"att_key":      attestationKey,
-	}).Info("Successfully uploaded artifact and .att file")
+	}).Info("Successfully uploaded attestation file")
 
 	return nil
 }
