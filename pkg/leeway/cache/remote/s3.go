@@ -964,6 +964,30 @@ func (s *S3Cache) UploadFile(ctx context.Context, filePath string, key string) e
 	return nil
 }
 
+// HasFile checks if a file exists in the remote cache with the given key
+func (s *S3Cache) HasFile(ctx context.Context, key string) (bool, error) {
+	// Wait for rate limiter permission
+	if err := s.waitForRateLimit(ctx); err != nil {
+		log.WithError(err).Debug("Rate limiter error during file existence check")
+		return false, fmt.Errorf("rate limiter error: %w", err)
+	}
+
+	// Use timeout for the check operation
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	exists, err := s.storage.HasObject(timeoutCtx, key)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"key":   key,
+			"error": err,
+		}).Debug("failed to check file existence in remote cache")
+		return false, fmt.Errorf("failed to check if file exists: %w", err)
+	}
+
+	return exists, nil
+}
+
 // s3ClientAPI is a subset of the S3 client interface we need
 type s3ClientAPI interface {
 	HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)

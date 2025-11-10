@@ -56,6 +56,10 @@ type RemoteCache interface {
 	// UploadFile uploads a single file to the remote cache with the given key
 	// This is useful for uploading individual files like attestations without Package abstraction
 	UploadFile(ctx context.Context, filePath string, key string) error
+
+	// HasFile checks if a file exists in the remote cache with the given key
+	// This is useful for checking if artifacts need to be uploaded
+	HasFile(ctx context.Context, key string) (bool, error)
 }
 
 // ObjectStorage represents a generic object storage interface

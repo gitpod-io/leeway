@@ -33,3 +33,8 @@ func (NoRemoteCache) Upload(ctx context.Context, src cache.LocalCache, pkgs []ca
 func (NoRemoteCache) UploadFile(ctx context.Context, filePath string, key string) error {
 	return nil
 }
+
+// HasFile checks if a file exists in the remote cache with the given key
+func (NoRemoteCache) HasFile(ctx context.Context, key string) (bool, error) {
+	return false, nil
+}

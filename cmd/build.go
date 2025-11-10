@@ -414,6 +414,10 @@ func (c *pushOnlyRemoteCache) UploadFile(ctx context.Context, filePath string, k
 	return c.C.UploadFile(ctx, filePath, key)
 }
 
+func (c *pushOnlyRemoteCache) HasFile(ctx context.Context, key string) (bool, error) {
+	return c.C.HasFile(ctx, key)
+}
+
 type pullOnlyRemoteCache struct {
 	C cache.RemoteCache
 }
@@ -432,6 +436,10 @@ func (c *pullOnlyRemoteCache) Upload(ctx context.Context, src cache.LocalCache, 
 
 func (c *pullOnlyRemoteCache) UploadFile(ctx context.Context, filePath string, key string) error {
 	return nil
+}
+
+func (c *pullOnlyRemoteCache) HasFile(ctx context.Context, key string) (bool, error) {
+	return c.C.HasFile(ctx, key)
 }
 
 func getRemoteCacheFromEnv() cache.RemoteCache {
