@@ -3,6 +3,7 @@ package signing
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/in-toto/in-toto-golang/in_toto"
@@ -88,7 +90,16 @@ func GenerateSignedSLSAAttestation(ctx context.Context, artifactPath string, git
 	}
 
 	sourceURI := fmt.Sprintf("%s/%s", githubCtx.ServerURL, githubCtx.Repository)
-	builderID := fmt.Sprintf("%s/%s", githubCtx.ServerURL, githubCtx.WorkflowRef)
+	
+	// Extract builder ID from OIDC token to match certificate identity
+	// This is critical for compatibility with reusable workflows
+	builderID, err := extractBuilderIDFromOIDC(ctx, githubCtx)
+	if err != nil {
+		// Fallback to GITHUB_WORKFLOW_REF if OIDC token extraction fails
+		// This maintains backward compatibility but may cause verification issues
+		log.WithError(err).Warn("Failed to extract builder ID from OIDC token, falling back to GITHUB_WORKFLOW_REF")
+		builderID = fmt.Sprintf("%s/%s", githubCtx.ServerURL, githubCtx.WorkflowRef)
+	}
 
 	log.WithFields(log.Fields{
 		"artifact":   filepath.Base(artifactPath),
@@ -365,6 +376,89 @@ func validateSigstoreEnvironment() error {
 
 	log.Debug("Sigstore environment validation passed")
 	return nil
+}
+
+// extractBuilderIDFromOIDC extracts the builder ID from the GitHub OIDC token's sub claim.
+// This ensures the builder ID matches the certificate identity issued by Fulcio, which is
+// critical for slsa-verifier compatibility, especially with reusable workflows.
+//
+// For reusable workflows, the OIDC token contains:
+// - sub claim: Contains job_workflow_ref pointing to the actual executing workflow (e.g., _build.yml)
+// - workflow_ref: Points to the calling workflow (e.g., build-main.yml)
+//
+// Fulcio uses the sub claim for the certificate identity, so we must use it for the builder ID.
+func extractBuilderIDFromOIDC(ctx context.Context, githubCtx *GitHubContext) (string, error) {
+	// Fetch the OIDC token with sigstore audience
+	idToken, err := fetchGitHubOIDCToken(ctx, "sigstore")
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch OIDC token: %w", err)
+	}
+
+	// Parse the JWT token to extract the sub claim
+	// JWT format: header.payload.signature
+	parts := strings.Split(idToken, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid JWT token format: expected 3 parts, got %d", len(parts))
+	}
+
+	// Decode the payload (second part)
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("failed to decode JWT payload: %w", err)
+	}
+
+	// Parse the payload JSON
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return "", fmt.Errorf("failed to parse JWT claims: %w", err)
+	}
+
+	// Extract the sub claim
+	sub, ok := claims["sub"].(string)
+	if !ok || sub == "" {
+		return "", fmt.Errorf("sub claim not found or empty in OIDC token")
+	}
+
+	// Extract job_workflow_ref from the sub claim
+	// Format: repo:OWNER/REPO:ref:REF:job_workflow_ref:OWNER/REPO/.github/workflows/WORKFLOW@REF
+	jobWorkflowRef := extractJobWorkflowRef(sub)
+	if jobWorkflowRef == "" {
+		return "", fmt.Errorf("job_workflow_ref not found in sub claim: %s", sub)
+	}
+
+	// Construct the builder ID URL
+	builderID := fmt.Sprintf("%s/%s", githubCtx.ServerURL, jobWorkflowRef)
+	
+	log.WithFields(log.Fields{
+		"sub_claim":        sub,
+		"job_workflow_ref": jobWorkflowRef,
+		"builder_id":       builderID,
+	}).Debug("Extracted builder ID from OIDC token")
+
+	return builderID, nil
+}
+
+// extractJobWorkflowRef extracts the job_workflow_ref from a GitHub OIDC sub claim.
+// The sub claim format for reusable workflows is:
+// repo:OWNER/REPO:ref:REF:job_workflow_ref:OWNER/REPO/.github/workflows/WORKFLOW@REF
+//
+// For direct workflows (non-reusable), the format is similar but job_workflow_ref
+// points to the same workflow as workflow_ref.
+func extractJobWorkflowRef(sub string) string {
+	// Split by colon to parse the structured claim
+	parts := strings.Split(sub, ":")
+	
+	// Find the job_workflow_ref field
+	for i, part := range parts {
+		if part == "job_workflow_ref" && i+1 < len(parts) {
+			// Return everything after "job_workflow_ref:"
+			// This handles the case where the workflow path contains colons
+			return strings.Join(parts[i+1:], ":")
+		}
+	}
+	
+	// If no job_workflow_ref found, return empty string
+	return ""
 }
 
 // fetchGitHubOIDCToken fetches an OIDC token from GitHub Actions for Sigstore.
