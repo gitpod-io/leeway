@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	compressor   = "gzip"
+	compressor   = "gzip -n"
 	decompressor = "gzip -d"
 	// Number of CPU cores for parallel processing
 	cpuCores = runtime.NumCPU()
@@ -20,7 +20,8 @@ func init() {
 	pigz, err := exec.LookPath("pigz")
 	if err == nil {
 		// Use all available CPU cores by default
-		compressor = fmt.Sprintf("%s -p %d", pigz, cpuCores)
+		// -n flag ensures deterministic output by not storing timestamps
+		compressor = fmt.Sprintf("%s -n -p %d", pigz, cpuCores)
 	}
 }
 
@@ -128,7 +129,8 @@ func getCompressionCommand(algo CompressionAlgorithm, level int) string {
 		return ""
 	default: // Gzip or fallback
 		if level > 0 {
-			return fmt.Sprintf("gzip -%d", level)
+			// -n flag ensures deterministic output by not storing timestamps
+			return fmt.Sprintf("gzip -n -%d", level)
 		}
 		return compressor
 	}
