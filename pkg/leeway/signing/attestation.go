@@ -95,10 +95,7 @@ func GenerateSignedSLSAAttestation(ctx context.Context, artifactPath string, git
 	// This is critical for compatibility with reusable workflows
 	builderID, err := extractBuilderIDFromOIDC(ctx, githubCtx)
 	if err != nil {
-		// Fallback to GITHUB_WORKFLOW_REF if OIDC token extraction fails
-		// This maintains backward compatibility but may cause verification issues
-		log.WithError(err).Warn("Failed to extract builder ID from OIDC token, falling back to GITHUB_WORKFLOW_REF")
-		builderID = fmt.Sprintf("%s/%s", githubCtx.ServerURL, githubCtx.WorkflowRef)
+		return nil, fmt.Errorf("failed to extract builder ID from OIDC token: %w", err)
 	}
 
 	log.WithFields(log.Fields{

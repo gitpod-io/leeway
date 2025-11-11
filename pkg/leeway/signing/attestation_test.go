@@ -599,12 +599,12 @@ func TestGenerateSignedSLSAAttestation_Integration(t *testing.T) {
 	githubCtx := createMockGitHubContext()
 
 	// Test that the function exists and has the right signature
-	// We expect it to fail due to missing Sigstore environment, but that's expected
+	// We expect it to fail due to missing OIDC environment (strict mode)
 	_, err := GenerateSignedSLSAAttestation(context.Background(), artifactPath, githubCtx)
 
-	// We expect an error related to Sigstore/signing, not basic validation
+	// We expect an error related to OIDC extraction (fails fast before signing)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "sign", "Error should be related to signing process")
+	assert.Contains(t, err.Error(), "failed to extract builder ID from OIDC token", "Error should be related to OIDC extraction")
 }
 
 // TestSignedAttestationResult_Structure tests the result structure
@@ -1091,10 +1091,10 @@ func TestSignProvenanceWithSigstore_EnvironmentValidation(t *testing.T) {
 	artifactPath := createTestArtifact(t, "test content")
 	githubCtx := createMockGitHubContext()
 
-	// This should fail at Sigstore environment validation
+	// This should fail at OIDC extraction (strict mode - fails fast)
 	_, err := GenerateSignedSLSAAttestation(context.Background(), artifactPath, githubCtx)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to sign SLSA provenance")
+	assert.Contains(t, err.Error(), "failed to extract builder ID from OIDC token")
 }
 
 func TestFetchGitHubOIDCToken(t *testing.T) {
