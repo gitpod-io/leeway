@@ -3,6 +3,7 @@ package signing
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1203,6 +1204,363 @@ func TestFetchGitHubOIDCToken(t *testing.T) {
 					assert.Equal(t, "test-token-12345", token)
 				}
 			}
+		})
+	}
+}
+
+// TestExtractJobWorkflowRef tests the extraction of job_workflow_ref from OIDC sub claims
+func TestExtractJobWorkflowRef(t *testing.T) {
+	tests := []struct {
+		name     string
+		subClaim string
+		expected string
+	}{
+		{
+			name:     "reusable workflow with job_workflow_ref",
+			subClaim: "repo:example-org/example-repo:ref:refs/heads/main:job_workflow_ref:example-org/example-repo/.github/workflows/_build.yml@refs/heads/leo/slsa/b",
+			expected: "example-org/example-repo/.github/workflows/_build.yml@refs/heads/leo/slsa/b",
+		},
+		{
+			name:     "direct workflow (non-reusable)",
+			subClaim: "repo:gitpod-io/leeway:ref:refs/heads/main:job_workflow_ref:gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
+			expected: "gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
+		},
+		{
+			name:     "workflow path with colons",
+			subClaim: "repo:org/repo:ref:refs/heads/main:job_workflow_ref:org/repo/.github/workflows/build:test.yml@refs/heads/main",
+			expected: "org/repo/.github/workflows/build:test.yml@refs/heads/main",
+		},
+		{
+			name:     "missing job_workflow_ref",
+			subClaim: "repo:example-org/example-repo:ref:refs/heads/main",
+			expected: "",
+		},
+		{
+			name:     "empty sub claim",
+			subClaim: "",
+			expected: "",
+		},
+		{
+			name:     "malformed sub claim",
+			subClaim: "invalid:format",
+			expected: "",
+		},
+		{
+			name:     "job_workflow_ref at end without value",
+			subClaim: "repo:org/repo:ref:refs/heads/main:job_workflow_ref:",
+			expected: "",
+		},
+		{
+			name:     "multiple colons in workflow path",
+			subClaim: "repo:org/repo:ref:refs/heads/main:job_workflow_ref:org/repo/.github/workflows/test:build:deploy.yml@refs/heads/main",
+			expected: "org/repo/.github/workflows/test:build:deploy.yml@refs/heads/main",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractJobWorkflowRef(tt.subClaim)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestExtractJobWorkflowRef_RealWorldExamples tests with actual GitHub OIDC token formats
+func TestExtractJobWorkflowRef_RealWorldExamples(t *testing.T) {
+	tests := []struct {
+		name        string
+		subClaim    string
+		expected    string
+		description string
+	}{
+		{
+			name:        "GitHub Actions reusable workflow",
+			subClaim:    "repo:gitpod-io/gitpod:environment:production:ref:refs/heads/main:job_workflow_ref:gitpod-io/gitpod/.github/workflows/_build-image.yml@refs/heads/main",
+			expected:    "gitpod-io/gitpod/.github/workflows/_build-image.yml@refs/heads/main",
+			description: "Reusable workflow with environment claim",
+		},
+		{
+			name:        "Pull request workflow",
+			subClaim:    "repo:gitpod-io/leeway:ref:refs/pull/264/merge:job_workflow_ref:gitpod-io/leeway/.github/workflows/build.yml@refs/pull/264/merge",
+			expected:    "gitpod-io/leeway/.github/workflows/build.yml@refs/pull/264/merge",
+			description: "Pull request merge ref",
+		},
+		{
+			name:        "Tag-triggered workflow",
+			subClaim:    "repo:org/repo:ref:refs/tags/v1.0.0:job_workflow_ref:org/repo/.github/workflows/release.yml@refs/tags/v1.0.0",
+			expected:    "org/repo/.github/workflows/release.yml@refs/tags/v1.0.0",
+			description: "Tag reference",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractJobWorkflowRef(tt.subClaim)
+			assert.Equal(t, tt.expected, result, tt.description)
+		})
+	}
+}
+
+// Helper function to create base64url encoded strings for JWT tokens
+func base64EncodeForTest(s string) string {
+	return strings.TrimRight(base64.URLEncoding.EncodeToString([]byte(s)), "=")
+}
+
+// TestExtractBuilderIDFromOIDC tests the extraction of builder ID from OIDC tokens
+func TestExtractBuilderIDFromOIDC(t *testing.T) {
+	tests := []struct {
+		name        string
+		setupServer func() *httptest.Server
+		githubCtx   *GitHubContext
+		expectError bool
+		expectedID  string
+		errorMsg    string
+	}{
+		{
+			name: "valid OIDC token with reusable workflow",
+			setupServer: func() *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					header := base64EncodeForTest(`{"alg":"RS256","typ":"JWT"}`)
+					payload := base64EncodeForTest(`{
+						"sub": "repo:example-org/example-repo:ref:refs/heads/main:job_workflow_ref:example-org/example-repo/.github/workflows/_build.yml@refs/heads/leo/slsa/b",
+						"aud": "sigstore",
+						"iss": "https://token.actions.githubusercontent.com"
+					}`)
+					signature := base64EncodeForTest("fake-signature")
+					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
+					
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]string{"value": token})
+				}))
+			},
+			githubCtx: &GitHubContext{
+				ServerURL:   "https://github.com",
+				Repository:  "example-org/example-repo",
+				WorkflowRef: "example-org/example-repo/.github/workflows/calling-workflow.yml@refs/heads/main",
+			},
+			expectError: false,
+			expectedID:  "https://github.com/example-org/example-repo/.github/workflows/_build.yml@refs/heads/leo/slsa/b",
+		},
+		{
+			name: "valid OIDC token with direct workflow",
+			setupServer: func() *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					header := base64EncodeForTest(`{"alg":"RS256","typ":"JWT"}`)
+					payload := base64EncodeForTest(`{
+						"sub": "repo:gitpod-io/leeway:ref:refs/heads/main:job_workflow_ref:gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
+						"aud": "sigstore"
+					}`)
+					signature := base64EncodeForTest("fake-signature")
+					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
+					
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]string{"value": token})
+				}))
+			},
+			githubCtx: &GitHubContext{
+				ServerURL:   "https://github.com",
+				Repository:  "gitpod-io/leeway",
+				WorkflowRef: "gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
+			},
+			expectError: false,
+			expectedID:  "https://github.com/gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
+		},
+		{
+			name: "invalid JWT format - only 2 parts",
+			setupServer: func() *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					token := "header.payload"
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]string{"value": token})
+				}))
+			},
+			githubCtx: &GitHubContext{
+				ServerURL:  "https://github.com",
+				Repository: "org/repo",
+			},
+			expectError: true,
+			errorMsg:    "invalid JWT token format",
+		},
+		{
+			name: "missing sub claim",
+			setupServer: func() *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					header := base64EncodeForTest(`{"alg":"RS256","typ":"JWT"}`)
+					payload := base64EncodeForTest(`{"aud": "sigstore"}`)
+					signature := base64EncodeForTest("fake-signature")
+					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
+					
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]string{"value": token})
+				}))
+			},
+			githubCtx: &GitHubContext{
+				ServerURL:  "https://github.com",
+				Repository: "org/repo",
+			},
+			expectError: true,
+			errorMsg:    "sub claim not found",
+		},
+		{
+			name: "missing job_workflow_ref in sub claim",
+			setupServer: func() *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					header := base64EncodeForTest(`{"alg":"RS256","typ":"JWT"}`)
+					payload := base64EncodeForTest(`{
+						"sub": "repo:org/repo:ref:refs/heads/main",
+						"aud": "sigstore"
+					}`)
+					signature := base64EncodeForTest("fake-signature")
+					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
+					
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]string{"value": token})
+				}))
+			},
+			githubCtx: &GitHubContext{
+				ServerURL:  "https://github.com",
+				Repository: "org/repo",
+			},
+			expectError: true,
+			errorMsg:    "job_workflow_ref not found",
+		},
+		{
+			name: "OIDC token fetch failure",
+			setupServer: func() *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusUnauthorized)
+				}))
+			},
+			githubCtx: &GitHubContext{
+				ServerURL:  "https://github.com",
+				Repository: "org/repo",
+			},
+			expectError: true,
+			errorMsg:    "failed to fetch OIDC token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := tt.setupServer()
+			defer server.Close()
+
+			oldRequestURL := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
+			oldRequestToken := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+			defer func() {
+				os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oldRequestURL)
+				os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", oldRequestToken)
+			}()
+
+			os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", server.URL)
+			os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
+
+			builderID, err := extractBuilderIDFromOIDC(context.Background(), tt.githubCtx)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedID, builderID)
+			}
+		})
+	}
+}
+
+// TestBuilderIDMatchesCertificateIdentity is the critical regression test
+// It verifies that the builder ID extracted from OIDC matches what Fulcio
+// would use for the certificate identity, preventing verification failures
+func TestBuilderIDMatchesCertificateIdentity(t *testing.T) {
+	tests := []struct {
+		name                   string
+		oidcSubClaim           string
+		githubWorkflowRef      string
+		expectedBuilderID      string
+		shouldMatchWorkflowRef bool
+		description            string
+	}{
+		{
+			name:                   "reusable workflow - builder ID must match OIDC not GITHUB_WORKFLOW_REF",
+			oidcSubClaim:           "repo:example-org/example-repo:ref:refs/heads/main:job_workflow_ref:example-org/example-repo/.github/workflows/_build.yml@refs/heads/leo/slsa/b",
+			githubWorkflowRef:      "example-org/example-repo/.github/workflows/calling-workflow.yml@refs/heads/main",
+			expectedBuilderID:      "https://github.com/example-org/example-repo/.github/workflows/_build.yml@refs/heads/leo/slsa/b",
+			shouldMatchWorkflowRef: false,
+			description:            "For reusable workflows, certificate identity comes from OIDC sub claim (actual executing workflow), not GITHUB_WORKFLOW_REF (calling workflow)",
+		},
+		{
+			name:                   "direct workflow - builder ID matches both OIDC and GITHUB_WORKFLOW_REF",
+			oidcSubClaim:           "repo:gitpod-io/leeway:ref:refs/heads/main:job_workflow_ref:gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
+			githubWorkflowRef:      "gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
+			expectedBuilderID:      "https://github.com/gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
+			shouldMatchWorkflowRef: true,
+			description:            "For direct workflows, OIDC and GITHUB_WORKFLOW_REF point to the same workflow",
+		},
+		{
+			name:                   "nested reusable workflow",
+			oidcSubClaim:           "repo:org/repo:ref:refs/heads/main:job_workflow_ref:org/repo/.github/workflows/_internal-build.yml@refs/heads/feature",
+			githubWorkflowRef:      "org/repo/.github/workflows/main-workflow.yml@refs/heads/main",
+			expectedBuilderID:      "https://github.com/org/repo/.github/workflows/_internal-build.yml@refs/heads/feature",
+			shouldMatchWorkflowRef: false,
+			description:            "Nested reusable workflows also use OIDC sub claim for certificate identity",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				header := base64EncodeForTest(`{"alg":"RS256","typ":"JWT"}`)
+				payload := base64EncodeForTest(fmt.Sprintf(`{
+					"sub": "%s",
+					"aud": "sigstore",
+					"iss": "https://token.actions.githubusercontent.com"
+				}`, tt.oidcSubClaim))
+				signature := base64EncodeForTest("fake-signature")
+				token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
+				
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{"value": token})
+			}))
+			defer server.Close()
+
+			oldRequestURL := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
+			oldRequestToken := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+			defer func() {
+				os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oldRequestURL)
+				os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", oldRequestToken)
+			}()
+
+			os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", server.URL)
+			os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
+
+			githubCtx := &GitHubContext{
+				ServerURL:   "https://github.com",
+				Repository:  "example-org/example-repo",
+				WorkflowRef: tt.githubWorkflowRef,
+			}
+
+			builderID, err := extractBuilderIDFromOIDC(context.Background(), githubCtx)
+			require.NoError(t, err, tt.description)
+
+			assert.Equal(t, tt.expectedBuilderID, builderID, tt.description)
+
+			workflowRefBasedID := fmt.Sprintf("%s/%s", githubCtx.ServerURL, tt.githubWorkflowRef)
+			if tt.shouldMatchWorkflowRef {
+				assert.Equal(t, workflowRefBasedID, builderID,
+					"For direct workflows, builder ID should match GITHUB_WORKFLOW_REF-based ID")
+			} else {
+				assert.NotEqual(t, workflowRefBasedID, builderID,
+					"For reusable workflows, builder ID must NOT match GITHUB_WORKFLOW_REF-based ID - this is the critical fix")
+			}
+
+			jobWorkflowRef := extractJobWorkflowRef(tt.oidcSubClaim)
+			require.NotEmpty(t, jobWorkflowRef, "job_workflow_ref should be extractable from sub claim")
+
+			expectedFromJobWorkflowRef := fmt.Sprintf("%s/%s", githubCtx.ServerURL, jobWorkflowRef)
+			assert.Equal(t, expectedFromJobWorkflowRef, builderID,
+				"Builder ID must be constructed from OIDC job_workflow_ref to match Fulcio certificate identity")
 		})
 	}
 }
