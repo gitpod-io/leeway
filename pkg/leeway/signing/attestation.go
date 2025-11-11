@@ -420,11 +420,18 @@ func extractBuilderIDFromOIDC(ctx context.Context, githubCtx *GitHubContext) (st
 	}
 
 	// Try to extract job_workflow_ref from the sub claim first
-	// This is the format that Fulcio embeds in the certificate
+	// 
+	// Context:
+	// When we call sign.Bundle() with the OIDC token, the Sigstore library sends it to Fulcio (Sigstore's CA).
+	// Fulcio extracts claims from the OIDC token and issues a short-lived certificate with the builder identity in the Subject Alternative Name (SAN).
+	// For verification to succeed, our attestation's builder ID must match what Fulcio puts in the certificate SAN.
+	//
+	// TODO: Verify if GitHub embeds job_workflow_ref in the sub claim or only provides it as top-level.
+	// GitHub docs show it as top-level, but we need to confirm what Fulcio actually uses. The current
+	// implementation tries both approaches to ensure we match Fulcio's extraction logic.
 	jobWorkflowRef := extractJobWorkflowRef(sub)
 	
 	// If not found in sub, try the top-level job_workflow_ref claim
-	// (GitHub provides both, but Fulcio uses the one from sub)
 	if jobWorkflowRef == "" {
 		if jwfRef, ok := claims["job_workflow_ref"].(string); ok && jwfRef != "" {
 			jobWorkflowRef = jwfRef
