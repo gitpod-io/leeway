@@ -497,7 +497,7 @@ func fetchGitHubOIDCToken(ctx context.Context, audience string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
