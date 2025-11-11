@@ -630,30 +630,16 @@ func TestSignedAttestationResult_Structure(t *testing.T) {
 
 // TestGetGitHubContext tests the environment variable extraction
 func TestGetGitHubContext(t *testing.T) {
-	// Save original environment
-	originalEnv := map[string]string{
-		"GITHUB_RUN_ID":       os.Getenv("GITHUB_RUN_ID"),
-		"GITHUB_RUN_NUMBER":   os.Getenv("GITHUB_RUN_NUMBER"),
-		"GITHUB_ACTOR":        os.Getenv("GITHUB_ACTOR"),
-		"GITHUB_REPOSITORY":   os.Getenv("GITHUB_REPOSITORY"),
-		"GITHUB_REF":          os.Getenv("GITHUB_REF"),
-		"GITHUB_SHA":          os.Getenv("GITHUB_SHA"),
-		"GITHUB_SERVER_URL":   os.Getenv("GITHUB_SERVER_URL"),
-		"GITHUB_WORKFLOW_REF": os.Getenv("GITHUB_WORKFLOW_REF"),
-	}
+	// Set test environment (t.Setenv automatically handles cleanup)
+	t.Setenv("GITHUB_RUN_ID", "test-run-id")
+	t.Setenv("GITHUB_RUN_NUMBER", "test-run-number")
+	t.Setenv("GITHUB_ACTOR", "test-actor")
+	t.Setenv("GITHUB_REPOSITORY", "test-repo")
+	t.Setenv("GITHUB_REF", "test-ref")
+	t.Setenv("GITHUB_SHA", "test-sha")
+	t.Setenv("GITHUB_SERVER_URL", "test-server")
+	t.Setenv("GITHUB_WORKFLOW_REF", "test-workflow")
 
-	// Clean up after test
-	defer func() {
-		for k, v := range originalEnv {
-			if v == "" {
-				_ = os.Unsetenv(k)
-			} else {
-				_ = os.Setenv(k, v)
-			}
-		}
-	}()
-
-	// Set test environment
 	testEnv := map[string]string{
 		"GITHUB_RUN_ID":       "test-run-id",
 		"GITHUB_RUN_NUMBER":   "test-run-number",
@@ -663,10 +649,6 @@ func TestGetGitHubContext(t *testing.T) {
 		"GITHUB_SHA":          "test-sha",
 		"GITHUB_SERVER_URL":   "test-server",
 		"GITHUB_WORKFLOW_REF": "test-workflow",
-	}
-
-	for k, v := range testEnv {
-		_ = os.Setenv(k, v)
 	}
 
 	// Test GetGitHubContext
@@ -684,39 +666,15 @@ func TestGetGitHubContext(t *testing.T) {
 
 // TestGetGitHubContext_EmptyEnvironment tests with empty environment
 func TestGetGitHubContext_EmptyEnvironment(t *testing.T) {
-	// Save original environment
-	originalEnv := map[string]string{
-		"GITHUB_RUN_ID":       os.Getenv("GITHUB_RUN_ID"),
-		"GITHUB_RUN_NUMBER":   os.Getenv("GITHUB_RUN_NUMBER"),
-		"GITHUB_ACTOR":        os.Getenv("GITHUB_ACTOR"),
-		"GITHUB_REPOSITORY":   os.Getenv("GITHUB_REPOSITORY"),
-		"GITHUB_REF":          os.Getenv("GITHUB_REF"),
-		"GITHUB_SHA":          os.Getenv("GITHUB_SHA"),
-		"GITHUB_SERVER_URL":   os.Getenv("GITHUB_SERVER_URL"),
-		"GITHUB_WORKFLOW_REF": os.Getenv("GITHUB_WORKFLOW_REF"),
-	}
-
-	// Clean up after test
-	defer func() {
-		for k, v := range originalEnv {
-			if v == "" {
-				_ = os.Unsetenv(k)
-			} else {
-				_ = os.Setenv(k, v)
-			}
-		}
-	}()
-
-	// Clear all GitHub environment variables
-	githubVars := []string{
-		"GITHUB_RUN_ID", "GITHUB_RUN_NUMBER", "GITHUB_ACTOR",
-		"GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_SHA",
-		"GITHUB_SERVER_URL", "GITHUB_WORKFLOW_REF",
-	}
-
-	for _, v := range githubVars {
-		_ = os.Unsetenv(v)
-	}
+	// Clear all GitHub environment variables (t.Setenv automatically handles cleanup)
+	t.Setenv("GITHUB_RUN_ID", "")
+	t.Setenv("GITHUB_RUN_NUMBER", "")
+	t.Setenv("GITHUB_ACTOR", "")
+	t.Setenv("GITHUB_REPOSITORY", "")
+	t.Setenv("GITHUB_REF", "")
+	t.Setenv("GITHUB_SHA", "")
+	t.Setenv("GITHUB_SERVER_URL", "")
+	t.Setenv("GITHUB_WORKFLOW_REF", "")
 
 	// Test GetGitHubContext with empty environment
 	ctx := GetGitHubContext()
@@ -918,29 +876,11 @@ func (m *mockRemoteCache) UploadFile(ctx context.Context, filePath string, key s
 // TestGetEnvOrDefault tests the environment variable helper
 // TestValidateSigstoreEnvironment tests Sigstore environment validation
 func TestValidateSigstoreEnvironment(t *testing.T) {
-	// Save original environment
-	originalEnv := map[string]string{
-		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
-		"ACTIONS_ID_TOKEN_REQUEST_URL":   os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"),
-		"GITHUB_ACTIONS":                 os.Getenv("GITHUB_ACTIONS"),
-	}
-
-	// Clean up after test
-	defer func() {
-		for k, v := range originalEnv {
-			if v == "" {
-				_ = os.Unsetenv(k)
-			} else {
-				_ = os.Setenv(k, v)
-			}
-		}
-	}()
-
 	t.Run("missing required environment", func(t *testing.T) {
-		// Clear all Sigstore environment variables
-		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
-		_ = os.Unsetenv("GITHUB_ACTIONS")
+		// Clear all Sigstore environment variables (t.Setenv automatically handles cleanup)
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+		t.Setenv("GITHUB_ACTIONS", "")
 
 		err := validateSigstoreEnvironment()
 		assert.Error(t, err)
@@ -948,20 +888,20 @@ func TestValidateSigstoreEnvironment(t *testing.T) {
 	})
 
 	t.Run("partial environment", func(t *testing.T) {
-		// Set some but not all required variables
-		_ = os.Setenv("GITHUB_ACTIONS", "true")
-		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-		_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
+		// Set some but not all required variables (t.Setenv automatically handles cleanup)
+		t.Setenv("GITHUB_ACTIONS", "true")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
 
 		err := validateSigstoreEnvironment()
 		assert.Error(t, err)
 	})
 
 	t.Run("complete environment", func(t *testing.T) {
-		// Set all required variables
-		_ = os.Setenv("GITHUB_ACTIONS", "true")
-		_ = os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
-		_ = os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://test.url")
+		// Set all required variables (t.Setenv automatically handles cleanup)
+		t.Setenv("GITHUB_ACTIONS", "true")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
+		t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://test.url")
 
 		err := validateSigstoreEnvironment()
 		assert.NoError(t, err)
@@ -1061,28 +1001,10 @@ func TestGenerateSignedSLSAAttestation_InvalidContext(t *testing.T) {
 
 // TestSignProvenanceWithSigstore_EnvironmentValidation tests Sigstore environment validation
 func TestSignProvenanceWithSigstore_EnvironmentValidation(t *testing.T) {
-	// Save original environment
-	originalEnv := map[string]string{
-		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
-		"ACTIONS_ID_TOKEN_REQUEST_URL":   os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"),
-		"GITHUB_ACTIONS":                 os.Getenv("GITHUB_ACTIONS"),
-	}
-
-	// Clean up after test
-	defer func() {
-		for k, v := range originalEnv {
-			if v == "" {
-				_ = os.Unsetenv(k)
-			} else {
-				_ = os.Setenv(k, v)
-			}
-		}
-	}()
-
-	// Clear Sigstore environment to trigger validation error
-	_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-	_ = os.Unsetenv("ACTIONS_ID_TOKEN_REQUEST_URL")
-	_ = os.Unsetenv("GITHUB_ACTIONS")
+	// Clear Sigstore environment to trigger validation error (t.Setenv automatically handles cleanup)
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+	t.Setenv("GITHUB_ACTIONS", "")
 
 	artifactPath := createTestArtifact(t, "test content")
 	githubCtx := createMockGitHubContext()
@@ -1507,15 +1429,8 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 			server := tt.setupServer()
 			defer server.Close()
 
-			oldRequestURL := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
-			oldRequestToken := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-			defer func() {
-				os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oldRequestURL)
-				os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", oldRequestToken)
-			}()
-
-			os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", server.URL)
-			os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
+			t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", server.URL)
+			t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
 
 			builderID, err := extractBuilderIDFromOIDC(context.Background(), tt.githubCtx)
 
@@ -1589,15 +1504,8 @@ func TestBuilderIDMatchesCertificateIdentity(t *testing.T) {
 			}))
 			defer server.Close()
 
-			oldRequestURL := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
-			oldRequestToken := os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-			defer func() {
-				os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oldRequestURL)
-				os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", oldRequestToken)
-			}()
-
-			os.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", server.URL)
-			os.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
+			t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", server.URL)
+			t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-token")
 
 			githubCtx := &GitHubContext{
 				ServerURL:   "https://github.com",
