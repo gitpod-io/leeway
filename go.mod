@@ -23,8 +23,8 @@ require (
 	github.com/in-toto/in-toto-golang v0.9.0
 	github.com/karrick/godirwalk v1.17.0
 	github.com/minio/highwayhash v1.0.2
-	github.com/opencontainers/runc v1.2.8
-	github.com/opencontainers/runtime-spec v1.2.0
+	github.com/opencontainers/runc v1.3.3
+	github.com/opencontainers/runtime-spec v1.2.1
 	github.com/segmentio/analytics-go/v3 v3.3.0
 	github.com/segmentio/textio v1.2.0
 	github.com/sigstore/sigstore-go v1.1.2
@@ -283,6 +283,7 @@ require (
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/onsi/gomega v1.35.1 // indirect
+	github.com/opencontainers/cgroups v0.0.4 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/opencontainers/selinux v1.13.0 // indirect
