@@ -1418,6 +1418,28 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 			errorMsg:    "sub claim not found",
 		},
 		{
+			name: "whitespace-only sub claim",
+			setupServer: func() *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					header := base64EncodeForTest(`{"alg":"RS256","typ":"JWT"}`)
+					payload := base64EncodeForTest(`{"sub": "   ", "aud": "sigstore"}`)
+					signature := base64EncodeForTest("fake-signature")
+					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
+					
+					w.Header().Set("Content-Type", "application/json")
+					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
+						t.Errorf("Failed to encode response: %v", err)
+					}
+				}))
+			},
+			githubCtx: &GitHubContext{
+				ServerURL:  "https://github.com",
+				Repository: "org/repo",
+			},
+			expectError: true,
+			errorMsg:    "sub claim not found or empty",
+		},
+		{
 			name: "job_workflow_ref in top-level claim (not in sub)",
 			setupServer: func() *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

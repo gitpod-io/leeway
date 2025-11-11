@@ -418,7 +418,7 @@ func extractBuilderIDFromOIDC(ctx context.Context, githubCtx *GitHubContext) (st
 
 	// Extract the sub claim (required for Fulcio certificate identity)
 	sub, ok := claims["sub"].(string)
-	if !ok || sub == "" {
+	if !ok || strings.TrimSpace(sub) == "" {
 		return "", fmt.Errorf("sub claim not found or empty in OIDC token")
 	}
 
