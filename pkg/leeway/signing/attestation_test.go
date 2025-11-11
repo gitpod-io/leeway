@@ -1122,7 +1122,9 @@ func TestFetchGitHubOIDCToken(t *testing.T) {
 						t.Error("Missing or invalid Authorization header")
 					}
 					w.WriteHeader(http.StatusOK)
-					_ = json.NewEncoder(w).Encode(map[string]string{"value": "test-token-12345"})
+					if err := json.NewEncoder(w).Encode(map[string]string{"value": "test-token-12345"}); err != nil {
+						t.Errorf("Failed to encode response: %v", err)
+					}
 				}))
 			},
 			audience:    "sigstore",
@@ -1155,7 +1157,9 @@ func TestFetchGitHubOIDCToken(t *testing.T) {
 			mockServer: func(t *testing.T) *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
-					_ = json.NewEncoder(w).Encode(map[string]string{"value": ""})
+					if err := json.NewEncoder(w).Encode(map[string]string{"value": ""}); err != nil {
+						t.Errorf("Failed to encode response: %v", err)
+					}
 				}))
 			},
 			audience:      "sigstore",
