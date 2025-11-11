@@ -1338,7 +1338,9 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
 					
 					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(map[string]string{"value": token})
+					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
+						t.Errorf("Failed to encode response: %v", err)
+					}
 				}))
 			},
 			githubCtx: &GitHubContext{
@@ -1362,7 +1364,9 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
 					
 					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(map[string]string{"value": token})
+					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
+						t.Errorf("Failed to encode response: %v", err)
+					}
 				}))
 			},
 			githubCtx: &GitHubContext{
@@ -1379,7 +1383,9 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					token := "header.payload"
 					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(map[string]string{"value": token})
+					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
+						t.Errorf("Failed to encode response: %v", err)
+					}
 				}))
 			},
 			githubCtx: &GitHubContext{
@@ -1399,7 +1405,9 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
 					
 					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(map[string]string{"value": token})
+					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
+						t.Errorf("Failed to encode response: %v", err)
+					}
 				}))
 			},
 			githubCtx: &GitHubContext{
@@ -1557,7 +1565,9 @@ func TestBuilderIDMatchesCertificateIdentity(t *testing.T) {
 				token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
 				
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"value": token})
+				if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
+					t.Errorf("Failed to encode response: %v", err)
+				}
 			}))
 			defer server.Close()
 
