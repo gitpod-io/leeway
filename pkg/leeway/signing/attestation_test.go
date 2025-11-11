@@ -1157,6 +1157,26 @@ func TestExtractJobWorkflowRef(t *testing.T) {
 			expected: "org/repo/.github/workflows/build:test.yml@refs/heads/main",
 		},
 		{
+			name:     "multiple colons in workflow path",
+			subClaim: "repo:org/repo:ref:refs/heads/main:job_workflow_ref:org/repo/.github/workflows/test:build:deploy.yml@refs/heads/main",
+			expected: "org/repo/.github/workflows/test:build:deploy.yml@refs/heads/main",
+		},
+		{
+			name:     "reusable workflow with environment claim",
+			subClaim: "repo:gitpod-io/gitpod:environment:production:ref:refs/heads/main:job_workflow_ref:gitpod-io/gitpod/.github/workflows/_build-image.yml@refs/heads/main",
+			expected: "gitpod-io/gitpod/.github/workflows/_build-image.yml@refs/heads/main",
+		},
+		{
+			name:     "pull request workflow",
+			subClaim: "repo:gitpod-io/leeway:ref:refs/pull/264/merge:job_workflow_ref:gitpod-io/leeway/.github/workflows/build.yml@refs/pull/264/merge",
+			expected: "gitpod-io/leeway/.github/workflows/build.yml@refs/pull/264/merge",
+		},
+		{
+			name:     "tag-triggered workflow",
+			subClaim: "repo:org/repo:ref:refs/tags/v1.0.0:job_workflow_ref:org/repo/.github/workflows/release.yml@refs/tags/v1.0.0",
+			expected: "org/repo/.github/workflows/release.yml@refs/tags/v1.0.0",
+		},
+		{
 			name:     "missing job_workflow_ref",
 			subClaim: "repo:example-org/example-repo:ref:refs/heads/main",
 			expected: "",
@@ -1176,53 +1196,12 @@ func TestExtractJobWorkflowRef(t *testing.T) {
 			subClaim: "repo:org/repo:ref:refs/heads/main:job_workflow_ref:",
 			expected: "",
 		},
-		{
-			name:     "multiple colons in workflow path",
-			subClaim: "repo:org/repo:ref:refs/heads/main:job_workflow_ref:org/repo/.github/workflows/test:build:deploy.yml@refs/heads/main",
-			expected: "org/repo/.github/workflows/test:build:deploy.yml@refs/heads/main",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := extractJobWorkflowRef(tt.subClaim)
 			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestExtractJobWorkflowRef_RealWorldExamples tests with actual GitHub OIDC token formats
-func TestExtractJobWorkflowRef_RealWorldExamples(t *testing.T) {
-	tests := []struct {
-		name        string
-		subClaim    string
-		expected    string
-		description string
-	}{
-		{
-			name:        "GitHub Actions reusable workflow",
-			subClaim:    "repo:gitpod-io/gitpod:environment:production:ref:refs/heads/main:job_workflow_ref:gitpod-io/gitpod/.github/workflows/_build-image.yml@refs/heads/main",
-			expected:    "gitpod-io/gitpod/.github/workflows/_build-image.yml@refs/heads/main",
-			description: "Reusable workflow with environment claim",
-		},
-		{
-			name:        "Pull request workflow",
-			subClaim:    "repo:gitpod-io/leeway:ref:refs/pull/264/merge:job_workflow_ref:gitpod-io/leeway/.github/workflows/build.yml@refs/pull/264/merge",
-			expected:    "gitpod-io/leeway/.github/workflows/build.yml@refs/pull/264/merge",
-			description: "Pull request merge ref",
-		},
-		{
-			name:        "Tag-triggered workflow",
-			subClaim:    "repo:org/repo:ref:refs/tags/v1.0.0:job_workflow_ref:org/repo/.github/workflows/release.yml@refs/tags/v1.0.0",
-			expected:    "org/repo/.github/workflows/release.yml@refs/tags/v1.0.0",
-			description: "Tag reference",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractJobWorkflowRef(tt.subClaim)
-			assert.Equal(t, tt.expected, result, tt.description)
 		})
 	}
 }
