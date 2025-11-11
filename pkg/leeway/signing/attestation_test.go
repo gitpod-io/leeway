@@ -1217,9 +1217,10 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 		name        string
 		setupServer func() *httptest.Server
 		githubCtx   *GitHubContext
-		expectError bool
-		expectedID  string
-		errorMsg    string
+		want        struct {
+			id  string
+			err string
+		}
 	}{
 		{
 			name: "valid OIDC token with reusable workflow",
@@ -1245,8 +1246,12 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 				Repository:  "example-org/example-repo",
 				WorkflowRef: "example-org/example-repo/.github/workflows/calling-workflow.yml@refs/heads/main",
 			},
-			expectError: false,
-			expectedID:  "https://github.com/example-org/example-repo/.github/workflows/_build.yml@refs/heads/leo/slsa/b",
+			want: struct {
+				id  string
+				err string
+			}{
+				id: "https://github.com/example-org/example-repo/.github/workflows/_build.yml@refs/heads/leo/slsa/b",
+			},
 		},
 		{
 			name: "valid OIDC token with direct workflow",
@@ -1271,8 +1276,12 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 				Repository:  "gitpod-io/leeway",
 				WorkflowRef: "gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
 			},
-			expectError: false,
-			expectedID:  "https://github.com/gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
+			want: struct {
+				id  string
+				err string
+			}{
+				id: "https://github.com/gitpod-io/leeway/.github/workflows/build.yml@refs/heads/main",
+			},
 		},
 		{
 			name: "invalid JWT format - only 2 parts",
@@ -1289,8 +1298,12 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 				ServerURL:  "https://github.com",
 				Repository: "org/repo",
 			},
-			expectError: true,
-			errorMsg:    "invalid JWT token format",
+			want: struct {
+				id  string
+				err string
+			}{
+				err: "invalid JWT token format",
+			},
 		},
 		{
 			name: "missing sub claim",
@@ -1311,8 +1324,12 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 				ServerURL:  "https://github.com",
 				Repository: "org/repo",
 			},
-			expectError: true,
-			errorMsg:    "sub claim not found",
+			want: struct {
+				id  string
+				err string
+			}{
+				err: "sub claim not found",
+			},
 		},
 		{
 			name: "whitespace-only sub claim",
@@ -1333,8 +1350,12 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 				ServerURL:  "https://github.com",
 				Repository: "org/repo",
 			},
-			expectError: true,
-			errorMsg:    "sub claim not found or empty",
+			want: struct {
+				id  string
+				err string
+			}{
+				err: "sub claim not found or empty",
+			},
 		},
 		{
 			name: "job_workflow_ref in top-level claim (not in sub)",
@@ -1359,8 +1380,12 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 				ServerURL:  "https://github.com",
 				Repository: "org/repo",
 			},
-			expectError: false,
-			expectedID:  "https://github.com/org/repo/.github/workflows/deploy.yml@refs/heads/main",
+			want: struct {
+				id  string
+				err string
+			}{
+				id: "https://github.com/org/repo/.github/workflows/deploy.yml@refs/heads/main",
+			},
 		},
 		{
 			name: "missing job_workflow_ref in sub claim and top-level",
@@ -1384,8 +1409,12 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 				ServerURL:  "https://github.com",
 				Repository: "org/repo",
 			},
-			expectError: true,
-			errorMsg:    "job_workflow_ref not found",
+			want: struct {
+				id  string
+				err string
+			}{
+				err: "job_workflow_ref not found",
+			},
 		},
 		{
 			name: "OIDC token fetch failure",
@@ -1398,8 +1427,12 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 				ServerURL:  "https://github.com",
 				Repository: "org/repo",
 			},
-			expectError: true,
-			errorMsg:    "failed to fetch OIDC token",
+			want: struct {
+				id  string
+				err string
+			}{
+				err: "failed to fetch OIDC token",
+			},
 		},
 	}
 
@@ -1413,14 +1446,12 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 
 			builderID, err := extractBuilderIDFromOIDC(context.Background(), tt.githubCtx)
 
-			if tt.expectError {
+			if tt.want.err != "" {
 				assert.Error(t, err)
-				if tt.errorMsg != "" {
-					assert.Contains(t, err.Error(), tt.errorMsg)
-				}
+				assert.Contains(t, err.Error(), tt.want.err)
 			} else {
 				assert.NoError(t, err)
-				assert.Equal(t, tt.expectedID, builderID)
+				assert.Equal(t, tt.want.id, builderID)
 			}
 		})
 	}
