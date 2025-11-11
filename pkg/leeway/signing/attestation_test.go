@@ -1410,7 +1410,33 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 			errorMsg:    "sub claim not found",
 		},
 		{
-			name: "missing job_workflow_ref in sub claim",
+			name: "job_workflow_ref in top-level claim (not in sub)",
+			setupServer: func() *httptest.Server {
+				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					header := base64EncodeForTest(`{"alg":"RS256","typ":"JWT"}`)
+					payload := base64EncodeForTest(`{
+						"sub": "repo:org/repo:environment:prod",
+						"aud": "sigstore",
+						"job_workflow_ref": "org/repo/.github/workflows/deploy.yml@refs/heads/main"
+					}`)
+					signature := base64EncodeForTest("fake-signature")
+					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
+					
+					w.Header().Set("Content-Type", "application/json")
+					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
+						t.Errorf("Failed to encode response: %v", err)
+					}
+				}))
+			},
+			githubCtx: &GitHubContext{
+				ServerURL:  "https://github.com",
+				Repository: "org/repo",
+			},
+			expectError: false,
+			expectedID:  "https://github.com/org/repo/.github/workflows/deploy.yml@refs/heads/main",
+		},
+		{
+			name: "missing job_workflow_ref in sub claim and top-level",
 			setupServer: func() *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					header := base64EncodeForTest(`{"alg":"RS256","typ":"JWT"}`)
@@ -1422,7 +1448,9 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
 					
 					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(map[string]string{"value": token})
+					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
+						t.Errorf("Failed to encode response: %v", err)
+					}
 				}))
 			},
 			githubCtx: &GitHubContext{

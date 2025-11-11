@@ -378,15 +378,18 @@ func validateSigstoreEnvironment() error {
 	return nil
 }
 
-// extractBuilderIDFromOIDC extracts the builder ID from the GitHub OIDC token's sub claim.
+// extractBuilderIDFromOIDC extracts the builder ID from the GitHub OIDC token.
 // This ensures the builder ID matches the certificate identity issued by Fulcio, which is
 // critical for slsa-verifier compatibility, especially with reusable workflows.
 //
 // For reusable workflows, the OIDC token contains:
-// - sub claim: Contains job_workflow_ref pointing to the actual executing workflow (e.g., _build.yml)
-// - workflow_ref: Points to the calling workflow (e.g., build-main.yml)
+// - job_workflow_ref claim: Points to the actual executing workflow (e.g., _build.yml)
+// - sub claim: May contain job_workflow_ref embedded in colon-separated format
+// - workflow_ref env var: Points to the calling workflow (e.g., build-main.yml)
 //
-// Fulcio uses the sub claim for the certificate identity, so we must use it for the builder ID.
+// Fulcio uses the sub claim for the certificate identity. For reusable workflows,
+// the sub claim includes job_workflow_ref in the format:
+// repo:OWNER/REPO:ref:REF:job_workflow_ref:OWNER/REPO/.github/workflows/WORKFLOW@REF
 func extractBuilderIDFromOIDC(ctx context.Context, githubCtx *GitHubContext) (string, error) {
 	// Fetch the OIDC token with sigstore audience
 	idToken, err := fetchGitHubOIDCToken(ctx, "sigstore")
@@ -394,7 +397,7 @@ func extractBuilderIDFromOIDC(ctx context.Context, githubCtx *GitHubContext) (st
 		return "", fmt.Errorf("failed to fetch OIDC token: %w", err)
 	}
 
-	// Parse the JWT token to extract the sub claim
+	// Parse the JWT token to extract claims
 	// JWT format: header.payload.signature
 	parts := strings.Split(idToken, ".")
 	if len(parts) != 3 {
@@ -413,17 +416,27 @@ func extractBuilderIDFromOIDC(ctx context.Context, githubCtx *GitHubContext) (st
 		return "", fmt.Errorf("failed to parse JWT claims: %w", err)
 	}
 
-	// Extract the sub claim
+	// Extract the sub claim (required for Fulcio certificate identity)
 	sub, ok := claims["sub"].(string)
 	if !ok || sub == "" {
 		return "", fmt.Errorf("sub claim not found or empty in OIDC token")
 	}
 
-	// Extract job_workflow_ref from the sub claim
-	// Format: repo:OWNER/REPO:ref:REF:job_workflow_ref:OWNER/REPO/.github/workflows/WORKFLOW@REF
+	// Try to extract job_workflow_ref from the sub claim first
+	// This is the format that Fulcio embeds in the certificate
 	jobWorkflowRef := extractJobWorkflowRef(sub)
+	
+	// If not found in sub, try the top-level job_workflow_ref claim
+	// (GitHub provides both, but Fulcio uses the one from sub)
 	if jobWorkflowRef == "" {
-		return "", fmt.Errorf("job_workflow_ref not found in sub claim: %s", sub)
+		if jwfRef, ok := claims["job_workflow_ref"].(string); ok && jwfRef != "" {
+			jobWorkflowRef = jwfRef
+			log.WithField("job_workflow_ref", jobWorkflowRef).Debug("Using top-level job_workflow_ref claim (not found in sub)")
+		}
+	}
+	
+	if jobWorkflowRef == "" {
+		return "", fmt.Errorf("job_workflow_ref not found in sub claim or top-level claims: %s", sub)
 	}
 
 	// Construct the builder ID URL
