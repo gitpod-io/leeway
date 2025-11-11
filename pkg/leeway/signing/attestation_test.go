@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -640,28 +641,22 @@ func TestGetGitHubContext(t *testing.T) {
 	t.Setenv("GITHUB_SERVER_URL", "test-server")
 	t.Setenv("GITHUB_WORKFLOW_REF", "test-workflow")
 
-	testEnv := map[string]string{
-		"GITHUB_RUN_ID":       "test-run-id",
-		"GITHUB_RUN_NUMBER":   "test-run-number",
-		"GITHUB_ACTOR":        "test-actor",
-		"GITHUB_REPOSITORY":   "test-repo",
-		"GITHUB_REF":          "test-ref",
-		"GITHUB_SHA":          "test-sha",
-		"GITHUB_SERVER_URL":   "test-server",
-		"GITHUB_WORKFLOW_REF": "test-workflow",
+	// Test GetGitHubContext
+	got := GetGitHubContext()
+	want := &GitHubContext{
+		RunID:       "test-run-id",
+		RunNumber:   "test-run-number",
+		Actor:       "test-actor",
+		Repository:  "test-repo",
+		Ref:         "test-ref",
+		SHA:         "test-sha",
+		ServerURL:   "test-server",
+		WorkflowRef: "test-workflow",
 	}
 
-	// Test GetGitHubContext
-	ctx := GetGitHubContext()
-
-	assert.Equal(t, testEnv["GITHUB_RUN_ID"], ctx.RunID)
-	assert.Equal(t, testEnv["GITHUB_RUN_NUMBER"], ctx.RunNumber)
-	assert.Equal(t, testEnv["GITHUB_ACTOR"], ctx.Actor)
-	assert.Equal(t, testEnv["GITHUB_REPOSITORY"], ctx.Repository)
-	assert.Equal(t, testEnv["GITHUB_REF"], ctx.Ref)
-	assert.Equal(t, testEnv["GITHUB_SHA"], ctx.SHA)
-	assert.Equal(t, testEnv["GITHUB_SERVER_URL"], ctx.ServerURL)
-	assert.Equal(t, testEnv["GITHUB_WORKFLOW_REF"], ctx.WorkflowRef)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("GetGitHubContext() mismatch (-want +got):\n%s", diff)
+	}
 }
 
 // TestGetGitHubContext_EmptyEnvironment tests with empty environment
@@ -677,16 +672,21 @@ func TestGetGitHubContext_EmptyEnvironment(t *testing.T) {
 	t.Setenv("GITHUB_WORKFLOW_REF", "")
 
 	// Test GetGitHubContext with empty environment
-	ctx := GetGitHubContext()
+	got := GetGitHubContext()
+	want := &GitHubContext{
+		RunID:       "",
+		RunNumber:   "",
+		Actor:       "",
+		Repository:  "",
+		Ref:         "",
+		SHA:         "",
+		ServerURL:   "",
+		WorkflowRef: "",
+	}
 
-	assert.Empty(t, ctx.RunID)
-	assert.Empty(t, ctx.RunNumber)
-	assert.Empty(t, ctx.Actor)
-	assert.Empty(t, ctx.Repository)
-	assert.Empty(t, ctx.Ref)
-	assert.Empty(t, ctx.SHA)
-	assert.Empty(t, ctx.ServerURL)
-	assert.Empty(t, ctx.WorkflowRef)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("GetGitHubContext() with empty env mismatch (-want +got):\n%s", diff)
+	}
 }
 
 // TestSigningError tests the error types
@@ -938,12 +938,12 @@ func TestCategorizeError_ExistingSigningError(t *testing.T) {
 		Message:  "access denied",
 	}
 
-	result := CategorizeError("different.tar.gz", originalErr)
+	got := CategorizeError("different.tar.gz", originalErr)
 
 	// Should return the original error unchanged
-	assert.Equal(t, originalErr, result)
-	assert.Equal(t, ErrorTypePermission, result.Type)
-	assert.Equal(t, "test.tar.gz", result.Artifact) // Original artifact preserved
+	if diff := cmp.Diff(originalErr, got); diff != "" {
+		t.Errorf("CategorizeError() should preserve original error (-want +got):\n%s", diff)
+	}
 }
 
 // TestWithRetry_MaxAttemptsExceeded tests retry exhaustion
