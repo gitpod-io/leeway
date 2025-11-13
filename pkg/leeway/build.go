@@ -791,8 +791,6 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 	}
 
 	for _, p := range allpkg {
-		total++
-		
 		// Check actual state in local cache
 		_, inCache := ctx.LocalCache.Location(p)
 		
@@ -800,6 +798,8 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 			// Package not in cache (shouldn't happen if build succeeded)
 			continue
 		}
+		
+		total++
 
 		// Determine what happened to this package
 		if newlyBuiltMap[p.FullName()] {
