@@ -57,6 +57,10 @@ const (
 	PackageDownloaded PackageBuildStatus = "downloaded"
 	// PackageInRemoteCache means the package has been built but currently only exists in the remote cache
 	PackageInRemoteCache PackageBuildStatus = "built-remotely"
+	// PackageVerificationFailed means the package download was attempted but SLSA verification failed
+	PackageVerificationFailed PackageBuildStatus = "verification-failed"
+	// PackageDownloadFailed means the package download was attempted but failed
+	PackageDownloadFailed PackageBuildStatus = "download-failed"
 )
 
 type buildContext struct {
@@ -621,6 +625,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	pkgsWillBeDownloaded := make(map[*Package]struct{})
 	pkg.packagesToDownload(pkgsInLocalCache, pkgsInRemoteCacheMap, pkgsWillBeDownloaded)
 
+	// Set initial status before download
 	pkgstatus := make(map[*Package]PackageBuildStatus)
 	unresolvedArgs := make(map[string][]string)
 	for _, dep := range allpkg {
@@ -633,7 +638,8 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		} else if existsInLocalCache {
 			pkgstatus[dep] = PackageBuilt
 		} else if willBeDownloaded {
-			pkgstatus[dep] = PackageDownloaded
+			// Don't set to `PackageDownloaded` yet as we haven't downloaded it!
+			pkgstatus[dep] = PackageInRemoteCache
 		} else if existsInRemoteCache {
 			pkgstatus[dep] = PackageInRemoteCache
 		} else {
@@ -669,9 +675,27 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToDownloadCache[i] = p
 	}
 
+	// Errors are logged but don't fail the build
 	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, pkgsToDownloadCache)
 	if err != nil {
-		return err
+		// Download errors are already logged by the cache implementation
+		// We continue with local builds for packages that failed to download
+		log.WithError(err).Debug("Remote cache download completed with some errors")
+	}
+
+	// Update status based on actual outcome - check what's actually in local cache now
+	for _, p := range pkgsToDownload {
+		if _, nowInCache := ctx.LocalCache.Location(p); nowInCache {
+			// Successfully downloaded and verified
+			pkgstatus[p] = PackageDownloaded
+		} else {
+			// Download failed or verification failed: we will need to build locally
+			// TODO: Distinguish between download failures and verification failures.
+			// Currently can't tell because Download() returns nil on errors (by design for graceful fallback).
+			// To fix: Change RemoteCache.Download() to return map[string]DownloadResult with typed status,
+			// then use PackageDownloadFailed vs PackageVerificationFailed appropriately.
+			pkgstatus[p] = PackageNotBuiltYet
+		}
 	}
 
 	ctx.Reporter.BuildStarted(pkg, pkgstatus)
@@ -737,7 +761,84 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		}
 	}
 
+	// Print build summary
+	printBuildSummary(ctx, pkg, allpkg, pkgstatus, pkgsToDownload)
+
 	return nil
+}
+
+// printBuildSummary prints a summary of the build showing what was cached, downloaded, and built
+func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package, initialStatus map[*Package]PackageBuildStatus, pkgsToDownload []*Package) {
+	var (
+		builtLocally  int
+		downloaded    int
+		alreadyCached int
+		total         int
+	)
+
+	newlyBuilt := ctx.GetNewPackagesForCache()
+	newlyBuiltMap := make(map[string]bool)
+	for _, p := range newlyBuilt {
+		newlyBuiltMap[p.FullName()] = true
+	}
+
+	// Track packages that were supposed to be downloaded but weren't
+	// These likely failed verification or download
+	var failedDownloads []*Package
+	pkgsToDownloadMap := make(map[string]bool)
+	for _, p := range pkgsToDownload {
+		pkgsToDownloadMap[p.FullName()] = true
+	}
+
+	for _, p := range allpkg {
+		total++
+		
+		// Check actual state in local cache
+		_, inCache := ctx.LocalCache.Location(p)
+		
+		if !inCache {
+			// Package not in cache (shouldn't happen if build succeeded)
+			continue
+		}
+
+		// Determine what happened to this package
+		if newlyBuiltMap[p.FullName()] {
+			// Package was built during this build
+			builtLocally++
+			
+			// Check if this was supposed to be downloaded but wasn't
+			// This indicates verification or download failure
+			if pkgsToDownloadMap[p.FullName()] && initialStatus[p] != PackageDownloaded {
+				failedDownloads = append(failedDownloads, p)
+			}
+		} else if initialStatus[p] == PackageDownloaded {
+			// Package was downloaded
+			downloaded++
+		} else if initialStatus[p] == PackageBuilt {
+			// Package was already cached
+			alreadyCached++
+		} else {
+			// Package was in cache but we're not sure how it got there
+			// This could happen if it was built as a dependency
+			alreadyCached++
+		}
+	}
+
+	log.WithFields(log.Fields{
+		"target":         targetPkg.FullName(),
+		"total":          total,
+		"cached_locally": alreadyCached,
+		"downloaded":     downloaded,
+		"built_locally":  builtLocally,
+	}).Info("Build completed")
+
+	// Highlight packages that failed verification/download
+	if len(failedDownloads) > 0 {
+		log.WithField("count", len(failedDownloads)).Warn("Some packages failed verification or download and were rebuilt locally")
+		for _, p := range failedDownloads {
+			log.WithField("package", p.FullName()).Warn("  - failed to download/verify, rebuilt locally")
+		}
+	}
 }
 
 func writeBuildPlan(out io.Writer, pkg *Package, status map[*Package]PackageBuildStatus) error {
@@ -797,6 +898,11 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 		return nil
 	}
 
+	log.WithFields(log.Fields{
+		"package":      p.FullName(),
+		"dependencies": len(deps),
+	}).Debug("building dependencies")
+
 	// Use errgroup to simplify error handling and synchronization
 	g := new(errgroup.Group)
 
@@ -809,7 +915,18 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 	}
 
 	// Wait for all goroutines to complete, returning the first error encountered
-	return g.Wait()
+	err := g.Wait()
+	if err != nil {
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+		}).Error("dependency build failed")
+		return err
+	}
+
+	log.WithFields(log.Fields{
+		"package": p.FullName(),
+	}).Debug("all dependencies built successfully")
+	return nil
 }
 
 func (p *Package) build(buildctx *buildContext) (err error) {
@@ -817,20 +934,29 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	doBuild := buildctx.ObtainBuildLock(p)
 	if !doBuild {
 		// Another goroutine is already building this package
+		log.WithField("package", p.FullName()).Debug("another goroutine is building this package")
 		return nil
 	}
 	defer buildctx.ReleaseBuildLock(p)
+
+	// Check if already built before building dependencies
+	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
+		log.WithField("package", p.FullName()).Debug("package already in local cache, skipping")
+		return nil
+	}
 
 	// Build dependencies first
 	if err := p.buildDependencies(buildctx); err != nil {
 		return err
 	}
 
-	// Skip if package is already built (except for ephemeral packages)
+	// Check again after dependencies - might have been built as a dependency
 	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
-		log.WithField("package", p.FullName()).Debug("already built")
+		log.WithField("package", p.FullName()).Info("package was built as dependency, skipping")
 		return nil
 	}
+
+	log.WithField("package", p.FullName()).Info("building package locally")
 
 	// Initialize package build report
 	pkgRep := &PackageBuildReport{
