@@ -768,7 +768,7 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 }
 
 // printBuildSummary prints a summary of the build showing what was cached, downloaded, and built
-func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package, initialStatus map[*Package]PackageBuildStatus, pkgsToDownload []*Package) {
+func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package, statusAfterDownload map[*Package]PackageBuildStatus, pkgsToDownload []*Package) {
 	var (
 		builtLocally  int
 		downloaded    int
@@ -808,13 +808,13 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 			
 			// Check if this was supposed to be downloaded but wasn't
 			// This indicates verification or download failure
-			if pkgsToDownloadMap[p.FullName()] && initialStatus[p] != PackageDownloaded {
+			if pkgsToDownloadMap[p.FullName()] && statusAfterDownload[p] != PackageDownloaded {
 				failedDownloads = append(failedDownloads, p)
 			}
-		} else if initialStatus[p] == PackageDownloaded {
+		} else if statusAfterDownload[p] == PackageDownloaded {
 			// Package was downloaded
 			downloaded++
-		} else if initialStatus[p] == PackageBuilt {
+		} else if statusAfterDownload[p] == PackageBuilt {
 			// Package was already cached
 			alreadyCached++
 		} else {
