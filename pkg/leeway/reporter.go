@@ -160,13 +160,18 @@ func (r *ConsoleReporter) BuildStarted(pkg *Package, status map[*Package]Package
 		}
 
 		format := "%s\t%s\t%s\n"
-		if status == PackageBuilt {
+		switch status {
+		case PackageBuilt:
 			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📦\tcached locally"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
-		} else if status == PackageInRemoteCache {
-			lines[i] = fmt.Sprintf(format, color.Green.Sprint("🌎\tcached remotely (ignored)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
-		} else if status == PackageDownloaded {
+		case PackageInRemoteCache:
+			lines[i] = fmt.Sprintf(format, color.Green.Sprint("🌎\tcached remotely (available)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
+		case PackageDownloaded:
 			lines[i] = fmt.Sprintf(format, color.Green.Sprint("📥\tcached remotely (downloaded)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
-		} else {
+		case PackageVerificationFailed:
+			lines[i] = fmt.Sprintf(format, color.Yellow.Sprint("⚠️\tverification failed (will rebuild)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
+		case PackageDownloadFailed:
+			lines[i] = fmt.Sprintf(format, color.Yellow.Sprint("⚠️\tdownload failed (will rebuild)"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
+		default:
 			lines[i] = fmt.Sprintf(format, color.Yellow.Sprint("🔧\tbuild"), pkg.FullName(), color.Gray.Sprintf("(version %s)", version))
 		}
 		i++

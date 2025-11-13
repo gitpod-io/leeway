@@ -44,6 +44,16 @@ type downloadResult struct {
 	kind string // "artifact" or "attestation"
 }
 
+// VerificationFailedError is returned when SLSA verification fails
+type VerificationFailedError struct {
+	Package string
+	Reason  string
+}
+
+func (e VerificationFailedError) Error() string {
+	return fmt.Sprintf("SLSA verification failed for %s: %s", e.Package, e.Reason)
+}
+
 // S3Config holds the configuration for S3Cache
 type S3Config struct {
 	BucketName  string
@@ -462,6 +472,10 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 		{".tar", 2},
 	}
 
+	// Track whether we attempted verification and it failed
+	var verificationAttempted bool
+	var lastVerificationError error
+
 	for _, attempt := range downloadAttempts {
 		artifactKey := fmt.Sprintf("%s%s", version, attempt.extension)
 		attestationKey := slsa.AttestationKey(artifactKey)
@@ -527,11 +541,19 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 		}
 
 		// Step 4: Verify the artifact against attestation
+		log.WithFields(log.Fields{
+			"package":     p.FullName(),
+			"artifact":    artifactKey,
+			"attestation": attestationKey,
+		}).Debug("Starting SLSA verification")
+
 		verifyStart := time.Now()
 		verifyErr := s.slsaVerifier.VerifyArtifact(ctx, tmpArtifactPath, tmpAttestationPath)
 		verifyDuration := time.Since(verifyStart)
 
 		if verifyErr != nil {
+			verificationAttempted = true
+			lastVerificationError = verifyErr
 			log.WithError(verifyErr).WithFields(log.Fields{
 				"package":     p.FullName(),
 				"artifact":    artifactKey,
@@ -542,6 +564,12 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 			s.cleanupTempFiles(tmpArtifactPath, tmpAttestationPath)
 			continue
 		}
+
+		log.WithFields(log.Fields{
+			"package":  p.FullName(),
+			"artifact": artifactKey,
+			"duration": verifyDuration,
+		}).Debug("SLSA verification succeeded")
 
 		// Step 5: Atomically move verified artifact to final location
 		if err := s.atomicMove(tmpArtifactPath, localPath); err != nil {
@@ -567,6 +595,19 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 	}
 
 	// All attempts failed
+	if verificationAttempted {
+		// Verification was attempted but failed - return error to distinguish from "no artifacts"
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"version": version,
+		}).Warn("SLSA verification failed for all attempts, will build locally")
+		return VerificationFailedError{
+			Package: p.FullName(),
+			Reason:  fmt.Sprintf("verification failed: %v", lastVerificationError),
+		}
+	}
+
+	// No artifacts found or no verification attempted
 	log.WithFields(log.Fields{
 		"package": p.FullName(),
 		"version": version,
