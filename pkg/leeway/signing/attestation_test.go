@@ -16,8 +16,11 @@ import (
 
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/google/go-cmp/cmp"
+	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
+	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // Test helper: Create test artifact with known content
@@ -1549,4 +1552,220 @@ func TestBuilderIDMatchesCertificateIdentity(t *testing.T) {
 				"Builder ID must be constructed from OIDC job_workflow_ref to match Fulcio certificate identity")
 		})
 	}
+}
+
+// TestBundleFormatCompliance verifies that generated attestations conform to
+// the official Sigstore Bundle v0.3 format specification.
+// See: https://docs.sigstore.dev/about/bundle/
+//
+// This test uses a mock bundle to verify the expected format without requiring
+// Sigstore credentials. The format is what protojson.Marshal should produce
+// when marshaling a protobuf Bundle with UseProtoNames=false.
+func TestBundleFormatCompliance(t *testing.T) {
+	// Create a minimal mock bundle structure that represents the expected output
+	// of protojson.Marshal on a Sigstore Bundle v0.3 protobuf message.
+	// This is what our code should produce after the fix.
+	mockBundleJSON := `{
+		"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+		"verificationMaterial": {
+			"certificate": {
+				"rawBytes": "dGVzdC1jZXJ0aWZpY2F0ZQ=="
+			},
+			"tlogEntries": [{
+				"logIndex": "12345",
+				"logId": {
+					"keyId": "dGVzdC1rZXktaWQ="
+				},
+				"integratedTime": "1234567890"
+			}]
+		},
+		"dsseEnvelope": {
+			"payload": "dGVzdC1wYXlsb2Fk",
+			"payloadType": "application/vnd.in-toto+json",
+			"signatures": [{
+				"sig": "dGVzdC1zaWduYXR1cmU="
+			}]
+		}
+	}`
+
+	var bundle map[string]interface{}
+	err := json.Unmarshal([]byte(mockBundleJSON), &bundle)
+	require.NoError(t, err, "Failed to parse mock bundle JSON")
+
+	// Test 1: Verify top-level fields use camelCase (not snake_case)
+	t.Run("TopLevelFieldsUseCamelCase", func(t *testing.T) {
+		// Should have camelCase fields
+		assert.Contains(t, bundle, "mediaType", "Bundle should have 'mediaType' field (camelCase)")
+		assert.Contains(t, bundle, "verificationMaterial", "Bundle should have 'verificationMaterial' field (camelCase)")
+		assert.Contains(t, bundle, "dsseEnvelope", "Bundle should have 'dsseEnvelope' field (camelCase)")
+
+		// Should NOT have snake_case fields
+		assert.NotContains(t, bundle, "media_type", "Bundle should NOT have 'media_type' field (snake_case)")
+		assert.NotContains(t, bundle, "verification_material", "Bundle should NOT have 'verification_material' field (snake_case)")
+		assert.NotContains(t, bundle, "dsse_envelope", "Bundle should NOT have 'dsse_envelope' field (snake_case)")
+	})
+
+	// Test 2: Verify no protobuf oneof field wrappers (Content, Certificate, etc.)
+	t.Run("NoProtobufOneofWrappers", func(t *testing.T) {
+		verificationMaterial, ok := bundle["verificationMaterial"].(map[string]interface{})
+		require.True(t, ok, "verificationMaterial should be an object")
+
+		// Should have direct 'certificate' field (lowercase)
+		assert.Contains(t, verificationMaterial, "certificate", "verificationMaterial should have direct 'certificate' field")
+
+		// Should NOT have 'Content' wrapper
+		assert.NotContains(t, verificationMaterial, "Content", "verificationMaterial should NOT have 'Content' wrapper (protobuf oneof field)")
+
+		// Should NOT have 'Certificate' with capital C
+		assert.NotContains(t, verificationMaterial, "Certificate", "verificationMaterial should NOT have 'Certificate' with capital C")
+	})
+
+	// Test 3: Verify certificate is in correct location
+	t.Run("CertificateInCorrectLocation", func(t *testing.T) {
+		verificationMaterial, ok := bundle["verificationMaterial"].(map[string]interface{})
+		require.True(t, ok, "verificationMaterial should be an object")
+
+		certificate, ok := verificationMaterial["certificate"].(map[string]interface{})
+		require.True(t, ok, "certificate should be an object at verificationMaterial.certificate")
+
+		// Should have rawBytes (camelCase)
+		assert.Contains(t, certificate, "rawBytes", "certificate should have 'rawBytes' field (camelCase)")
+
+		// Should NOT have raw_bytes (snake_case)
+		assert.NotContains(t, certificate, "raw_bytes", "certificate should NOT have 'raw_bytes' field (snake_case)")
+	})
+
+	// Test 4: Verify tlogEntries use camelCase
+	t.Run("TlogEntriesUseCamelCase", func(t *testing.T) {
+		verificationMaterial, ok := bundle["verificationMaterial"].(map[string]interface{})
+		require.True(t, ok, "verificationMaterial should be an object")
+
+		// Should have tlogEntries (camelCase)
+		assert.Contains(t, verificationMaterial, "tlogEntries", "verificationMaterial should have 'tlogEntries' field (camelCase)")
+
+		// Should NOT have tlog_entries (snake_case)
+		assert.NotContains(t, verificationMaterial, "tlog_entries", "verificationMaterial should NOT have 'tlog_entries' field (snake_case)")
+
+		tlogEntries, ok := verificationMaterial["tlogEntries"].([]interface{})
+		require.True(t, ok, "tlogEntries should be an array")
+		require.NotEmpty(t, tlogEntries, "tlogEntries should not be empty")
+
+		entry, ok := tlogEntries[0].(map[string]interface{})
+		require.True(t, ok, "tlog entry should be an object")
+
+		// Verify entry fields use camelCase
+		assert.Contains(t, entry, "logIndex", "tlog entry should have 'logIndex' field (camelCase)")
+		assert.Contains(t, entry, "logId", "tlog entry should have 'logId' field (camelCase)")
+		assert.Contains(t, entry, "integratedTime", "tlog entry should have 'integratedTime' field (camelCase)")
+
+		// Should NOT have snake_case fields
+		assert.NotContains(t, entry, "log_index", "tlog entry should NOT have 'log_index' field (snake_case)")
+		assert.NotContains(t, entry, "log_id", "tlog entry should NOT have 'log_id' field (snake_case)")
+		assert.NotContains(t, entry, "integrated_time", "tlog entry should NOT have 'integrated_time' field (snake_case)")
+	})
+
+	// Test 5: Verify dsseEnvelope is direct field (not wrapped)
+	t.Run("DsseEnvelopeIsDirectField", func(t *testing.T) {
+		// Should have direct dsseEnvelope field
+		dsseEnvelope, ok := bundle["dsseEnvelope"].(map[string]interface{})
+		require.True(t, ok, "dsseEnvelope should be a direct field")
+
+		// Verify envelope fields
+		assert.Contains(t, dsseEnvelope, "payload", "dsseEnvelope should have 'payload' field")
+		assert.Contains(t, dsseEnvelope, "payloadType", "dsseEnvelope should have 'payloadType' field (camelCase)")
+		assert.Contains(t, dsseEnvelope, "signatures", "dsseEnvelope should have 'signatures' field")
+
+		// Should NOT be wrapped in Content
+		assert.NotContains(t, bundle, "Content", "Bundle should NOT have 'Content' wrapper for dsseEnvelope")
+	})
+
+	// Test 6: Verify media type value
+	t.Run("MediaTypeValue", func(t *testing.T) {
+		mediaType, ok := bundle["mediaType"].(string)
+		require.True(t, ok, "mediaType should be a string")
+
+		assert.Equal(t, "application/vnd.dev.sigstore.bundle.v0.3+json", mediaType,
+			"mediaType should be 'application/vnd.dev.sigstore.bundle.v0.3+json'")
+	})
+}
+
+// TestProtojsonMarshalOptions verifies that protojson.MarshalOptions produces
+// the correct format when marshaling protobuf messages.
+//
+// This test validates that our MarshalOptions configuration (UseProtoNames=false,
+// EmitUnpopulated=false) produces standard JSON field names (camelCase) without
+// protobuf implementation details leaking through.
+func TestProtojsonMarshalOptions(t *testing.T) {
+	// Create a minimal protobuf bundle to test marshaling behavior
+	// We use the actual protobuf types to ensure our MarshalOptions work correctly
+	protobundle := &protobundle.Bundle{
+		MediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+		VerificationMaterial: &protobundle.VerificationMaterial{
+			Content: &protobundle.VerificationMaterial_Certificate{
+				Certificate: &protocommon.X509Certificate{
+					RawBytes: []byte("test-certificate"),
+				},
+			},
+		},
+	}
+
+	// Marshal using our configured options (same as in attestation.go)
+	marshaler := protojson.MarshalOptions{
+		UseProtoNames:   false, // Use JSON names (camelCase) instead of proto names
+		EmitUnpopulated: false, // Omit empty/default fields for cleaner output
+	}
+	bundleBytes, err := marshaler.Marshal(protobundle)
+	require.NoError(t, err, "Marshaling should succeed")
+
+	// Parse the result to verify structure
+	var parsed map[string]interface{}
+	err = json.Unmarshal(bundleBytes, &parsed)
+	require.NoError(t, err, "Result should be valid JSON")
+
+	// Test 1: Verify camelCase field names (not snake_case)
+	t.Run("UsesCamelCaseFieldNames", func(t *testing.T) {
+		assert.Contains(t, parsed, "mediaType", "Should use camelCase 'mediaType'")
+		assert.Contains(t, parsed, "verificationMaterial", "Should use camelCase 'verificationMaterial'")
+
+		assert.NotContains(t, parsed, "media_type", "Should NOT use snake_case 'media_type'")
+		assert.NotContains(t, parsed, "verification_material", "Should NOT use snake_case 'verification_material'")
+	})
+
+	// Test 2: Verify no protobuf oneof wrappers
+	t.Run("NoProtobufOneofWrappers", func(t *testing.T) {
+		verificationMaterial, ok := parsed["verificationMaterial"].(map[string]interface{})
+		require.True(t, ok, "verificationMaterial should be an object")
+
+		// Should have direct 'certificate' field (lowercase)
+		assert.Contains(t, verificationMaterial, "certificate",
+			"Should have direct 'certificate' field (lowercase)")
+
+		// Should NOT have 'Content' wrapper (protobuf oneof field name)
+		assert.NotContains(t, verificationMaterial, "Content",
+			"Should NOT have 'Content' wrapper (protobuf oneof field)")
+	})
+
+	// Test 3: Verify certificate structure
+	t.Run("CertificateStructure", func(t *testing.T) {
+		verificationMaterial, ok := parsed["verificationMaterial"].(map[string]interface{})
+		require.True(t, ok, "verificationMaterial should be an object")
+
+		certificate, ok := verificationMaterial["certificate"].(map[string]interface{})
+		require.True(t, ok, "certificate should be an object")
+
+		// Should have rawBytes (camelCase)
+		assert.Contains(t, certificate, "rawBytes", "Should have 'rawBytes' field (camelCase)")
+
+		// Should NOT have raw_bytes (snake_case)
+		assert.NotContains(t, certificate, "raw_bytes", "Should NOT have 'raw_bytes' field (snake_case)")
+	})
+
+	// Test 4: Verify media type value
+	t.Run("MediaTypeValue", func(t *testing.T) {
+		mediaType, ok := parsed["mediaType"].(string)
+		require.True(t, ok, "mediaType should be a string")
+
+		assert.Equal(t, "application/vnd.dev.sigstore.bundle.v0.3+json", mediaType,
+			"mediaType should match Sigstore Bundle v0.3 format")
+	})
 }

@@ -19,6 +19,7 @@ import (
 	slsa "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/sign"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -322,7 +323,14 @@ func signProvenanceWithSigstore(ctx context.Context, statement *in_toto.Statemen
 	}
 
 	// Convert to bytes for .att file format
-	bundleBytes, err := json.Marshal(signedBundle)
+	// IMPORTANT: Use protojson.Marshal instead of json.Marshal to generate
+	// standard Sigstore Bundle v0.3 format with correct field names (camelCase)
+	// and without protobuf oneof field wrappers (Content, Certificate, etc.)
+	marshaler := protojson.MarshalOptions{
+		UseProtoNames:   false, // Use JSON names (camelCase) instead of proto names
+		EmitUnpopulated: false, // Omit empty/default fields for cleaner output
+	}
+	bundleBytes, err := marshaler.Marshal(signedBundle)
 	if err != nil {
 		return nil, &SigningError{
 			Type:     ErrorTypeSigstore,
