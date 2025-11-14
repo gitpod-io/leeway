@@ -149,13 +149,8 @@ func (s *S3Cache) releaseSemaphore() {
 	}
 }
 
-// processPackages processes packages using a worker pool
-func (s *S3Cache) processPackages(ctx context.Context, pkgs []cache.Package, fn func(context.Context, cache.Package) error) error {
-	return s.processPackagesWithWorkers(ctx, pkgs, s.workerCount, fn)
-}
-
-// processPackagesWithWorkers processes packages using a worker pool with a custom worker count
-func (s *S3Cache) processPackagesWithWorkers(ctx context.Context, pkgs []cache.Package, workerCount int, fn func(context.Context, cache.Package) error) error {
+// processPackages processes packages using a worker pool with the specified worker count
+func (s *S3Cache) processPackages(ctx context.Context, pkgs []cache.Package, workerCount int, fn func(context.Context, cache.Package) error) error {
 	jobs := make(chan cache.Package, len(pkgs))
 	results := make(chan error, len(pkgs))
 	var wg sync.WaitGroup
@@ -290,7 +285,7 @@ func (s *S3Cache) existingPackagesSequential(ctx context.Context, pkgs []cache.P
 	result := make(map[cache.Package]struct{})
 	var mu sync.Mutex
 
-	err := s.processPackages(ctx, pkgs, func(ctx context.Context, p cache.Package) error {
+	err := s.processPackages(ctx, pkgs, s.workerCount, func(ctx context.Context, p cache.Package) error {
 		version, err := p.Version()
 		if err != nil {
 			return fmt.Errorf("failed to get version: %w", err)
@@ -400,7 +395,7 @@ func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cac
 
 	// Use higher worker count for downloads to maximize throughput
 	// TODO: Implement dependency-aware scheduling to prioritize critical path packages
-	err := s.processPackagesWithWorkers(ctx, pkgs, s.downloadWorkerCount, func(ctx context.Context, p cache.Package) error {
+	err := s.processPackages(ctx, pkgs, s.downloadWorkerCount, func(ctx context.Context, p cache.Package) error {
 		version, err := p.Version()
 		if err != nil {
 			log.WithError(err).WithField("package", p.FullName()).Warn("Failed to get version for package, skipping")
@@ -1024,7 +1019,7 @@ func (s *S3Cache) downloadUnverified(ctx context.Context, p cache.Package, versi
 func (s *S3Cache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
 	var uploadErrors []error
 
-	err := s.processPackages(ctx, pkgs, func(ctx context.Context, p cache.Package) error {
+	err := s.processPackages(ctx, pkgs, s.workerCount, func(ctx context.Context, p cache.Package) error {
 		localPath, exists := src.Location(p)
 		if !exists {
 			log.WithField("package", p.FullName()).Warn("package not found in local cache - skipping upload")
