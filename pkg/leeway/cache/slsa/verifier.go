@@ -96,7 +96,11 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 			Reason: fmt.Sprintf("failed to open artifact: %v", err),
 		}
 	}
-	defer artifactFile.Close()
+	defer func() {
+		if closeErr := artifactFile.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("Failed to close artifact file")
+		}
+	}()
 
 	// Step 5: Create verification policy
 	// WithArtifact provides the artifact for hash verification
@@ -167,7 +171,13 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 	}
 
 	// Step 8: Hash the actual artifact and compare
-	artifactFile.Seek(0, 0) // Reset file pointer
+	// Reset file pointer to beginning for hashing
+	if _, err := artifactFile.Seek(0, 0); err != nil {
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("failed to reset artifact file pointer: %v", err),
+		}
+	}
+	
 	h := sha256.New()
 	if _, err := io.Copy(h, artifactFile); err != nil {
 		return VerificationFailedError{
@@ -205,7 +215,11 @@ func (v *Verifier) calculateSHA256(filePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			log.WithError(closeErr).Warn("Failed to close file")
+		}
+	}()
 
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
