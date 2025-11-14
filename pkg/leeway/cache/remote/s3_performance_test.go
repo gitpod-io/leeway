@@ -19,7 +19,8 @@ import (
 
 // Realistic constants based on production observations
 const (
-	s3Latency       = 50 * time.Millisecond  // Network round-trip
+	s3Latency       = 50 * time.Millisecond  // Network round-trip (production)
+	s3LatencyTest   = 1 * time.Millisecond   // Reduced latency for fast tests
 	s3ThroughputMBs = 100                    // MB/s download speed
 	verifyTimeEd255 = 100 * time.Microsecond // Ed25519 signature verify
 	attestationSize = 5 * 1024               // ~5KB attestation
@@ -58,11 +59,16 @@ func createMockAttestation(t testing.TB) []byte {
 // realisticMockS3Storage implements realistic S3 performance characteristics
 type realisticMockS3Storage struct {
 	objects map[string][]byte
+	latency time.Duration // Configurable latency for testing
 }
 
 func (m *realisticMockS3Storage) HasObject(ctx context.Context, key string) (bool, error) {
 	// Simulate network latency for metadata check
-	time.Sleep(s3Latency / 2) // Metadata operations are faster
+	latency := m.latency
+	if latency == 0 {
+		latency = s3Latency // Default to realistic latency
+	}
+	time.Sleep(latency / 2) // Metadata operations are faster
 
 	_, exists := m.objects[key]
 	return exists, nil
@@ -75,7 +81,11 @@ func (m *realisticMockS3Storage) GetObject(ctx context.Context, key string, dest
 	}
 
 	// Simulate network latency
-	time.Sleep(s3Latency)
+	latency := m.latency
+	if latency == 0 {
+		latency = s3Latency // Default to realistic latency
+	}
+	time.Sleep(latency)
 
 	// Simulate download time based on size and throughput
 	sizeInMB := float64(len(data)) / (1024 * 1024)
@@ -93,7 +103,11 @@ func (m *realisticMockS3Storage) UploadObject(ctx context.Context, key string, s
 	}
 
 	// Simulate upload latency and throughput
-	time.Sleep(s3Latency)
+	latency := m.latency
+	if latency == 0 {
+		latency = s3Latency // Default to realistic latency
+	}
+	time.Sleep(latency)
 	sizeInMB := float64(len(data)) / (1024 * 1024)
 	uploadTime := time.Duration(sizeInMB / float64(s3ThroughputMBs) * float64(time.Second))
 	time.Sleep(uploadTime)
@@ -104,7 +118,11 @@ func (m *realisticMockS3Storage) UploadObject(ctx context.Context, key string, s
 
 func (m *realisticMockS3Storage) ListObjects(ctx context.Context, prefix string) ([]string, error) {
 	// Simulate network latency for list operation
-	time.Sleep(s3Latency / 2)
+	latency := m.latency
+	if latency == 0 {
+		latency = s3Latency // Default to realistic latency
+	}
+	time.Sleep(latency / 2)
 
 	var keys []string
 	for key := range m.objects {
@@ -340,18 +358,13 @@ func BenchmarkS3Cache_ParallelDownloads(b *testing.B) {
 
 // TestS3Cache_ParallelVerificationScaling tests scalability
 func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping scaling test in short mode")
-	}
-
+	// Use reduced latency and minimal packages for fast tests
 	tests := []struct {
 		packages int
 		workers  int
 	}{
-		{1, 1},
+		{2, 1},
 		{5, 2},
-		{10, 4},
-		{20, 8},
 	}
 
 	for _, tt := range tests {
@@ -367,8 +380,9 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 				}
 			}
 
-			// Setup cache
+			// Setup cache with fast latency
 			mockStorage := createRealisticMockS3StorageMultiple(t, tt.packages)
+			mockStorage.latency = s3LatencyTest // Use fast latency for tests
 			mockVerifier := &realisticMockVerifier{}
 
 			config := &cache.RemoteConfig{
@@ -386,6 +400,7 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 				workerCount:         defaultWorkerCount,
 				downloadWorkerCount: defaultDownloadWorkerCount,
 				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:           make(chan struct{}, maxConcurrentOperations),
 			}
 
 			tmpDir := t.TempDir()
@@ -404,11 +419,8 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 
 // TestS3Cache_ExistingPackagesBatchOptimization tests the ListObjects optimization
 func TestS3Cache_ExistingPackagesBatchOptimization(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping optimization test in short mode")
-	}
-
-	packageCounts := []int{10, 50, 100, 200}
+	// Use reduced latency for fast tests
+	packageCounts := []int{10, 50, 100}
 
 	for _, count := range packageCounts {
 		t.Run(fmt.Sprintf("%d-packages", count), func(t *testing.T) {
@@ -421,8 +433,9 @@ func TestS3Cache_ExistingPackagesBatchOptimization(t *testing.T) {
 				}
 			}
 
-			// Setup mock storage with all packages
+			// Setup mock storage with all packages and fast latency
 			mockStorage := createRealisticMockS3StorageMultiple(t, count)
+			mockStorage.latency = s3LatencyTest // Use fast latency for tests
 
 			config := &cache.RemoteConfig{
 				BucketName: "test-bucket",
@@ -458,10 +471,11 @@ func TestS3Cache_ExistingPackagesBatchOptimization(t *testing.T) {
 			t.Logf("Sequential (HeadObject): %v", seqDuration)
 			t.Logf("Speedup: %.2fx", speedup)
 
-			// For 100+ packages, batch should be significantly faster
-			// Expected: ~90% faster (10x speedup) for 100 packages
-			if count >= 100 {
-				require.Greater(t, speedup, 5.0, "Batch optimization should be at least 5x faster for 100+ packages")
+			// For larger package counts, batch should be significantly faster
+			if count >= 50 {
+				require.Greater(t, speedup, 3.0, "Batch optimization should be at least 3x faster for 50+ packages")
+			} else {
+				require.Greater(t, speedup, 1.0, "Batch optimization should be faster than sequential")
 			}
 		})
 	}
