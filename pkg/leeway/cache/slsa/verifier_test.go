@@ -142,6 +142,11 @@ func TestVerifier_VerifyArtifact_InvalidAttestation(t *testing.T) {
 	}
 }
 
+// Note: Testing empty subject hash requires a valid Sigstore Bundle with proper
+// signature verification, which is complex to set up in unit tests. The validation
+// is in place (lines 125-127 in verifier.go) and will catch this case in production.
+// Integration tests with real attestations would verify this behavior.
+
 // Note: We cannot easily test successful SLSA verification without valid attestations
 // and artifacts, which would require complex setup. In integration tests, we would
 // use mock attestations or test fixtures.

@@ -124,6 +124,9 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 	}
 
 	expectedHash := payload.Subject[0].Digest.Sha256
+	if expectedHash == "" {
+		return fmt.Errorf("SLSA provenance subject has no SHA256 digest")
+	}
 
 	// Step 8: Hash the actual artifact and compare
 	artifactFile.Seek(0, 0) // Reset file pointer
