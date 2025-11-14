@@ -28,8 +28,11 @@ import (
 const (
 	// defaultS3PartSize is the default part size for S3 multipart operations
 	defaultS3PartSize = 5 * 1024 * 1024
-	// defaultWorkerCount is the default number of concurrent workers
+	// defaultWorkerCount is the default number of concurrent workers for general operations
 	defaultWorkerCount = 10
+	// defaultDownloadWorkerCount is the number of concurrent workers for download operations
+	// Higher than default to maximize download throughput
+	defaultDownloadWorkerCount = 30
 	// defaultRateLimit is the default rate limit for S3 API calls (requests per second)
 	defaultRateLimit = 100
 	// defaultBurstLimit is the default burst limit for S3 API calls
@@ -64,13 +67,14 @@ type S3Config struct {
 
 // S3Cache implements RemoteCache using AWS S3
 type S3Cache struct {
-	storage      cache.ObjectStorage
-	cfg          *cache.RemoteConfig
-	workerCount  int
-	slsaVerifier slsa.VerifierInterface
-	cleanupMu    sync.Mutex    // Protects concurrent file cleanup operations
-	rateLimiter  *rate.Limiter // Rate limiter for S3 API calls
-	semaphore    chan struct{} // Semaphore for limiting concurrent operations
+	storage             cache.ObjectStorage
+	cfg                 *cache.RemoteConfig
+	workerCount         int
+	downloadWorkerCount int
+	slsaVerifier        slsa.VerifierInterface
+	cleanupMu           sync.Mutex    // Protects concurrent file cleanup operations
+	rateLimiter         *rate.Limiter // Rate limiter for S3 API calls
+	semaphore           chan struct{} // Semaphore for limiting concurrent operations
 }
 
 // NewS3Cache creates a new S3 cache implementation
@@ -107,12 +111,13 @@ func NewS3Cache(cfg *cache.RemoteConfig) (*S3Cache, error) {
 	semaphore := make(chan struct{}, maxConcurrentOperations)
 
 	return &S3Cache{
-		storage:      storage,
-		cfg:          cfg,
-		workerCount:  defaultWorkerCount,
-		slsaVerifier: slsaVerifier,
-		rateLimiter:  rateLimiter,
-		semaphore:    semaphore,
+		storage:             storage,
+		cfg:                 cfg,
+		workerCount:         defaultWorkerCount,
+		downloadWorkerCount: defaultDownloadWorkerCount,
+		slsaVerifier:        slsaVerifier,
+		rateLimiter:         rateLimiter,
+		semaphore:           semaphore,
 	}, nil
 }
 
@@ -146,12 +151,17 @@ func (s *S3Cache) releaseSemaphore() {
 
 // processPackages processes packages using a worker pool
 func (s *S3Cache) processPackages(ctx context.Context, pkgs []cache.Package, fn func(context.Context, cache.Package) error) error {
+	return s.processPackagesWithWorkers(ctx, pkgs, s.workerCount, fn)
+}
+
+// processPackagesWithWorkers processes packages using a worker pool with a custom worker count
+func (s *S3Cache) processPackagesWithWorkers(ctx context.Context, pkgs []cache.Package, workerCount int, fn func(context.Context, cache.Package) error) error {
 	jobs := make(chan cache.Package, len(pkgs))
 	results := make(chan error, len(pkgs))
 	var wg sync.WaitGroup
 
 	// Start workers
-	for i := 0; i < s.workerCount; i++ {
+	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -202,6 +212,81 @@ func (s *S3Cache) processPackages(ctx context.Context, pkgs []cache.Package, fn 
 
 // ExistingPackages implements RemoteCache
 func (s *S3Cache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (map[cache.Package]struct{}, error) {
+	result := make(map[cache.Package]struct{})
+
+	// Build a map of version -> package for quick lookup
+	versionToPackage := make(map[string]cache.Package, len(pkgs))
+	for _, p := range pkgs {
+		version, err := p.Version()
+		if err != nil {
+			log.WithError(err).WithField("package", p.FullName()).Debug("Failed to get version for package, skipping")
+			continue
+		}
+		versionToPackage[version] = p
+	}
+
+	if len(versionToPackage) == 0 {
+		return result, nil
+	}
+
+	// Use ListObjectsV2 to batch check all packages in 1-2 API calls
+	// We list all objects and check which packages exist
+	// This is much faster than 2N HeadObject calls (2 per package)
+	if err := s.waitForRateLimit(ctx); err != nil {
+		log.WithError(err).Debug("Rate limiter error during batch existence check")
+		// Fall back to sequential checks if rate limited
+		return s.existingPackagesSequential(ctx, pkgs)
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	// List all objects with empty prefix to get all cached artifacts
+	// In practice, this could be optimized with a common prefix if versions share one
+	objects, err := s.storage.ListObjects(timeoutCtx, "")
+	if err != nil {
+		log.WithError(err).Debug("Failed to list objects in remote cache, falling back to sequential checks")
+		// Fall back to sequential checks on error
+		return s.existingPackagesSequential(ctx, pkgs)
+	}
+
+	// Build a set of existing keys for O(1) lookup
+	existingKeys := make(map[string]bool, len(objects))
+	for _, key := range objects {
+		existingKeys[key] = true
+	}
+
+	// Check which packages exist by looking up their keys
+	for version, p := range versionToPackage {
+		gzKey := fmt.Sprintf("%s.tar.gz", version)
+		tarKey := fmt.Sprintf("%s.tar", version)
+
+		if existingKeys[gzKey] {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     gzKey,
+			}).Debug("found package in remote cache (.tar.gz)")
+			result[p] = struct{}{}
+		} else if existingKeys[tarKey] {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"key":     tarKey,
+			}).Debug("found package in remote cache (.tar)")
+			result[p] = struct{}{}
+		} else {
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"version": version,
+			}).Debug("package not found in remote cache, will build locally")
+		}
+	}
+
+	return result, nil
+}
+
+// existingPackagesSequential is the fallback implementation using sequential HeadObject calls
+// This is used when ListObjects fails or is rate limited
+func (s *S3Cache) existingPackagesSequential(ctx context.Context, pkgs []cache.Package) (map[cache.Package]struct{}, error) {
 	result := make(map[cache.Package]struct{})
 	var mu sync.Mutex
 
@@ -313,7 +398,9 @@ func withRetry(maxRetries int, operation func() error) error {
 func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) error {
 	var multiErr []error
 
-	err := s.processPackages(ctx, pkgs, func(ctx context.Context, p cache.Package) error {
+	// Use higher worker count for downloads to maximize throughput
+	// TODO: Implement dependency-aware scheduling to prioritize critical path packages
+	err := s.processPackagesWithWorkers(ctx, pkgs, s.downloadWorkerCount, func(ctx context.Context, p cache.Package) error {
 		version, err := p.Version()
 		if err != nil {
 			log.WithError(err).WithField("package", p.FullName()).Warn("Failed to get version for package, skipping")
