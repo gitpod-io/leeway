@@ -4,9 +4,6 @@
 		"dockerfile": "Dockerfile"
 	},
 	"features": {
-		"ghcr.io/devcontainers/features/node:1": {
-			"version": "18"
-		},
 		"ghcr.io/devcontainers/features/go:1": {
 			"version": "1.24"
 		},
@@ -14,7 +11,11 @@
 		"ghcr.io/dhoeric/features/google-cloud-cli:1": {},
 		"ghcr.io/devcontainers/features/aws-cli:1": {}
 	},
-	"forwardPorts": [8080, 3000, 9000],
+	"forwardPorts": [
+		8080,
+		3000,
+		9000
+	],
 	"portsAttributes": {
 		"8080": {
 			"label": "Application Server",
