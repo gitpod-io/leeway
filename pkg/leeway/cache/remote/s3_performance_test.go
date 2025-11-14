@@ -14,6 +14,7 @@ import (
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache/local"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 )
 
 // Realistic constants based on production observations
@@ -379,9 +380,12 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 			}
 
 			s3Cache := &S3Cache{
-				storage:      mockStorage,
-				cfg:          config,
-				slsaVerifier: mockVerifier,
+				storage:             mockStorage,
+				cfg:                 config,
+				slsaVerifier:        mockVerifier,
+				workerCount:         defaultWorkerCount,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
 			}
 
 			tmpDir := t.TempDir()
@@ -394,6 +398,150 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 
 			t.Logf("Downloaded %d packages with %d workers in %v (%.2f packages/sec)",
 				tt.packages, tt.workers, duration, float64(tt.packages)/duration.Seconds())
+		})
+	}
+}
+
+// TestS3Cache_ExistingPackagesBatchOptimization tests the ListObjects optimization
+func TestS3Cache_ExistingPackagesBatchOptimization(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping optimization test in short mode")
+	}
+
+	packageCounts := []int{10, 50, 100, 200}
+
+	for _, count := range packageCounts {
+		t.Run(fmt.Sprintf("%d-packages", count), func(t *testing.T) {
+			// Create packages
+			packages := make([]cache.Package, count)
+			for i := 0; i < count; i++ {
+				packages[i] = &mockPackagePerf{
+					version:  fmt.Sprintf("package%d:v%d", i, i),
+					fullName: fmt.Sprintf("package%d", i),
+				}
+			}
+
+			// Setup mock storage with all packages
+			mockStorage := createRealisticMockS3StorageMultiple(t, count)
+
+			config := &cache.RemoteConfig{
+				BucketName: "test-bucket",
+			}
+
+			s3Cache := &S3Cache{
+				storage:             mockStorage,
+				cfg:                 config,
+				workerCount:         defaultWorkerCount,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+			}
+
+			// Measure time for batch check (using ListObjects)
+			start := time.Now()
+			existing, err := s3Cache.ExistingPackages(context.Background(), packages)
+			batchDuration := time.Since(start)
+			require.NoError(t, err)
+			require.Equal(t, count, len(existing), "All packages should be found")
+
+			// Measure time for sequential check (fallback method)
+			start = time.Now()
+			existingSeq, err := s3Cache.existingPackagesSequential(context.Background(), packages)
+			seqDuration := time.Since(start)
+			require.NoError(t, err)
+			require.Equal(t, count, len(existingSeq), "All packages should be found")
+
+			// Calculate speedup
+			speedup := float64(seqDuration) / float64(batchDuration)
+
+			t.Logf("Package count: %d", count)
+			t.Logf("Batch (ListObjects): %v", batchDuration)
+			t.Logf("Sequential (HeadObject): %v", seqDuration)
+			t.Logf("Speedup: %.2fx", speedup)
+
+			// For 100+ packages, batch should be significantly faster
+			// Expected: ~90% faster (10x speedup) for 100 packages
+			if count >= 100 {
+				require.Greater(t, speedup, 5.0, "Batch optimization should be at least 5x faster for 100+ packages")
+			}
+		})
+	}
+}
+
+// BenchmarkS3Cache_ExistingPackages benchmarks the optimized ExistingPackages method
+func BenchmarkS3Cache_ExistingPackages(b *testing.B) {
+	if testing.Short() {
+		b.Skip("skipping benchmark in short mode")
+	}
+
+	packageCounts := []int{10, 50, 100, 200}
+
+	for _, count := range packageCounts {
+		b.Run(fmt.Sprintf("%d-packages-batch", count), func(b *testing.B) {
+			// Create packages
+			packages := make([]cache.Package, count)
+			for i := 0; i < count; i++ {
+				packages[i] = &mockPackagePerf{
+					version:  fmt.Sprintf("package%d:v%d", i, i),
+					fullName: fmt.Sprintf("package%d", i),
+				}
+			}
+
+			// Setup mock storage
+			mockStorage := createRealisticMockS3StorageMultiple(b, count)
+
+			config := &cache.RemoteConfig{
+				BucketName: "test-bucket",
+			}
+
+			s3Cache := &S3Cache{
+				storage:             mockStorage,
+				cfg:                 config,
+				workerCount:         defaultWorkerCount,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, err := s3Cache.ExistingPackages(context.Background(), packages)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("%d-packages-sequential", count), func(b *testing.B) {
+			// Create packages
+			packages := make([]cache.Package, count)
+			for i := 0; i < count; i++ {
+				packages[i] = &mockPackagePerf{
+					version:  fmt.Sprintf("package%d:v%d", i, i),
+					fullName: fmt.Sprintf("package%d", i),
+				}
+			}
+
+			// Setup mock storage
+			mockStorage := createRealisticMockS3StorageMultiple(b, count)
+
+			config := &cache.RemoteConfig{
+				BucketName: "test-bucket",
+			}
+
+			s3Cache := &S3Cache{
+				storage:             mockStorage,
+				cfg:                 config,
+				workerCount:         defaultWorkerCount,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, err := s3Cache.existingPackagesSequential(context.Background(), packages)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
 		})
 	}
 }

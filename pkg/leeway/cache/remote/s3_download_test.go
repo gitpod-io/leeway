@@ -174,10 +174,11 @@ func TestS3CacheDownload(t *testing.T) {
 			}
 
 			s3Cache := &S3Cache{
-				storage:     mockStorage,
-				workerCount: 1,
-				rateLimiter: rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
-				semaphore:   make(chan struct{}, maxConcurrentOperations),
+				storage:             mockStorage,
+				workerCount:         1,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:           make(chan struct{}, maxConcurrentOperations),
 			}
 
 			err := s3Cache.Download(context.Background(), localCache, tt.packages)

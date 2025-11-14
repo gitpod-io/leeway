@@ -252,11 +252,12 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 
 			// Create S3Cache with test configuration
 			s3Cache := &S3Cache{
-				storage:     mockStorage,
-				cfg:         &tt.config,
-				workerCount: 1,
-				rateLimiter: rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
-				semaphore:   make(chan struct{}, maxConcurrentOperations),
+				storage:             mockStorage,
+				cfg:                 &tt.config,
+				workerCount:         1,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:           make(chan struct{}, maxConcurrentOperations),
 			}
 
 			// Initialize SLSA verifier if enabled
@@ -337,11 +338,12 @@ func TestS3Cache_BackwardCompatibility(t *testing.T) {
 	}
 
 	s3Cache := &S3Cache{
-		storage:     mockStorage,
-		cfg:         config,
-		workerCount: 1,
-		rateLimiter: rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
-		semaphore:   make(chan struct{}, maxConcurrentOperations),
+		storage:             mockStorage,
+		cfg:                 config,
+		workerCount:         1,
+		downloadWorkerCount: defaultDownloadWorkerCount,
+		rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+		semaphore:           make(chan struct{}, maxConcurrentOperations),
 	}
 
 	packages := []cache.Package{
