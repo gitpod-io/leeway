@@ -9,11 +9,22 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
+	log "github.com/sirupsen/logrus"
 )
+
+// VerificationFailedError is returned when SLSA verification fails
+type VerificationFailedError struct {
+	Reason string
+}
+
+func (e VerificationFailedError) Error() string {
+	return fmt.Sprintf("SLSA verification failed: %s", e.Reason)
+}
 
 // VerifierInterface defines the interface for SLSA verification
 type VerifierInterface interface {
@@ -38,11 +49,20 @@ func NewVerifier(sourceURI string, trustedRoots []string) *Verifier {
 // This implementation uses the official Sigstore Go library which natively supports
 // Sigstore Bundle format and uses embedded transparency log entries for verification.
 func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestationPath string) error {
+	startTime := time.Now()
+	
+	log.WithFields(log.Fields{
+		"artifact":    artifactPath,
+		"attestation": attestationPath,
+	}).Debug("Starting SLSA verification")
+	
 	// Step 1: Load the Sigstore Bundle
 	// This parses the attestation file as a Sigstore Bundle v0.3 format
 	b, err := bundle.LoadJSONFromPath(attestationPath)
 	if err != nil {
-		return fmt.Errorf("failed to load attestation bundle: %w", err)
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("failed to load attestation bundle: %v", err),
+		}
 	}
 
 	// Step 2: Get trusted root from Sigstore public good instance
@@ -50,7 +70,9 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 	// from Sigstore's TUF repository
 	trustedRoot, err := root.FetchTrustedRoot()
 	if err != nil {
-		return fmt.Errorf("failed to fetch trusted root: %w", err)
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("failed to fetch trusted root: %v", err),
+		}
 	}
 
 	// Step 3: Create a verifier with transparency log verification
@@ -62,13 +84,17 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 		verify.WithIntegratedTimestamps(1),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create verifier: %w", err)
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("failed to create verifier: %v", err),
+		}
 	}
 
 	// Step 4: Open the artifact file for verification
 	artifactFile, err := os.Open(artifactPath)
 	if err != nil {
-		return fmt.Errorf("failed to open artifact: %w", err)
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("failed to open artifact: %v", err),
+		}
 	}
 	defer artifactFile.Close()
 
@@ -90,20 +116,26 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 	// - Artifact hash matches (if provided)
 	_, err = verifier.Verify(b, policy)
 	if err != nil {
-		return fmt.Errorf("signature verification failed: %w", err)
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("signature verification failed: %v", err),
+		}
 	}
 
 	// Step 7: Extract and verify the subject hash from the attestation
 	// The attestation contains the expected hash of the artifact in the SLSA provenance
 	envelope, err := b.Envelope()
 	if err != nil {
-		return fmt.Errorf("failed to get envelope: %w", err)
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("failed to get envelope: %v", err),
+		}
 	}
 
 	// Decode the base64-encoded payload
 	payloadBytes, err := base64.StdEncoding.DecodeString(envelope.Payload)
 	if err != nil {
-		return fmt.Errorf("failed to decode payload: %w", err)
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("failed to decode payload: %v", err),
+		}
 	}
 
 	// Parse the SLSA provenance to get the subject
@@ -116,28 +148,38 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 	}
 
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return fmt.Errorf("failed to parse payload: %w", err)
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("failed to parse payload: %v", err),
+		}
 	}
 
 	if len(payload.Subject) == 0 {
-		return fmt.Errorf("no subject in attestation")
+		return VerificationFailedError{
+			Reason: "no subject in attestation",
+		}
 	}
 
 	expectedHash := payload.Subject[0].Digest.Sha256
 	if expectedHash == "" {
-		return fmt.Errorf("SLSA provenance subject has no SHA256 digest")
+		return VerificationFailedError{
+			Reason: "SLSA provenance subject has no SHA256 digest",
+		}
 	}
 
 	// Step 8: Hash the actual artifact and compare
 	artifactFile.Seek(0, 0) // Reset file pointer
 	h := sha256.New()
 	if _, err := io.Copy(h, artifactFile); err != nil {
-		return fmt.Errorf("failed to hash artifact: %w", err)
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("failed to hash artifact: %v", err),
+		}
 	}
 	actualHash := hex.EncodeToString(h.Sum(nil))
 
 	if actualHash != expectedHash {
-		return fmt.Errorf("hash mismatch: expected %s, got %s", expectedHash, actualHash)
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("hash mismatch: expected %s, got %s", expectedHash, actualHash),
+		}
 	}
 
 	// Success! The artifact is verified:
@@ -145,6 +187,15 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 	// ✅ Certificate chain is valid
 	// ✅ Transparency log entry is valid
 	// ✅ Hash matches
+	
+	duration := time.Since(startTime)
+	log.WithFields(log.Fields{
+		"artifact":       artifactPath,
+		"expectedHash":   expectedHash,
+		"actualHash":     actualHash,
+		"verificationMs": duration.Milliseconds(),
+	}).Info("SLSA verification successful")
+	
 	return nil
 }
 
