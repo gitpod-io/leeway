@@ -78,7 +78,7 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 	// Step 3: Create a verifier with transparency log verification
 	// WithTransparencyLog(1) means "require at least 1 transparency log entry"
 	// WithIntegratedTimestamps(1) means "require at least 1 integrated timestamp"
-	verifier, err := verify.NewSignedEntityVerifier(
+	verifier, err := verify.NewVerifier(
 		trustedRoot,
 		verify.WithTransparencyLog(1),
 		verify.WithIntegratedTimestamps(1),
