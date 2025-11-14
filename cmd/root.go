@@ -54,6 +54,9 @@ const (
 
 	// EnvvarExperimental enables experimental features
 	EnvvarExperimental = "LEEWAY_EXPERIMENTAL"
+
+	// EnvvarMaxSigningConcurrency configures maximum concurrent signing operations
+	EnvvarMaxSigningConcurrency = "LEEWAY_MAX_SIGNING_CONCURRENCY"
 )
 
 const (

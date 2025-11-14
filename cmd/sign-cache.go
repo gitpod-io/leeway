@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -25,12 +26,29 @@ This command is designed for CI environments where build and signing are
 separated for security. The build job creates a manifest of artifacts to sign,
 and this command consumes that manifest to generate cryptographic attestations.
 
+Concurrency:
+  Default: 20 concurrent signing operations
+  Configure via --max-signing-concurrency flag or LEEWAY_MAX_SIGNING_CONCURRENCY env var
+  Valid range: 1-100 (automatically capped)
+
 Example:
   leeway plumbing sign-cache --from-manifest artifacts-to-sign.txt
-  leeway plumbing sign-cache --from-manifest artifacts.txt --dry-run`,
+  leeway plumbing sign-cache --from-manifest artifacts.txt --dry-run
+  leeway plumbing sign-cache --from-manifest artifacts.txt --max-signing-concurrency 30
+  LEEWAY_MAX_SIGNING_CONCURRENCY=30 leeway plumbing sign-cache --from-manifest artifacts.txt`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		manifestPath, _ := cmd.Flags().GetString("from-manifest")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		
+		// Get max concurrency setting (env var as default, CLI flag overrides)
+		maxConcurrency, _ := cmd.Flags().GetInt("max-signing-concurrency")
+		if !cmd.Flags().Changed("max-signing-concurrency") {
+			if envVal := os.Getenv(EnvvarMaxSigningConcurrency); envVal != "" {
+				if parsed, err := strconv.Atoi(envVal); err == nil && parsed > 0 {
+					maxConcurrency = parsed
+				}
+			}
+		}
 
 		if manifestPath == "" {
 			return fmt.Errorf("--from-manifest flag is required")
@@ -41,7 +59,7 @@ Example:
 			return fmt.Errorf("manifest file does not exist: %s", manifestPath)
 		}
 
-		return runSignCache(cmd.Context(), cmd, manifestPath, dryRun)
+		return runSignCache(cmd.Context(), manifestPath, dryRun, maxConcurrency)
 	},
 }
 
@@ -49,11 +67,12 @@ func init() {
 	plumbingCmd.AddCommand(signCacheCmd)
 	signCacheCmd.Flags().String("from-manifest", "", "Path to newline-separated artifact paths file")
 	signCacheCmd.Flags().Bool("dry-run", false, "Log actions without signing or uploading")
+	signCacheCmd.Flags().Int("max-signing-concurrency", 20, "Maximum concurrent signing operations (env: LEEWAY_MAX_SIGNING_CONCURRENCY)")
 	_ = signCacheCmd.MarkFlagRequired("from-manifest")
 }
 
 // runSignCache implements the main signing logic
-func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, dryRun bool) error {
+func runSignCache(ctx context.Context, manifestPath string, dryRun bool, maxConcurrency int) error {
 	log.WithFields(log.Fields{
 		"manifest": manifestPath,
 		"dry_run":  dryRun,
@@ -111,7 +130,17 @@ func runSignCache(ctx context.Context, cmd *cobra.Command, manifestPath string, 
 	log.WithField("artifacts", len(artifacts)).Info("Found artifacts to sign")
 
 	// Process artifacts with bounded concurrency to avoid overwhelming Sigstore
-	const maxConcurrency = 5             // Reasonable limit for Sigstore API
+	// Validate and apply reasonable bounds
+	if maxConcurrency < 1 {
+		log.WithField("provided", maxConcurrency).Warn("maxConcurrency must be at least 1, using 1")
+		maxConcurrency = 1
+	} else if maxConcurrency > 100 {
+		log.WithField("provided", maxConcurrency).Warn("maxConcurrency exceeds maximum, capping at 100")
+		maxConcurrency = 100
+	}
+
+	log.WithField("maxConcurrency", maxConcurrency).Info("Configured signing concurrency")
+
 	const maxAcceptableFailureRate = 0.5 // Fail command if more than 50% of artifacts fail
 	semaphore := make(chan struct{}, maxConcurrency)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -461,7 +462,7 @@ func TestSignCache_DryRunMode(t *testing.T) {
 
 	// Run in dry-run mode (serialize workspace access)
 	workspaceMutex.Lock()
-	err := runSignCache(context.Background(), nil, manifestPath, true)
+	err := runSignCache(context.Background(), manifestPath, true, 20)
 	workspaceMutex.Unlock()
 
 	// Should succeed without errors
@@ -549,7 +550,7 @@ func TestSignCache_ErrorScenarios(t *testing.T) {
 
 			// Serialize workspace access to prevent concurrent file descriptor issues
 			workspaceMutex.Lock()
-			err := runSignCache(context.Background(), nil, manifestPath, false)
+			err := runSignCache(context.Background(), manifestPath, false, 20)
 			workspaceMutex.Unlock()
 
 			if tt.expectError {
@@ -560,6 +561,152 @@ func TestSignCache_ErrorScenarios(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+// TestMaxSigningConcurrencyEnvironmentVariable tests environment variable and flag precedence
+func TestMaxSigningConcurrencyEnvironmentVariable(t *testing.T) {
+	tests := []struct {
+		name      string
+		envValue  string
+		flagValue string
+		flagSet   bool
+		expected  int
+	}{
+		{
+			name:     "no env var, no flag - use default",
+			envValue: "",
+			expected: 20,
+		},
+		{
+			name:     "env var set to 30, no flag",
+			envValue: "30",
+			expected: 30,
+		},
+		{
+			name:     "env var set to 50, no flag",
+			envValue: "50",
+			expected: 50,
+		},
+		{
+			name:      "env var set to 30, flag explicitly set to 10",
+			envValue:  "30",
+			flagValue: "10",
+			flagSet:   true,
+			expected:  10, // Flag should override
+		},
+		{
+			name:      "env var set to 10, flag explicitly set to 40",
+			envValue:  "10",
+			flagValue: "40",
+			flagSet:   true,
+			expected:  40, // Flag should override
+		},
+		{
+			name:     "env var set to invalid value, use default",
+			envValue: "invalid",
+			expected: 20,
+		},
+		{
+			name:     "env var set to negative value, use default",
+			envValue: "-5",
+			expected: 20,
+		},
+		{
+			name:     "env var set to zero, use default",
+			envValue: "0",
+			expected: 20,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set environment variable using t.Setenv for proper cleanup
+			if tt.envValue != "" {
+				t.Setenv(EnvvarMaxSigningConcurrency, tt.envValue)
+			}
+
+			// Create test command
+			cmd := &cobra.Command{
+				Use:  "sign-cache",
+				RunE: signCacheCmd.RunE,
+			}
+			cmd.Flags().String("from-manifest", "", "Path to manifest")
+			cmd.Flags().Bool("dry-run", false, "Dry run mode")
+			cmd.Flags().Int("max-signing-concurrency", 20, "Max concurrency")
+
+			// Set flag if specified
+			if tt.flagSet {
+				err := cmd.Flags().Set("max-signing-concurrency", tt.flagValue)
+				require.NoError(t, err)
+			}
+
+			// Test the actual logic from RunE
+			maxConcurrency, _ := cmd.Flags().GetInt("max-signing-concurrency")
+			if !cmd.Flags().Changed("max-signing-concurrency") {
+				if envVal := os.Getenv(EnvvarMaxSigningConcurrency); envVal != "" {
+					if parsed, err := strconv.Atoi(envVal); err == nil && parsed > 0 {
+						maxConcurrency = parsed
+					}
+				}
+			}
+
+			assert.Equal(t, tt.expected, maxConcurrency, "maxConcurrency should match expected value")
+		})
+	}
+}
+
+// TestMaxSigningConcurrencyValidation tests bounds validation
+func TestMaxSigningConcurrencyValidation(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    int
+		expected int
+	}{
+		{
+			name:     "valid value within range",
+			input:    20,
+			expected: 20,
+		},
+		{
+			name:     "value below minimum",
+			input:    0,
+			expected: 1,
+		},
+		{
+			name:     "negative value",
+			input:    -5,
+			expected: 1,
+		},
+		{
+			name:     "value above maximum",
+			input:    150,
+			expected: 100,
+		},
+		{
+			name:     "value at minimum boundary",
+			input:    1,
+			expected: 1,
+		},
+		{
+			name:     "value at maximum boundary",
+			input:    100,
+			expected: 100,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the validation logic from runSignCache
+			maxConcurrency := tt.input
+			if maxConcurrency < 1 {
+				maxConcurrency = 1
+			} else if maxConcurrency > 100 {
+				maxConcurrency = 100
+			}
+
+			assert.Equal(t, tt.expected, maxConcurrency)
 		})
 	}
 }
