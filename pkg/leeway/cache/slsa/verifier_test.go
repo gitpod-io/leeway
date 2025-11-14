@@ -107,16 +107,16 @@ func TestVerifier_VerifyArtifact_MissingFiles(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for missing attestation file, got nil")
 	}
-	if err != nil && !strings.Contains(err.Error(), "failed to read attestation file") {
-		t.Errorf("Expected 'failed to read attestation file' error, got: %v", err)
+	if err != nil && !strings.Contains(err.Error(), "failed to load attestation bundle") {
+		t.Errorf("Expected 'failed to load attestation bundle' error, got: %v", err)
 	}
 }
 
-func TestVerifier_VerifyArtifact_MissingArtifact(t *testing.T) {
+func TestVerifier_VerifyArtifact_InvalidAttestation(t *testing.T) {
 	verifier := NewVerifier("github.com/gitpod-io/gitpod-next", []string{"https://fulcio.sigstore.dev"})
 	ctx := context.Background()
 
-	// Create a temporary attestation file
+	// Create a temporary attestation file with invalid content
 	tmpDir := t.TempDir()
 	attestationFile := filepath.Join(tmpDir, "test.att")
 	err := os.WriteFile(attestationFile, []byte("fake attestation"), 0644)
@@ -124,13 +124,21 @@ func TestVerifier_VerifyArtifact_MissingArtifact(t *testing.T) {
 		t.Fatalf("Failed to create test attestation file: %v", err)
 	}
 
-	// Test with missing artifact file
-	err = verifier.VerifyArtifact(ctx, "/non/existent/artifact", attestationFile)
-	if err == nil {
-		t.Error("Expected error for missing artifact file, got nil")
+	// Create a temporary artifact file
+	artifactFile := filepath.Join(tmpDir, "test.tar.gz")
+	err = os.WriteFile(artifactFile, []byte("fake artifact"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test artifact file: %v", err)
 	}
-	if err != nil && !strings.Contains(err.Error(), "failed to calculate artifact hash") {
-		t.Errorf("Expected 'failed to calculate artifact hash' error, got: %v", err)
+
+	// Test with invalid attestation
+	err = verifier.VerifyArtifact(ctx, artifactFile, attestationFile)
+	if err == nil {
+		t.Error("Expected error for invalid attestation, got nil")
+	}
+	// The error should be about loading the bundle (invalid JSON)
+	if err != nil && !strings.Contains(err.Error(), "failed to load attestation bundle") {
+		t.Errorf("Expected 'failed to load attestation bundle' error, got: %v", err)
 	}
 }
 
