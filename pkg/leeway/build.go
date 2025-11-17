@@ -669,6 +669,14 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToDownload = append(pkgsToDownload, p)
 	}
 
+	// Sort packages by dependency depth to prioritize critical path
+	// This ensures packages that block other builds are downloaded first
+	if len(pkgsToDownload) > 0 {
+		log.WithField("count", len(pkgsToDownload)).Info("🔄 Dependency-aware scheduling: sorting packages by depth before download")
+		pkgsToDownload = sortPackagesByDependencyDepth(pkgsToDownload)
+		log.Info("✅ Packages sorted - critical path packages will download first")
+	}
+
 	// Convert []*Package to []cache.Package
 	pkgsToDownloadCache := make([]cache.Package, len(pkgsToDownload))
 	for i, p := range pkgsToDownload {
@@ -799,12 +807,12 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 	for _, p := range allpkg {
 		// Check actual state in local cache
 		_, inCache := ctx.LocalCache.Location(p)
-		
+
 		if !inCache {
 			// Package not in cache (shouldn't happen if build succeeded)
 			continue
 		}
-		
+
 		total++
 
 		// Determine what happened to this package
@@ -822,7 +830,7 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 		if inNewlyBuilt {
 			// Package was built during this build
 			builtLocally++
-			
+
 			// Check if this was supposed to be downloaded but wasn't
 			// This indicates verification or download failure
 			if inPkgsToDownload && status != PackageDownloaded {
@@ -2900,4 +2908,100 @@ func isEmpty(dir string) bool {
 		return true
 	}
 	return len(entries) == 0
+}
+
+// sortPackagesByDependencyDepth sorts packages by their dependency depth (deepest first).
+// This prioritizes downloading packages on the critical path, allowing dependent builds
+// to start earlier and reducing overall wall-clock build time.
+//
+// Algorithm:
+// 1. Calculate dependency depth for each package (max distance from leaf nodes)
+// 2. Sort packages by depth in descending order (deepest = most dependencies = critical path)
+// 3. Packages with equal depth maintain their relative order (stable sort)
+func sortPackagesByDependencyDepth(packages []*Package) []*Package {
+	if len(packages) <= 1 {
+		return packages
+	}
+
+	// Calculate dependency depth for each package
+	depthCache := make(map[string]int)
+	for _, pkg := range packages {
+		calculateDependencyDepth(pkg, depthCache)
+	}
+
+	// Create a copy to avoid modifying the input slice
+	sorted := make([]*Package, len(packages))
+	copy(sorted, packages)
+
+	// Sort by depth (descending) - packages with more dependencies first
+	// This is a stable sort, so packages with equal depth maintain their order
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			depthI := depthCache[sorted[i].FullName()]
+			depthJ := depthCache[sorted[j].FullName()]
+			if depthJ > depthI {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	// Log the sorted order for debugging
+	if len(sorted) > 0 {
+		sortedNames := make([]string, len(sorted))
+		for i, pkg := range sorted {
+			depth := depthCache[pkg.FullName()]
+			sortedNames[i] = fmt.Sprintf("%s(depth:%d)", pkg.FullName(), depth)
+		}
+		log.WithFields(log.Fields{
+			"count": len(sorted),
+			"order": sortedNames,
+		}).Info("📦 Download order (deepest dependencies first):")
+		
+		// Also log each package individually for easier reading
+		for i, pkg := range sorted {
+			depth := depthCache[pkg.FullName()]
+			log.WithFields(log.Fields{
+				"position": i + 1,
+				"package":  pkg.FullName(),
+				"depth":    depth,
+			}).Info("  └─")
+		}
+	}
+
+	return sorted
+}
+
+// calculateDependencyDepth recursively calculates the dependency depth of a package.
+// Depth is defined as the maximum distance from any leaf node (package with no dependencies).
+// Uses memoization to avoid recalculating depths for packages.
+func calculateDependencyDepth(pkg *Package, cache map[string]int) int {
+	fullName := pkg.FullName()
+
+	// Check cache first
+	if depth, ok := cache[fullName]; ok {
+		return depth
+	}
+
+	// Get dependencies
+	deps := pkg.GetDependencies()
+	if len(deps) == 0 {
+		// Leaf node has depth 0
+		cache[fullName] = 0
+		return 0
+	}
+
+	// Calculate max depth of all dependencies
+	maxDepth := 0
+	for _, dep := range deps {
+		depDepth := calculateDependencyDepth(dep, cache)
+		if depDepth > maxDepth {
+			maxDepth = depDepth
+		}
+	}
+
+	// This package's depth is 1 + max depth of dependencies
+	depth := maxDepth + 1
+	cache[fullName] = depth
+
+	return depth
 }
