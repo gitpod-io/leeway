@@ -100,13 +100,39 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 			"artifact_key": artifactKey,
 		}).Info("Artifact already exists in remote cache, skipping upload")
 
-		// Also skip attestation upload - the existing artifact already has an attestation
-		// Uploading a new attestation for a different local artifact would cause verification failures
+		// Check if attestation also exists
+		attestationExists, err := u.remoteCache.HasFile(ctx, attestationKey)
+		if err != nil {
+			log.WithError(err).WithField("key", attestationKey).Warn("Failed to check if attestation exists, will attempt upload")
+			attestationExists = false // Assume it doesn't exist and try to upload
+		}
+
+		if attestationExists {
+			// Both artifact and attestation exist, skip both uploads
+			log.WithFields(log.Fields{
+				"artifact":     artifactPath,
+				"artifact_key": artifactKey,
+				"att_key":      attestationKey,
+			}).Info("Skipping attestation upload (artifact and attestation already exist)")
+			return nil
+		}
+
+		// Artifact exists but attestation missing, upload attestation only
 		log.WithFields(log.Fields{
 			"artifact":     artifactPath,
 			"artifact_key": artifactKey,
 			"att_key":      attestationKey,
-		}).Info("Skipping attestation upload (artifact already exists with attestation)")
+		}).Info("Artifact exists but attestation missing, uploading attestation only")
+
+		if err := u.remoteCache.UploadFile(ctx, attestationPath, attestationKey); err != nil {
+			return fmt.Errorf("failed to upload attestation: %w", err)
+		}
+
+		log.WithFields(log.Fields{
+			"artifact":     artifactPath,
+			"artifact_key": artifactKey,
+			"att_key":      attestationKey,
+		}).Info("Successfully uploaded attestation")
 		return nil
 	}
 
