@@ -199,9 +199,16 @@ func normalizeSPDX(sbomPath string, timestamp time.Time) error {
 	}
 	creationInfo["created"] = timestamp.Format(time.RFC3339)
 
+	// Get and validate documentNamespace
+	originalNamespace, ok := sbom["documentNamespace"].(string)
+	if !ok {
+		return fmt.Errorf("documentNamespace field is not a string (got type %T)", sbom["documentNamespace"])
+	}
+	if originalNamespace == "" {
+		return fmt.Errorf("documentNamespace field is empty")
+	}
+
 	// Generate deterministic UUID from normalized content (without timestamp and UUID)
-	// Save original namespace to extract later
-	originalNamespace, _ := sbom["documentNamespace"].(string)
 	delete(sbom, "documentNamespace")
 	
 	normalizedForHash, err := json.Marshal(sbom)
@@ -212,18 +219,23 @@ func normalizeSPDX(sbomPath string, timestamp time.Time) error {
 	deterministicUUID := generateDeterministicUUID(contentHash[:])
 
 	// Replace UUID in documentNamespace using regex for robust matching
-	if originalNamespace != "" {
-		// UUID pattern: 8-4-4-4-12 hex digits
-		uuidPattern := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-		if uuidPattern.MatchString(originalNamespace) {
-			// Replace the UUID with our deterministic one
-			originalNamespace = uuidPattern.ReplaceAllString(originalNamespace, deterministicUUID)
-		} else {
-			// Log warning if no UUID found in namespace (unexpected format)
-			log.WithField("documentNamespace", originalNamespace).Warn("No UUID found in SPDX documentNamespace, skipping UUID normalization")
-		}
-		sbom["documentNamespace"] = originalNamespace
+	// UUID pattern: 8-4-4-4-12 hex digits
+	uuidPattern := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+	
+	matches := uuidPattern.FindAllString(originalNamespace, -1)
+	if len(matches) == 0 {
+		return fmt.Errorf("no UUID found in SPDX documentNamespace: %s. "+
+			"This may indicate a format change in Syft. Please report this issue", originalNamespace)
 	}
+	if len(matches) > 1 {
+		log.WithField("documentNamespace", originalNamespace).
+			WithField("uuid_count", len(matches)).
+			Warn("Multiple UUIDs found in documentNamespace, replacing all with same deterministic UUID")
+	}
+	
+	// Replace the UUID(s) with our deterministic one
+	originalNamespace = uuidPattern.ReplaceAllString(originalNamespace, deterministicUUID)
+	sbom["documentNamespace"] = originalNamespace
 
 	// Write back
 	normalized, err := json.MarshalIndent(sbom, "", "  ")

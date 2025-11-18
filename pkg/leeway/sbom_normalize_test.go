@@ -266,26 +266,25 @@ func TestNormalizeSPDX(t *testing.T) {
 		name              string
 		documentNamespace string
 		wantUUIDChanged   bool
+		wantMultipleWarn  bool
 	}{
 		{
 			name:              "UUID at end of namespace",
 			documentNamespace: "https://example.com/test-12345678-1234-1234-1234-123456789abc",
 			wantUUIDChanged:   true,
+			wantMultipleWarn:  false,
 		},
 		{
 			name:              "UUID in middle of namespace",
 			documentNamespace: "https://example.com/12345678-1234-1234-1234-123456789abc/test",
 			wantUUIDChanged:   true,
+			wantMultipleWarn:  false,
 		},
 		{
 			name:              "multiple UUIDs (replaces all)",
 			documentNamespace: "https://example.com/12345678-1234-1234-1234-123456789abc/test-abcdef01-2345-6789-abcd-ef0123456789",
 			wantUUIDChanged:   true,
-		},
-		{
-			name:              "no UUID in namespace",
-			documentNamespace: "https://example.com/test-no-uuid",
-			wantUUIDChanged:   false,
+			wantMultipleWarn:  true,
 		},
 	}
 
@@ -353,20 +352,13 @@ func TestNormalizeSPDX(t *testing.T) {
 
 			// Verify UUID in documentNamespace
 			namespace := normalizedSBOM["documentNamespace"].(string)
-			if tt.wantUUIDChanged {
-				// Should have changed from original
-				if namespace == tt.documentNamespace {
-					t.Error("UUID in documentNamespace was not changed")
-				}
-				// Should not contain the original UUID
-				if contains(namespace, "12345678-1234-1234-1234-123456789abc") {
-					t.Error("original UUID still present in documentNamespace")
-				}
-			} else {
-				// Should remain unchanged if no UUID was present
-				if namespace != tt.documentNamespace {
-					t.Errorf("documentNamespace changed unexpectedly: got %s, want %s", namespace, tt.documentNamespace)
-				}
+			// Should have changed from original
+			if namespace == tt.documentNamespace {
+				t.Error("UUID in documentNamespace was not changed")
+			}
+			// Should not contain the original UUID
+			if contains(namespace, "12345678-1234-1234-1234-123456789abc") {
+				t.Error("original UUID still present in documentNamespace")
 			}
 
 			// Normalize again with same timestamp - should produce same result
@@ -463,7 +455,7 @@ func TestNormalizeSPDX_MalformedSBOM(t *testing.T) {
 		},
 		{
 			name:        "missing creationInfo field",
-			sbomContent: `{"spdxVersion": "SPDX-2.3", "name": "test"}`,
+			sbomContent: `{"spdxVersion": "SPDX-2.3", "name": "test", "documentNamespace": "https://example.com/test-12345678-1234-1234-1234-123456789abc"}`,
 			wantErr:     true,
 			errContains: "creationInfo field not found",
 		},
@@ -472,6 +464,39 @@ func TestNormalizeSPDX_MalformedSBOM(t *testing.T) {
 			sbomContent: ``,
 			wantErr:     true,
 			errContains: "failed to parse SBOM",
+		},
+		{
+			name: "documentNamespace is not a string",
+			sbomContent: `{
+				"spdxVersion": "SPDX-2.3",
+				"name": "test",
+				"documentNamespace": 12345,
+				"creationInfo": {"created": "2023-01-01T00:00:00Z"}
+			}`,
+			wantErr:     true,
+			errContains: "documentNamespace field is not a string",
+		},
+		{
+			name: "documentNamespace is empty",
+			sbomContent: `{
+				"spdxVersion": "SPDX-2.3",
+				"name": "test",
+				"documentNamespace": "",
+				"creationInfo": {"created": "2023-01-01T00:00:00Z"}
+			}`,
+			wantErr:     true,
+			errContains: "documentNamespace field is empty",
+		},
+		{
+			name: "documentNamespace has no UUID",
+			sbomContent: `{
+				"spdxVersion": "SPDX-2.3",
+				"name": "test",
+				"documentNamespace": "https://example.com/no-uuid-here",
+				"creationInfo": {"created": "2023-01-01T00:00:00Z"}
+			}`,
+			wantErr:     true,
+			errContains: "no UUID found in SPDX documentNamespace",
 		},
 	}
 
