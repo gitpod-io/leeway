@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -210,22 +211,16 @@ func normalizeSPDX(sbomPath string, timestamp time.Time) error {
 	contentHash := sha256.Sum256(normalizedForHash)
 	deterministicUUID := generateDeterministicUUID(contentHash[:])
 
-	// Replace UUID in documentNamespace
+	// Replace UUID in documentNamespace using regex for robust matching
 	if originalNamespace != "" {
-		// Extract base URL and replace UUID at the end
-		lastDash := strings.LastIndex(originalNamespace, "-")
-		if lastDash > 0 {
-			// Find the start of the UUID (5 segments separated by dashes)
-			uuidStart := lastDash
-			for i := 0; i < 4; i++ {
-				uuidStart = strings.LastIndex(originalNamespace[:uuidStart], "-")
-				if uuidStart == -1 {
-					break
-				}
-			}
-			if uuidStart > 0 {
-				originalNamespace = originalNamespace[:uuidStart] + "-" + deterministicUUID
-			}
+		// UUID pattern: 8-4-4-4-12 hex digits
+		uuidPattern := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+		if uuidPattern.MatchString(originalNamespace) {
+			// Replace the UUID with our deterministic one
+			originalNamespace = uuidPattern.ReplaceAllString(originalNamespace, deterministicUUID)
+		} else {
+			// Log warning if no UUID found in namespace (unexpected format)
+			log.WithField("documentNamespace", originalNamespace).Warn("No UUID found in SPDX documentNamespace, skipping UUID normalization")
 		}
 		sbom["documentNamespace"] = originalNamespace
 	}
