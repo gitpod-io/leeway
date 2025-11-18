@@ -1934,6 +1934,12 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		return nil, err
 	}
 
+	// Get deterministic mtime for tar archives (call once, reuse throughout)
+	mtime, err := p.getDeterministicMtime()
+	if err != nil {
+		return nil, err
+	}
+
 	// Determine final exportToCache value with proper precedence
 	determineDockerExportMode(p, &cfg, buildctx)
 
@@ -2075,12 +2081,6 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			return subjects, containerDir, nil
 		}
 
-		// Get deterministic mtime for tar archives
-		mtime, err := p.getDeterministicMtime()
-		if err != nil {
-			return nil, err
-		}
-
 		// Create package with improved diagnostic logging
 		var pkgcmds [][]string
 
@@ -2133,12 +2133,6 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 		encodedMetadata := base64.StdEncoding.EncodeToString(metadataContent)
 		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", encodedMetadata, dockerMetadataFile)})
-
-		// Get deterministic mtime for tar archives
-		mtime, err := p.getDeterministicMtime()
-		if err != nil {
-			return nil, err
-		}
 
 		// Prepare for packaging
 		sourcePaths := []string{fmt.Sprintf("./%s", dockerImageNamesFiles), fmt.Sprintf("./%s", dockerMetadataFile)}
@@ -2195,12 +2189,6 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			pkgCommands = append(pkgCommands,
 				[]string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", encodedMetadata, dockerMetadataFile)},
 			)
-		}
-
-		// Get deterministic mtime for tar archives
-		mtime, err := p.getDeterministicMtime()
-		if err != nil {
-			return nil, err
 		}
 
 		// Package everything into final tar.gz
@@ -2430,6 +2418,12 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		return nil, xerrors.Errorf("package should have generic config")
 	}
 
+	// Get deterministic mtime for tar archives (call once, reuse throughout)
+	mtime, err := p.getDeterministicMtime()
+	if err != nil {
+		return nil, err
+	}
+
 	// shortcut: no command == empty package
 	if len(cfg.Commands) == 0 && len(cfg.Test) == 0 {
 		log.WithField("package", p.FullName()).Debug("package has no commands nor test - creating empty tar")
@@ -2456,12 +2450,6 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 				{"mkdir", tgt},
 				untarCmd,
 			}...)
-		}
-
-		// Get deterministic mtime for tar archives
-		mtime, err := p.getDeterministicMtime()
-		if err != nil {
-			return nil, err
 		}
 
 		// Use buildTarCommand directly which will handle compression internally
@@ -2544,12 +2532,6 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 	commands = append(commands, cfg.Commands...)
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands = append(commands, cfg.Test...)
-	}
-
-	// Get deterministic mtime for tar archives
-	mtime, err := p.getDeterministicMtime()
-	if err != nil {
-		return nil, err
 	}
 
 	return &packageBuild{
