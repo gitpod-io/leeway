@@ -2401,12 +2401,19 @@ func createDockerExportMetadata(wd, version string, cfg DockerPkgConfig) error {
 
 // getDeterministicMtime returns the Unix timestamp to use for tar --mtime flag.
 // It uses the same timestamp source as SBOM normalization for consistency.
+// If no git commit is available (e.g., in test fixtures), returns 0 (Unix epoch).
 func (p *Package) getDeterministicMtime() (int64, error) {
-	timestamp, err := getGitCommitTimestamp(context.Background(), p.C.Git().Commit)
+	commit := p.C.Git().Commit
+	if commit == "" {
+		// No git commit available (e.g., test fixtures) - use Unix epoch for determinism
+		return 0, nil
+	}
+	
+	timestamp, err := getGitCommitTimestamp(context.Background(), commit)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get deterministic timestamp for tar mtime (commit: %s): %w. "+
 			"Ensure git is available and the repository is not a shallow clone, or set SOURCE_DATE_EPOCH environment variable",
-			p.C.Git().Commit, err)
+			commit, err)
 	}
 	return timestamp.Unix(), nil
 }
