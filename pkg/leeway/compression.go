@@ -59,6 +59,9 @@ type TarOptions struct {
 
 	// ExcludePatterns specifies patterns to exclude
 	ExcludePatterns []string
+
+	// Mtime sets a deterministic modification time for all files in the archive (Unix timestamp)
+	Mtime int64
 }
 
 // WithOutputFile sets the output file path for the tar archive
@@ -114,6 +117,13 @@ func WithFilesFrom(filePath string) func(*TarOptions) {
 func WithExcludePatterns(patterns ...string) func(*TarOptions) {
 	return func(opts *TarOptions) {
 		opts.ExcludePatterns = append(opts.ExcludePatterns, patterns...)
+	}
+}
+
+// WithMtime sets a deterministic modification time for all files in the archive
+func WithMtime(timestamp int64) func(*TarOptions) {
+	return func(opts *TarOptions) {
+		opts.Mtime = timestamp
 	}
 }
 
@@ -183,6 +193,11 @@ func BuildTarCommand(options ...func(*TarOptions)) []string {
 	// Add Linux-specific optimizations
 	if runtime.GOOS == "linux" {
 		cmd = append(cmd, "--sparse")
+	}
+
+	// Add deterministic mtime if specified
+	if opts.Mtime != 0 {
+		cmd = append(cmd, fmt.Sprintf("--mtime=@%d", opts.Mtime))
 	}
 
 	// Handle files-from case specially
