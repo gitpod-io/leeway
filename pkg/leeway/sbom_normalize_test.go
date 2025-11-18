@@ -262,90 +262,133 @@ func TestNormalizeCycloneDX(t *testing.T) {
 }
 
 func TestNormalizeSPDX(t *testing.T) {
-	// Create a temporary directory for test files
-	tmpDir := t.TempDir()
-	sbomPath := filepath.Join(tmpDir, "sbom.spdx.json")
-
-	// Create a sample SPDX SBOM
-	sbom := map[string]interface{}{
-		"spdxVersion":       "SPDX-2.3",
-		"dataLicense":       "CC0-1.0",
-		"SPDXID":            "SPDXRef-DOCUMENT",
-		"name":              "test-sbom",
-		"documentNamespace": "https://example.com/test-12345678-1234-1234-1234-123456789abc",
-		"creationInfo": map[string]interface{}{
-			"created": "2023-01-01T00:00:00Z",
-			"creators": []interface{}{
-				"Tool: test-tool",
-			},
+	tests := []struct {
+		name              string
+		documentNamespace string
+		wantUUIDChanged   bool
+	}{
+		{
+			name:              "UUID at end of namespace",
+			documentNamespace: "https://example.com/test-12345678-1234-1234-1234-123456789abc",
+			wantUUIDChanged:   true,
 		},
-		"packages": []interface{}{
-			map[string]interface{}{
-				"SPDXID":  "SPDXRef-Package",
-				"name":    "test-package",
-				"version": "1.0.0",
-			},
+		{
+			name:              "UUID in middle of namespace",
+			documentNamespace: "https://example.com/12345678-1234-1234-1234-123456789abc/test",
+			wantUUIDChanged:   true,
+		},
+		{
+			name:              "multiple UUIDs (replaces all)",
+			documentNamespace: "https://example.com/12345678-1234-1234-1234-123456789abc/test-abcdef01-2345-6789-abcd-ef0123456789",
+			wantUUIDChanged:   true,
+		},
+		{
+			name:              "no UUID in namespace",
+			documentNamespace: "https://example.com/test-no-uuid",
+			wantUUIDChanged:   false,
 		},
 	}
 
-	// Write initial SBOM
-	data, err := json.MarshalIndent(sbom, "", "  ")
-	if err != nil {
-		t.Fatalf("failed to marshal test SBOM: %v", err)
-	}
-	if err := os.WriteFile(sbomPath, data, 0644); err != nil {
-		t.Fatalf("failed to write test SBOM: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a temporary directory for test files
+			tmpDir := t.TempDir()
+			sbomPath := filepath.Join(tmpDir, "sbom.spdx.json")
 
-	// Normalize with a fixed timestamp
-	fixedTime := time.Unix(1234567890, 0).UTC()
-	if err := normalizeSPDX(sbomPath, fixedTime); err != nil {
-		t.Fatalf("normalizeSPDX failed: %v", err)
-	}
+			// Create a sample SPDX SBOM
+			sbom := map[string]interface{}{
+				"spdxVersion":       "SPDX-2.3",
+				"dataLicense":       "CC0-1.0",
+				"SPDXID":            "SPDXRef-DOCUMENT",
+				"name":              "test-sbom",
+				"documentNamespace": tt.documentNamespace,
+				"creationInfo": map[string]interface{}{
+					"created": "2023-01-01T00:00:00Z",
+					"creators": []interface{}{
+						"Tool: test-tool",
+					},
+				},
+				"packages": []interface{}{
+					map[string]interface{}{
+						"SPDXID":  "SPDXRef-Package",
+						"name":    "test-package",
+						"version": "1.0.0",
+					},
+				},
+			}
 
-	// Read normalized SBOM
-	normalizedData, err := os.ReadFile(sbomPath)
-	if err != nil {
-		t.Fatalf("failed to read normalized SBOM: %v", err)
-	}
+			// Write initial SBOM
+			data, err := json.MarshalIndent(sbom, "", "  ")
+			if err != nil {
+				t.Fatalf("failed to marshal test SBOM: %v", err)
+			}
+			if err := os.WriteFile(sbomPath, data, 0644); err != nil {
+				t.Fatalf("failed to write test SBOM: %v", err)
+			}
 
-	var normalizedSBOM map[string]interface{}
-	if err := json.Unmarshal(normalizedData, &normalizedSBOM); err != nil {
-		t.Fatalf("failed to parse normalized SBOM: %v", err)
-	}
+			// Normalize with a fixed timestamp
+			fixedTime := time.Unix(1234567890, 0).UTC()
+			if err := normalizeSPDX(sbomPath, fixedTime); err != nil {
+				t.Fatalf("normalizeSPDX failed: %v", err)
+			}
 
-	// Verify timestamp was updated
-	creationInfo := normalizedSBOM["creationInfo"].(map[string]interface{})
-	created := creationInfo["created"].(string)
-	expectedTimestamp := fixedTime.Format(time.RFC3339)
-	if created != expectedTimestamp {
-		t.Errorf("expected timestamp %s, got %s", expectedTimestamp, created)
-	}
+			// Read normalized SBOM
+			normalizedData, err := os.ReadFile(sbomPath)
+			if err != nil {
+				t.Fatalf("failed to read normalized SBOM: %v", err)
+			}
 
-	// Verify UUID in documentNamespace was changed
-	namespace := normalizedSBOM["documentNamespace"].(string)
-	if namespace == "https://example.com/test-12345678-1234-1234-1234-123456789abc" {
-		t.Error("UUID in documentNamespace was not changed")
-	}
+			var normalizedSBOM map[string]interface{}
+			if err := json.Unmarshal(normalizedData, &normalizedSBOM); err != nil {
+				t.Fatalf("failed to parse normalized SBOM: %v", err)
+			}
 
-	// Normalize again with same timestamp - should produce same UUID
-	if err := normalizeSPDX(sbomPath, fixedTime); err != nil {
-		t.Fatalf("second normalizeSPDX failed: %v", err)
-	}
+			// Verify timestamp was updated
+			creationInfo := normalizedSBOM["creationInfo"].(map[string]interface{})
+			created := creationInfo["created"].(string)
+			expectedTimestamp := fixedTime.Format(time.RFC3339)
+			if created != expectedTimestamp {
+				t.Errorf("expected timestamp %s, got %s", expectedTimestamp, created)
+			}
 
-	normalizedData2, err := os.ReadFile(sbomPath)
-	if err != nil {
-		t.Fatalf("failed to read normalized SBOM (2nd time): %v", err)
-	}
+			// Verify UUID in documentNamespace
+			namespace := normalizedSBOM["documentNamespace"].(string)
+			if tt.wantUUIDChanged {
+				// Should have changed from original
+				if namespace == tt.documentNamespace {
+					t.Error("UUID in documentNamespace was not changed")
+				}
+				// Should not contain the original UUID
+				if contains(namespace, "12345678-1234-1234-1234-123456789abc") {
+					t.Error("original UUID still present in documentNamespace")
+				}
+			} else {
+				// Should remain unchanged if no UUID was present
+				if namespace != tt.documentNamespace {
+					t.Errorf("documentNamespace changed unexpectedly: got %s, want %s", namespace, tt.documentNamespace)
+				}
+			}
 
-	var normalizedSBOM2 map[string]interface{}
-	if err := json.Unmarshal(normalizedData2, &normalizedSBOM2); err != nil {
-		t.Fatalf("failed to parse normalized SBOM (2nd time): %v", err)
-	}
+			// Normalize again with same timestamp - should produce same result
+			if err := normalizeSPDX(sbomPath, fixedTime); err != nil {
+				t.Fatalf("second normalizeSPDX failed: %v", err)
+			}
 
-	namespace2 := normalizedSBOM2["documentNamespace"].(string)
-	if namespace != namespace2 {
-		t.Errorf("expected deterministic UUID, got %s and %s", namespace, namespace2)
+			normalizedData2, err := os.ReadFile(sbomPath)
+			if err != nil {
+				t.Fatalf("failed to read normalized SBOM (2nd time): %v", err)
+			}
+
+			var normalizedSBOM2 map[string]interface{}
+			if err := json.Unmarshal(normalizedData2, &normalizedSBOM2); err != nil {
+				t.Fatalf("failed to parse normalized SBOM (2nd time): %v", err)
+			}
+
+			namespace2 := normalizedSBOM2["documentNamespace"].(string)
+			if namespace != namespace2 {
+				t.Errorf("expected deterministic result, got %s and %s", namespace, namespace2)
+			}
+		})
 	}
 }
 
