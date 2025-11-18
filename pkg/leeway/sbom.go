@@ -5,12 +5,17 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 
 	"slices"
 
@@ -21,6 +26,7 @@ import (
 	"github.com/anchore/syft/syft/format/syftjson"
 	"github.com/anchore/syft/syft/sbom"
 	"github.com/anchore/syft/syft/source"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
 )
@@ -42,10 +48,10 @@ const (
 	sbomCycloneDXFileExtension = ".cdx.json"
 
 	// sbomSPDXFileExtension is the extension of the SPDX SBOM file we store in the archived build artifacts
-	sbomSPDXFileExtension = "sbom.spdx.json"
+	sbomSPDXFileExtension = ".spdx.json"
 
 	// sbomSyftFileExtension is the extension of the Syft SBOM file we store in the archived build artifacts
-	sbomSyftFileExtension = "sbom.json"
+	sbomSyftFileExtension = ".json"
 )
 
 // WorkspaceSBOM configures SBOM generation for a workspace
@@ -94,6 +100,142 @@ func GetSBOMParallelism(sbomConfig WorkspaceSBOM) int {
 	// Default to CPU core count for optimal performance based on benchmarking
 	// This applies when parallelism is nil, 0, or negative
 	return runtime.NumCPU()
+}
+
+// getGitCommitTimestamp returns the timestamp of the git commit
+func getGitCommitTimestamp(commit string) (time.Time, error) {
+	// Try SOURCE_DATE_EPOCH first (for reproducible builds)
+	if epoch := os.Getenv("SOURCE_DATE_EPOCH"); epoch != "" {
+		timestamp, err := strconv.ParseInt(epoch, 10, 64)
+		if err == nil {
+			return time.Unix(timestamp, 0).UTC(), nil
+		}
+		// Log warning but continue to git fallback
+		log.WithError(err).WithField("SOURCE_DATE_EPOCH", epoch).Warn("Invalid SOURCE_DATE_EPOCH, falling back to git commit timestamp")
+	}
+
+	// Get commit timestamp from git
+	cmd := exec.Command("git", "show", "-s", "--format=%ct", commit)
+	output, err := cmd.Output()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to get commit timestamp: %w", err)
+	}
+
+	timestamp, err := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse commit timestamp: %w", err)
+	}
+
+	return time.Unix(timestamp, 0).UTC(), nil
+}
+
+// generateDeterministicUUID generates a UUIDv5 from content
+func generateDeterministicUUID(content []byte) string {
+	// Use UUIDv5 (SHA-1 based) with the standard DNS namespace UUID.
+	// The DNS namespace (6ba7b810-9dad-11d1-80b4-00c04fd430c8) is defined in RFC 4122
+	// and commonly used for generating deterministic UUIDs from content.
+	namespace := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	
+	return uuid.NewSHA1(namespace, content).String()
+}
+
+// normalizeCycloneDX makes CycloneDX SBOM deterministic
+func normalizeCycloneDX(sbomPath string, timestamp time.Time) error {
+	data, err := os.ReadFile(sbomPath)
+	if err != nil {
+		return fmt.Errorf("failed to read SBOM: %w", err)
+	}
+
+	var sbom map[string]interface{}
+	if err := json.Unmarshal(data, &sbom); err != nil {
+		return fmt.Errorf("failed to parse SBOM: %w", err)
+	}
+
+	// Normalize timestamp
+	metadata, ok := sbom["metadata"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("metadata field not found or invalid")
+	}
+	metadata["timestamp"] = timestamp.Format(time.RFC3339)
+
+	// Generate deterministic UUID from normalized content (without timestamp and UUID)
+	// Remove non-deterministic fields before hashing
+	delete(sbom, "serialNumber")
+	normalizedForHash, err := json.Marshal(sbom)
+	if err != nil {
+		return fmt.Errorf("failed to marshal SBOM for hashing: %w", err)
+	}
+	contentHash := sha256.Sum256(normalizedForHash)
+	deterministicUUID := generateDeterministicUUID(contentHash[:])
+	sbom["serialNumber"] = fmt.Sprintf("urn:uuid:%s", deterministicUUID)
+
+	// Write back
+	normalized, err := json.MarshalIndent(sbom, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal SBOM: %w", err)
+	}
+
+	return os.WriteFile(sbomPath, normalized, 0644)
+}
+
+// normalizeSPDX makes SPDX SBOM deterministic
+func normalizeSPDX(sbomPath string, timestamp time.Time) error {
+	data, err := os.ReadFile(sbomPath)
+	if err != nil {
+		return fmt.Errorf("failed to read SBOM: %w", err)
+	}
+
+	var sbom map[string]interface{}
+	if err := json.Unmarshal(data, &sbom); err != nil {
+		return fmt.Errorf("failed to parse SBOM: %w", err)
+	}
+
+	// Normalize timestamp
+	creationInfo, ok := sbom["creationInfo"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("creationInfo field not found or invalid")
+	}
+	creationInfo["created"] = timestamp.Format(time.RFC3339)
+
+	// Generate deterministic UUID from normalized content (without timestamp and UUID)
+	// Save original namespace to extract later
+	originalNamespace, _ := sbom["documentNamespace"].(string)
+	delete(sbom, "documentNamespace")
+	
+	normalizedForHash, err := json.Marshal(sbom)
+	if err != nil {
+		return fmt.Errorf("failed to marshal SBOM for hashing: %w", err)
+	}
+	contentHash := sha256.Sum256(normalizedForHash)
+	deterministicUUID := generateDeterministicUUID(contentHash[:])
+
+	// Replace UUID in documentNamespace
+	if originalNamespace != "" {
+		// Extract base URL and replace UUID at the end
+		lastDash := strings.LastIndex(originalNamespace, "-")
+		if lastDash > 0 {
+			// Find the start of the UUID (5 segments separated by dashes)
+			uuidStart := lastDash
+			for i := 0; i < 4; i++ {
+				uuidStart = strings.LastIndex(originalNamespace[:uuidStart], "-")
+				if uuidStart == -1 {
+					break
+				}
+			}
+			if uuidStart > 0 {
+				originalNamespace = originalNamespace[:uuidStart] + "-" + deterministicUUID
+			}
+		}
+		sbom["documentNamespace"] = originalNamespace
+	}
+
+	// Write back
+	normalized, err := json.MarshalIndent(sbom, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal SBOM: %w", err)
+	}
+
+	return os.WriteFile(sbomPath, normalized, 0644)
 }
 
 // writeSBOM generates Software Bill of Materials (SBOM) for a package in multiple formats.
@@ -172,6 +314,32 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 
 		buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "SBOM generated successfully (format: %s, file: %s)\n", format, fn))
 	}
+
+	// Normalize SBOMs after generation
+	timestamp, err := getGitCommitTimestamp(p.C.Git().Commit)
+	if err != nil {
+		return fmt.Errorf("failed to get deterministic timestamp for SBOM normalization (commit: %s): %w. "+
+			"Ensure git is available and the repository is not a shallow clone, or set SOURCE_DATE_EPOCH environment variable", 
+			p.C.Git().Commit, err)
+	}
+
+	// Normalize CycloneDX
+	cycloneDXPath := filepath.Join(builddir, sbomBaseFilename+sbomCycloneDXFileExtension)
+	if err := normalizeCycloneDX(cycloneDXPath, timestamp); err != nil {
+		buildctx.Reporter.PackageBuildLog(p, true,
+			[]byte(fmt.Sprintf("Warning: failed to normalize CycloneDX SBOM: %v\n", err)))
+	}
+
+	// Normalize SPDX
+	spdxPath := filepath.Join(builddir, sbomBaseFilename+sbomSPDXFileExtension)
+	if err := normalizeSPDX(spdxPath, timestamp); err != nil {
+		buildctx.Reporter.PackageBuildLog(p, true,
+			[]byte(fmt.Sprintf("Warning: failed to normalize SPDX SBOM: %v\n", err)))
+	}
+
+	// Note: sbom.json (Syft JSON format) is already deterministic (no timestamp field, no random UUIDs).
+	// CycloneDX and SPDX formats require normalization because Syft generates them with non-deterministic
+	// timestamps and random UUIDs. See https://github.com/anchore/syft/issues/3931 for upstream support.
 
 	return nil
 }
