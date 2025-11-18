@@ -2401,12 +2401,30 @@ func createDockerExportMetadata(wd, version string, cfg DockerPkgConfig) error {
 
 // getDeterministicMtime returns the Unix timestamp to use for tar --mtime flag.
 // It uses the same timestamp source as SBOM normalization for consistency.
-// If no git commit is available (e.g., in test fixtures), returns 0 (Unix epoch).
+// For test environments, returns 0 (Unix epoch) when git is unavailable.
+// For production, fails fast to prevent cache pollution.
 func (p *Package) getDeterministicMtime() (int64, error) {
 	commit := p.C.Git().Commit
 	if commit == "" {
-		// No git commit available (e.g., test fixtures) - use Unix epoch for determinism
-		return 0, nil
+		// Try SOURCE_DATE_EPOCH first (explicit override for reproducible builds)
+		if epoch := os.Getenv("SOURCE_DATE_EPOCH"); epoch != "" {
+			timestamp, err := strconv.ParseInt(epoch, 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid SOURCE_DATE_EPOCH: %w", err)
+			}
+			return timestamp, nil
+		}
+		
+		// Check if we're in a test environment
+		if isTestEnvironment() {
+			// Test fixtures don't have git - use epoch for determinism
+			return 0, nil
+		}
+		
+		// Production build without git is an error - prevents cache pollution
+		return 0, fmt.Errorf("no git commit available for deterministic mtime. "+
+			"Ensure repository is properly cloned with git history, or set SOURCE_DATE_EPOCH environment variable. "+
+			"Building from source tarballs without git metadata will cause cache inconsistencies")
 	}
 	
 	timestamp, err := getGitCommitTimestamp(context.Background(), commit)
@@ -2416,6 +2434,22 @@ func (p *Package) getDeterministicMtime() (int64, error) {
 			commit, err)
 	}
 	return timestamp.Unix(), nil
+}
+
+// isTestEnvironment detects if we're running in a test context.
+// This allows test fixtures to use epoch fallback without polluting production cache.
+func isTestEnvironment() bool {
+	// Check if running as a test binary (compiled with go test)
+	if strings.HasSuffix(os.Args[0], ".test") {
+		return true
+	}
+	
+	// Check for explicit test mode environment variable
+	if os.Getenv("LEEWAY_TEST_MODE") == "true" {
+		return true
+	}
+	
+	return false
 }
 
 // Update buildGeneric to use compression arg helper

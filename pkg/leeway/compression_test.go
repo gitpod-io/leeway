@@ -1,6 +1,7 @@
 package leeway
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -161,5 +162,33 @@ func TestBuildTarCommand_MtimeWithOtherOptions(t *testing.T) {
 		if !strings.Contains(cmdStr, elem) {
 			t.Errorf("BuildTarCommand() missing expected element: %s\nFull command: %s", elem, cmdStr)
 		}
+	}
+}
+
+func TestIsTestEnvironment(t *testing.T) {
+	// This test itself should be detected as a test environment
+	if !isTestEnvironment() {
+		t.Error("isTestEnvironment() should return true when running in test binary")
+	}
+	
+	// Test with explicit environment variable
+	originalEnv := os.Getenv("LEEWAY_TEST_MODE")
+	defer func() {
+		if originalEnv != "" {
+			os.Setenv("LEEWAY_TEST_MODE", originalEnv)
+		} else {
+			os.Unsetenv("LEEWAY_TEST_MODE")
+		}
+	}()
+	
+	os.Setenv("LEEWAY_TEST_MODE", "true")
+	if !isTestEnvironment() {
+		t.Error("isTestEnvironment() should return true when LEEWAY_TEST_MODE=true")
+	}
+	
+	os.Setenv("LEEWAY_TEST_MODE", "false")
+	// Should still be true because we're in a test binary
+	if !isTestEnvironment() {
+		t.Error("isTestEnvironment() should return true when running in test binary (even if LEEWAY_TEST_MODE=false)")
 	}
 }
