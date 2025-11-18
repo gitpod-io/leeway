@@ -382,7 +382,7 @@ func TestArtifactUploader_ConcurrentUploads(t *testing.T) {
 }
 
 // TestArtifactUploader_SkipsExistingArtifacts tests that existing artifacts are not re-uploaded
-// and attestation upload is also skipped to prevent overwriting existing attestations
+// and attestation upload is also skipped when both artifact and attestation exist
 func TestArtifactUploader_SkipsExistingArtifacts(t *testing.T) {
 	tmpDir := t.TempDir()
 	artifactPath := filepath.Join(tmpDir, "existing.tar.gz")
@@ -395,8 +395,10 @@ func TestArtifactUploader_SkipsExistingArtifacts(t *testing.T) {
 		uploadCalls:   make(map[string]int),
 	}
 
-	// Pre-populate the cache with the artifact (simulating it already exists)
+	// Pre-populate the cache with both artifact and attestation (simulating they already exist)
+	existingAttestation := []byte(`{"existing":"attestation"}`)
 	mockCache.uploadedFiles["existing.tar.gz"] = artifactContent
+	mockCache.uploadedFiles["existing.tar.gz.att"] = existingAttestation
 
 	uploader := NewArtifactUploader(mockCache)
 	attestation := []byte(`{"test":"attestation"}`)
@@ -407,10 +409,43 @@ func TestArtifactUploader_SkipsExistingArtifacts(t *testing.T) {
 	// CRITICAL: Verify that UploadFile was NOT called for the artifact
 	assert.Equal(t, 0, mockCache.uploadCalls["existing.tar.gz"], "Artifact should not be uploaded when it already exists")
 
-	// CRITICAL: Verify that the attestation was NOT uploaded (FIXED BEHAVIOR)
-	// This prevents overwriting the existing artifact's attestation with a potentially different one
-	assert.Equal(t, 0, mockCache.uploadCalls["existing.tar.gz.att"], "Attestation should NOT be uploaded when artifact already exists")
-	assert.NotContains(t, mockCache.uploadedFiles, "existing.tar.gz.att", "Attestation should NOT be in cache")
+	// CRITICAL: Verify that the attestation was NOT uploaded when both exist
+	assert.Equal(t, 0, mockCache.uploadCalls["existing.tar.gz.att"], "Attestation should NOT be uploaded when both artifact and attestation exist")
+	
+	// Verify existing attestation is preserved
+	assert.Equal(t, existingAttestation, mockCache.uploadedFiles["existing.tar.gz.att"], "Existing attestation should be preserved")
+}
+
+// TestArtifactUploader_UploadsAttestationWhenMissing tests that attestation is uploaded
+// when artifact exists but attestation is missing (e.g., old build before SLSA)
+func TestArtifactUploader_UploadsAttestationWhenMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	artifactPath := filepath.Join(tmpDir, "existing.tar.gz")
+	artifactContent := []byte("existing artifact content")
+	err := os.WriteFile(artifactPath, artifactContent, 0644)
+	require.NoError(t, err)
+
+	mockCache := &mockRemoteCacheUpload{
+		uploadedFiles: make(map[string][]byte),
+		uploadCalls:   make(map[string]int),
+	}
+
+	// Pre-populate the cache with artifact only (no attestation - simulating old build)
+	mockCache.uploadedFiles["existing.tar.gz"] = artifactContent
+
+	uploader := NewArtifactUploader(mockCache)
+	attestation := []byte(`{"test":"attestation"}`)
+
+	err = uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestation)
+	require.NoError(t, err)
+
+	// Verify that artifact was NOT re-uploaded
+	assert.Equal(t, 0, mockCache.uploadCalls["existing.tar.gz"], "Artifact should not be re-uploaded when it already exists")
+
+	// CRITICAL: Verify that attestation WAS uploaded (missing attestation case)
+	assert.Equal(t, 1, mockCache.uploadCalls["existing.tar.gz.att"], "Attestation should be uploaded when missing")
+	assert.Contains(t, mockCache.uploadedFiles, "existing.tar.gz.att", "Attestation should be in cache")
+	assert.Equal(t, attestation, mockCache.uploadedFiles["existing.tar.gz.att"], "Attestation content should match")
 }
 
 // TestArtifactUploader_UploadsNewArtifacts tests that new artifacts are uploaded
@@ -459,10 +494,13 @@ func TestArtifactUploader_SimulatesDownloadedArtifactWorkflow(t *testing.T) {
 		uploadCalls:   make(map[string]int),
 	}
 
-	// Step 1: Simulate build job uploading artifact
+	// Step 1: Simulate build job uploading artifact and attestation
 	buildArtifactContent := []byte("artifact built by build job")
+	buildAttestation := []byte(`{"build":"attestation"}`)
 	mockCache.uploadedFiles["downloaded.tar.gz"] = buildArtifactContent
+	mockCache.uploadedFiles["downloaded.tar.gz.att"] = buildAttestation
 	mockCache.uploadCalls["downloaded.tar.gz"] = 1 // Track that build job uploaded it
+	mockCache.uploadCalls["downloaded.tar.gz.att"] = 1
 
 	// Step 2: Simulate sign job downloading artifact (creates local file)
 	downloadedArtifactPath := filepath.Join(tmpDir, "downloaded.tar.gz")
@@ -481,12 +519,13 @@ func TestArtifactUploader_SimulatesDownloadedArtifactWorkflow(t *testing.T) {
 	assert.Equal(t, 1, mockCache.uploadCalls["downloaded.tar.gz"], 
 		"Downloaded artifact should NOT be re-uploaded by sign job")
 
-	// CRITICAL: Attestation should NOT be uploaded
-	// This prevents overwriting the existing artifact's attestation
-	assert.Equal(t, 0, mockCache.uploadCalls["downloaded.tar.gz.att"], 
-		"Attestation should NOT be uploaded when artifact already exists")
-	assert.NotContains(t, mockCache.uploadedFiles, "downloaded.tar.gz.att", 
-		"Attestation should NOT be in cache")
+	// CRITICAL: Attestation should NOT be uploaded when both exist
+	assert.Equal(t, 1, mockCache.uploadCalls["downloaded.tar.gz.att"], 
+		"Attestation should NOT be uploaded when both artifact and attestation exist")
+	
+	// Verify existing attestation is preserved
+	assert.Equal(t, buildAttestation, mockCache.uploadedFiles["downloaded.tar.gz.att"], 
+		"Existing attestation should be preserved")
 
 	// Artifact content should remain unchanged (not overwritten)
 	assert.Equal(t, buildArtifactContent, mockCache.uploadedFiles["downloaded.tar.gz"], 
@@ -629,6 +668,56 @@ type mockRemoteCacheUploadWithHasFileError struct {
 func (m *mockRemoteCacheUploadWithHasFileError) HasFile(ctx context.Context, key string) (bool, error) {
 	if m.hasFileError != nil {
 		return false, m.hasFileError
+	}
+	return m.mockRemoteCacheUpload.HasFile(ctx, key)
+}
+
+// TestArtifactUploader_AttestationCheckError tests fallback behavior when attestation HasFile check fails
+func TestArtifactUploader_AttestationCheckError(t *testing.T) {
+	tmpDir := t.TempDir()
+	artifactPath := filepath.Join(tmpDir, "test.tar.gz")
+	artifactContent := []byte("test content")
+	err := os.WriteFile(artifactPath, artifactContent, 0644)
+	require.NoError(t, err)
+
+	// Create a mock where artifact exists but attestation check fails
+	mockCache := &mockRemoteCacheUploadWithSelectiveError{
+		mockRemoteCacheUpload: mockRemoteCacheUpload{
+			uploadedFiles: map[string][]byte{
+				"test.tar.gz": artifactContent, // Artifact exists
+			},
+			uploadCalls: make(map[string]int),
+		},
+		errorKeys: map[string]error{
+			"test.tar.gz.att": fmt.Errorf("S3 connection failed for attestation check"),
+		},
+	}
+
+	uploader := NewArtifactUploader(mockCache)
+	attestation := []byte(`{"test":"attestation"}`)
+
+	// Should proceed with attestation upload despite HasFile error (safe fallback)
+	err = uploader.UploadArtifactWithAttestation(context.Background(), artifactPath, attestation)
+	require.NoError(t, err)
+
+	// Artifact should not be re-uploaded
+	assert.Equal(t, 0, mockCache.uploadCalls["test.tar.gz"], 
+		"Artifact should not be uploaded when it exists")
+	
+	// Attestation should be uploaded (fallback behavior assumes it doesn't exist)
+	assert.Equal(t, 1, mockCache.uploadCalls["test.tar.gz.att"], 
+		"Attestation should be uploaded when HasFile check fails")
+}
+
+// mockRemoteCacheUploadWithSelectiveError allows different errors for different keys
+type mockRemoteCacheUploadWithSelectiveError struct {
+	mockRemoteCacheUpload
+	errorKeys map[string]error
+}
+
+func (m *mockRemoteCacheUploadWithSelectiveError) HasFile(ctx context.Context, key string) (bool, error) {
+	if err, exists := m.errorKeys[key]; exists {
+		return false, err
 	}
 	return m.mockRemoteCacheUpload.HasFile(ctx, key)
 }
