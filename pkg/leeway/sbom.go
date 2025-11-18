@@ -102,8 +102,9 @@ func GetSBOMParallelism(sbomConfig WorkspaceSBOM) int {
 	return runtime.NumCPU()
 }
 
-// getGitCommitTimestamp returns the timestamp of the git commit
-func getGitCommitTimestamp(commit string) (time.Time, error) {
+// getGitCommitTimestamp returns the timestamp of the git commit.
+// The context allows for cancellation of the git command if the build is cancelled.
+func getGitCommitTimestamp(ctx context.Context, commit string) (time.Time, error) {
 	// Try SOURCE_DATE_EPOCH first (for reproducible builds)
 	if epoch := os.Getenv("SOURCE_DATE_EPOCH"); epoch != "" {
 		timestamp, err := strconv.ParseInt(epoch, 10, 64)
@@ -114,8 +115,8 @@ func getGitCommitTimestamp(commit string) (time.Time, error) {
 		log.WithError(err).WithField("SOURCE_DATE_EPOCH", epoch).Warn("Invalid SOURCE_DATE_EPOCH, falling back to git commit timestamp")
 	}
 
-	// Get commit timestamp from git
-	cmd := exec.Command("git", "show", "-s", "--format=%ct", commit)
+	// Get commit timestamp from git with context support for cancellation
+	cmd := exec.CommandContext(ctx, "git", "show", "-s", "--format=%ct", commit)
 	output, err := cmd.Output()
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to get commit timestamp: %w", err)
@@ -316,7 +317,7 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 	}
 
 	// Normalize SBOMs after generation
-	timestamp, err := getGitCommitTimestamp(p.C.Git().Commit)
+	timestamp, err := getGitCommitTimestamp(context.Background(), p.C.Git().Commit)
 	if err != nil {
 		return fmt.Errorf("failed to get deterministic timestamp for SBOM normalization (commit: %s): %w. "+
 			"Ensure git is available and the repository is not a shallow clone, or set SOURCE_DATE_EPOCH environment variable", 

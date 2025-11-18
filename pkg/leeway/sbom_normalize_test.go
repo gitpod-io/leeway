@@ -1,6 +1,7 @@
 package leeway
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -110,7 +111,7 @@ func TestGetGitCommitTimestamp_SourceDateEpoch(t *testing.T) {
 			}
 
 			// Use HEAD as commit (should exist in test environment)
-			timestamp, err := getGitCommitTimestamp("HEAD")
+			timestamp, err := getGitCommitTimestamp(context.Background(), "HEAD")
 
 			if tt.wantErr && err == nil {
 				t.Error("expected error, got nil")
@@ -130,7 +131,8 @@ func TestGetGitCommitTimestamp_SourceDateEpoch(t *testing.T) {
 func TestGetGitCommitTimestamp_GitCommit(t *testing.T) {
 	// This test requires being in a git repository
 	// Use HEAD as a known commit
-	timestamp, err := getGitCommitTimestamp("HEAD")
+	ctx := context.Background()
+	timestamp, err := getGitCommitTimestamp(ctx, "HEAD")
 	if err != nil {
 		t.Skipf("skipping test: not in a git repository or git not available: %v", err)
 	}
@@ -146,12 +148,28 @@ func TestGetGitCommitTimestamp_GitCommit(t *testing.T) {
 	}
 
 	// Verify deterministic: calling twice should return same result
-	timestamp2, err := getGitCommitTimestamp("HEAD")
+	timestamp2, err := getGitCommitTimestamp(ctx, "HEAD")
 	if err != nil {
 		t.Fatalf("second call failed: %v", err)
 	}
 	if !timestamp.Equal(timestamp2) {
 		t.Errorf("expected deterministic result, got %v and %v", timestamp, timestamp2)
+	}
+}
+
+func TestGetGitCommitTimestamp_ContextCancellation(t *testing.T) {
+	// Create a cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := getGitCommitTimestamp(ctx, "HEAD")
+	if err == nil {
+		t.Error("expected error with cancelled context, got nil")
+	}
+
+	// Verify the error is related to context cancellation
+	if !contains(err.Error(), "context canceled") && !contains(err.Error(), "failed to get commit timestamp") {
+		t.Errorf("expected context cancellation error, got: %v", err)
 	}
 }
 
