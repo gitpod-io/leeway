@@ -99,23 +99,32 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 			"artifact":     artifactPath,
 			"artifact_key": artifactKey,
 		}).Info("Artifact already exists in remote cache, skipping upload")
-	} else {
-		// Upload artifact only if it doesn't exist
-		if err := u.remoteCache.UploadFile(ctx, artifactPath, artifactKey); err != nil {
-			return fmt.Errorf("failed to upload artifact: %w", err)
-		}
+
+		// Also skip attestation upload - the existing artifact already has an attestation
+		// Uploading a new attestation for a different local artifact would cause verification failures
 		log.WithFields(log.Fields{
 			"artifact":     artifactPath,
 			"artifact_key": artifactKey,
-		}).Info("Successfully uploaded artifact to remote cache")
+			"att_key":      attestationKey,
+		}).Info("Skipping attestation upload (artifact already exists with attestation)")
+		return nil
 	}
+
+	// Upload artifact (only if it doesn't exist)
+	if err := u.remoteCache.UploadFile(ctx, artifactPath, artifactKey); err != nil {
+		return fmt.Errorf("failed to upload artifact: %w", err)
+	}
+	log.WithFields(log.Fields{
+		"artifact":     artifactPath,
+		"artifact_key": artifactKey,
+	}).Info("Successfully uploaded artifact to remote cache")
 
 	// Check context between uploads
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context cancelled between uploads: %w", err)
 	}
 
-	// Always upload attestation file (it's new)
+	// Upload attestation file (only if artifact was also uploaded)
 	if err := u.remoteCache.UploadFile(ctx, attestationPath, attestationKey); err != nil {
 		return fmt.Errorf("failed to upload .att file: %w", err)
 	}
