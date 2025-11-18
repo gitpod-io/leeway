@@ -1518,6 +1518,12 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		Commands: commands,
 	}
 
+	// Get deterministic mtime for tar archives
+	mtime, err := p.getDeterministicMtime()
+	if err != nil {
+		return nil, err
+	}
+
 	// let's prepare for packaging
 	var (
 		pkgCommands [][]string
@@ -1546,6 +1552,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 				WithOutputFile(result),
 				WithWorkingDir("_mirror"),
 				WithCompression(!buildctx.DontCompress),
+				WithMtime(mtime),
 			),
 		}...)
 		resultDir = "_mirror"
@@ -1574,6 +1581,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 				WithOutputFile(result),
 				WithWorkingDir("_pkg"),
 				WithCompression(!buildctx.DontCompress),
+				WithMtime(mtime),
 			),
 		}...)
 		resultDir = "_pkg"
@@ -1581,6 +1589,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		pkgCommands = append(pkgCommands, BuildTarCommand(
 			WithOutputFile(result),
 			WithCompression(!buildctx.DontCompress),
+			WithMtime(mtime),
 		))
 	} else {
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
@@ -1760,11 +1769,18 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], buildCmd)
 	}
 
+	// Get deterministic mtime for tar archives
+	mtime, err := p.getDeterministicMtime()
+	if err != nil {
+		return nil, err
+	}
+
 	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], []string{"rm", "-rf", "_deps"})
 	commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage],
 		BuildTarCommand(
 			WithOutputFile(result),
 			WithCompression(!buildctx.DontCompress),
+			WithMtime(mtime),
 		),
 	)
 	if !cfg.DontTest && !buildctx.DontTest {
@@ -2059,6 +2075,12 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			return subjects, containerDir, nil
 		}
 
+		// Get deterministic mtime for tar archives
+		mtime, err := p.getDeterministicMtime()
+		if err != nil {
+			return nil, err
+		}
+
 		// Create package with improved diagnostic logging
 		var pkgcmds [][]string
 
@@ -2078,6 +2100,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			WithWorkingDir(containerDir),
 			WithSourcePaths(sourcePaths...),
 			WithCompression(!buildctx.DontCompress),
+			WithMtime(mtime),
 		))
 
 		commands[PackageBuildPhasePackage] = pkgcmds
@@ -2111,6 +2134,12 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		encodedMetadata := base64.StdEncoding.EncodeToString(metadataContent)
 		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", encodedMetadata, dockerMetadataFile)})
 
+		// Get deterministic mtime for tar archives
+		mtime, err := p.getDeterministicMtime()
+		if err != nil {
+			return nil, err
+		}
+
 		// Prepare for packaging
 		sourcePaths := []string{fmt.Sprintf("./%s", dockerImageNamesFiles), fmt.Sprintf("./%s", dockerMetadataFile)}
 		if p.C.W.Provenance.Enabled {
@@ -2126,6 +2155,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			WithOutputFile(result),
 			WithSourcePaths(sourcePaths...),
 			WithCompression(!buildctx.DontCompress),
+			WithMtime(mtime),
 		)
 		pkgCommands = append(pkgCommands, archiveCmd)
 
@@ -2167,6 +2197,12 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			)
 		}
 
+		// Get deterministic mtime for tar archives
+		mtime, err := p.getDeterministicMtime()
+		if err != nil {
+			return nil, err
+		}
+
 		// Package everything into final tar.gz
 		sourcePaths := []string{"./image.tar", fmt.Sprintf("./%s", dockerImageNamesFiles), "./docker-export-metadata.json"}
 		if len(cfg.Metadata) > 0 {
@@ -2187,6 +2223,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			WithOutputFile(result),
 			WithSourcePaths(sourcePaths...),
 			WithCompression(!buildctx.DontCompress),
+			WithMtime(mtime),
 		)
 		pkgCommands = append(pkgCommands, archiveCmd)
 
@@ -2374,6 +2411,18 @@ func createDockerExportMetadata(wd, version string, cfg DockerPkgConfig) error {
 	return nil
 }
 
+// getDeterministicMtime returns the Unix timestamp to use for tar --mtime flag.
+// It uses the same timestamp source as SBOM normalization for consistency.
+func (p *Package) getDeterministicMtime() (int64, error) {
+	timestamp, err := getGitCommitTimestamp(p.C.Git().Commit)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get deterministic timestamp for tar mtime (commit: %s): %w. "+
+			"Ensure git is available and the repository is not a shallow clone, or set SOURCE_DATE_EPOCH environment variable",
+			p.C.Git().Commit, err)
+	}
+	return timestamp.Unix(), nil
+}
+
 // Update buildGeneric to use compression arg helper
 func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *packageBuild, err error) {
 	cfg, ok := p.Config.(GenericPkgConfig)
@@ -2409,6 +2458,12 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 			}...)
 		}
 
+		// Get deterministic mtime for tar archives
+		mtime, err := p.getDeterministicMtime()
+		if err != nil {
+			return nil, err
+		}
+
 		// Use buildTarCommand directly which will handle compression internally
 		var tarCmd []string
 		if p.C.W.Provenance.Enabled || p.C.W.SBOM.Enabled {
@@ -2428,6 +2483,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 				WithOutputFile(result),
 				WithSourcePaths(sourcePaths...),
 				WithCompression(!buildctx.DontCompress),
+				WithMtime(mtime),
 			)
 			return &packageBuild{
 				Commands: map[PackageBuildPhase][][]string{
@@ -2450,6 +2506,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		tarCmd = BuildTarCommand(
 			WithFilesFrom("/dev/null"),
 			WithCompression(!buildctx.DontCompress),
+			WithMtime(mtime),
 		)
 
 		return &packageBuild{
@@ -2489,6 +2546,12 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		commands = append(commands, cfg.Test...)
 	}
 
+	// Get deterministic mtime for tar archives
+	mtime, err := p.getDeterministicMtime()
+	if err != nil {
+		return nil, err
+	}
+
 	return &packageBuild{
 		Commands: map[PackageBuildPhase][][]string{
 			PackageBuildPhaseBuild: commands,
@@ -2496,6 +2559,7 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 				BuildTarCommand(
 					WithOutputFile(result),
 					WithCompression(!buildctx.DontCompress),
+					WithMtime(mtime),
 				),
 			},
 		},
