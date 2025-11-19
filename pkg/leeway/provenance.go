@@ -1,9 +1,7 @@
 package leeway
 
 import (
-	"archive/tar"
 	"bufio"
-	"compress/gzip"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -37,20 +35,56 @@ const (
 	// provenanceProcessVersion is the version of the provenance generating process.
 	// If provenance is enabled in a workspace, this version becomes part of the manifest,
 	// hence changing it will invalidate previously built packages.
-	provenanceProcessVersion = 3
+	//
+	// Version 4: Provenance stored exclusively outside tar.gz as <artifact>.provenance.jsonl
+	//            Removed backward compatibility fallback to read from inside tar.gz.
+	//            This ensures artifacts remain deterministic and cache invalidation works correctly.
+	provenanceProcessVersion = 4
 
 	// ProvenanceBuilderID is the prefix we use as Builder ID when issuing provenance
 	ProvenanceBuilderID = "github.com/gitpod-io/leeway"
 )
 
-// writeProvenance produces a provenanceWriter which ought to be used during package builds
+// writeProvenance produces a provenance bundle and writes it alongside the artifact in the cache.
+// The provenance is written to <artifact>.provenance.jsonl (outside the tar.gz) to maintain artifact determinism.
+// This function should be called AFTER the artifact tar.gz has been created.
 func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjects []in_toto.Subject, buildStarted time.Time) (err error) {
 	if !p.C.W.Provenance.Enabled {
 		return nil
 	}
 
-	fn := filepath.Join(builddir, provenanceBundleFilename)
-	f, err := os.OpenFile(fn, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	// Get the artifact path in cache
+	// Location() returns (path, exists) - during build it returns .tar path even if file doesn't exist yet
+	artifactPath, exists := buildctx.LocalCache.Location(p)
+	if artifactPath == "" {
+		return fmt.Errorf("cannot determine cache location for %s", p.FullName())
+	}
+
+	// Determine the actual artifact path (.tar.gz)
+	// Location() returns .tar.gz if it exists, otherwise .tar
+	if !exists {
+		// Artifact doesn't exist yet - this shouldn't happen as provenance should be written after packaging
+		log.WithField("package", p.FullName()).WithField("path", artifactPath).Warn("Writing provenance before artifact exists")
+	}
+	
+	// Ensure we use the .tar.gz extension
+	if strings.HasSuffix(artifactPath, ".tar") && !strings.HasSuffix(artifactPath, ".tar.gz") {
+		artifactPath = artifactPath + ".gz"
+	} else if !strings.HasSuffix(artifactPath, ".tar.gz") && !strings.HasSuffix(artifactPath, ".tar") {
+		artifactPath = artifactPath + ".tar.gz"
+	}
+
+	// Write provenance alongside artifact: <artifact>.provenance.jsonl
+	// This keeps provenance metadata separate from the artifact for determinism
+	provenancePath := artifactPath + ".provenance.jsonl"
+	
+	// Ensure directory exists
+	dir := filepath.Dir(provenancePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("cannot create provenance directory for %s: %w", p.FullName(), err)
+	}
+
+	f, err := os.OpenFile(provenancePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("cannot write provenance for %s: %w", p.FullName(), err)
 	}
@@ -74,7 +108,7 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 		}
 	}
 
-	log.WithField("fn", fn).WithField("package", p.FullName()).Debug("wrote provenance bundle")
+	log.WithField("path", provenancePath).WithField("package", p.FullName()).Debug("wrote provenance bundle to cache (outside tar.gz)")
 
 	return nil
 }
@@ -102,60 +136,37 @@ func (p *Package) getDependenciesProvenanceBundles(buildctx *buildContext, dst *
 
 var ErrNoAttestationBundle error = fmt.Errorf("no attestation bundle found")
 
-// AccessAttestationBundleInCachedArchive provides access to the attestation bundle in a cached build artifact.
-// If no such bundle exists, ErrNoAttestationBundle is returned.
+// fileExists checks if a file exists and is not a directory
+func fileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+// AccessAttestationBundleInCachedArchive provides access to the attestation bundle for a cached build artifact.
+// Reads from <artifact>.provenance.jsonl (outside tar.gz).
+// If no bundle exists, ErrNoAttestationBundle is returned.
 func AccessAttestationBundleInCachedArchive(fn string, handler func(bundle io.Reader) error) (err error) {
 	defer func() {
 		if err != nil {
-			err = fmt.Errorf("error extracting provenance bundle from %s: %w", fn, err)
+			err = fmt.Errorf("error accessing provenance bundle for %s: %w", fn, err)
 		}
 	}()
 
-	f, err := os.Open(fn)
+	provenancePath := fn + ".provenance.jsonl"
+	if !fileExists(provenancePath) {
+		return ErrNoAttestationBundle
+	}
+
+	f, err := os.Open(provenancePath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	g, err := gzip.NewReader(f)
-	if err != nil {
-		return err
-	}
-	defer g.Close()
-
-	var bundleFound bool
-	a := tar.NewReader(g)
-	var hdr *tar.Header
-	for {
-		hdr, err = a.Next()
-		if err == io.EOF {
-			err = nil
-			break
-		}
-		if err != nil {
-			break
-		}
-
-		if hdr.Name != "./"+provenanceBundleFilename && hdr.Name != "package/"+provenanceBundleFilename {
-			continue
-		}
-
-		err = handler(io.LimitReader(a, hdr.Size))
-		if err != nil {
-			return err
-		}
-		bundleFound = true
-		break
-	}
-	if err != nil {
-		return
-	}
-
-	if !bundleFound {
-		return ErrNoAttestationBundle
-	}
-
-	return nil
+	return handler(f)
 }
 
 func (p *Package) produceSLSAEnvelope(buildctx *buildContext, subjects []in_toto.Subject, buildStarted time.Time) (res *provenance.Envelope, err error) {
