@@ -24,7 +24,7 @@ func TestAccessAttestationBundleInCachedArchive(t *testing.T) {
 			name: "provenance exists outside tar.gz",
 			setupFunc: func(t *testing.T, dir string) string {
 				artifactPath := filepath.Join(dir, "test.tar.gz")
-				provenancePath := artifactPath + ".provenance.jsonl"
+				provenancePath := artifactPath + leeway.ProvenanceBundleFilename
 				
 				// Create empty artifact
 				if err := os.WriteFile(artifactPath, []byte("fake tar.gz"), 0644); err != nil {
@@ -154,7 +154,7 @@ func TestProvenanceNotInTarGz(t *testing.T) {
 func TestProvenanceOutsideTarGz(t *testing.T) {
 	tmpDir := t.TempDir()
 	artifactPath := filepath.Join(tmpDir, "test.tar.gz")
-	provenancePath := artifactPath + ".provenance.jsonl"
+	provenancePath := artifactPath + leeway.ProvenanceBundleFilename
 
 	// Create a simple tar.gz WITHOUT provenance inside
 	f, err := os.Create(artifactPath)
@@ -267,7 +267,7 @@ func TestProvenancePathExtensionHandling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// The provenance path is always <artifact>.provenance.jsonl
 			// This is handled by AccessAttestationBundleInCachedArchive
-			expectedPath := tt.artifactPath + ".provenance.jsonl"
+			expectedPath := tt.artifactPath + leeway.ProvenanceBundleFilename
 			if expectedPath != tt.expectedProvPath {
 				t.Errorf("Expected provenance path %q, got %q", tt.expectedProvPath, expectedPath)
 			}
@@ -281,7 +281,7 @@ func TestProvenanceDirectoryCreation(t *testing.T) {
 	// Create nested directory structure
 	nestedDir := filepath.Join(tmpDir, "cache", "subdir", "nested")
 	artifactPath := filepath.Join(nestedDir, "test.tar.gz")
-	provenancePath := artifactPath + ".provenance.jsonl"
+	provenancePath := artifactPath + leeway.ProvenanceBundleFilename
 
 	// Directory doesn't exist yet
 	if _, err := os.Stat(nestedDir); !os.IsNotExist(err) {
