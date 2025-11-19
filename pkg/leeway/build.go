@@ -2590,6 +2590,18 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 
 	env := append(os.Environ(), p.Environment...)
 	env = append(env, fmt.Sprintf("%s=%s", EnvvarWorkspaceRoot, p.C.W.Origin))
+	
+	// Export SOURCE_DATE_EPOCH for reproducible builds
+	// BuildKit (Docker >= v23.0) automatically uses this for deterministic image timestamps
+	mtime, err := p.getDeterministicMtime()
+	if err == nil {
+		env = append(env, fmt.Sprintf("SOURCE_DATE_EPOCH=%d", mtime))
+	}
+	
+	// Enable BuildKit to ensure SOURCE_DATE_EPOCH is used for Docker builds
+	// BuildKit is default since Docker v23.0, but we set it explicitly for older versions
+	env = append(env, "DOCKER_BUILDKIT=1")
+	
 	for _, cmd := range commands {
 		if len(cmd) == 0 {
 			continue // Skip empty commands

@@ -297,6 +297,42 @@ Leeway supports built-in build arguments:
 - `__git_commit` contains the current Git commit if the build is executed from within a Git working copy. If this variable is used and the build is not executed from within a Git working copy the variable resolution will fail. If the package sources contain uncommitted files/directories, then `__pkg_version` will be appended to `__git_commit`
 - `__git_commit_short`  shortened version of `__git_commit` to the first 7 characters.
 
+## Environment Variables
+
+Build commands have access to the following environment variables:
+
+### `SOURCE_DATE_EPOCH`
+
+Unix timestamp for reproducible builds. Contains the git commit timestamp (or value from `SOURCE_DATE_EPOCH` environment variable if set before running leeway).
+
+This enables deterministic timestamps without requiring .git directory, which is useful in CI environments with shallow clones.
+
+**Example usage:**
+
+```yaml
+packages:
+  - name: app
+    type: go
+    config:
+      buildCommand:
+        - sh
+        - -c
+        - |
+          # SOURCE_DATE_EPOCH is automatically set by leeway
+          go build -ldflags "-X main.BuildTime=$SOURCE_DATE_EPOCH" -o app
+```
+
+**Benefits:**
+- Works without .git directory (CI-friendly)
+- Standard approach ([reproducible-builds.org](https://reproducible-builds.org/docs/source-date-epoch/))
+- Same timestamp used for tar archives and Docker images
+
+**Docker builds:**
+
+For Docker packages, leeway automatically enables BuildKit (`DOCKER_BUILDKIT=1`) and exports `SOURCE_DATE_EPOCH`. For deterministic Docker images, see PR #285 which passes the value as a build arg (requires `ARG SOURCE_DATE_EPOCH` in Dockerfiles).
+
+BuildKit is the default builder since Docker Engine v23.0 and is always used in Docker Desktop.
+
 ## Package Variants
 Leeway supports build-time variance through "package variants". Those variants are defined on the workspace level and can modify the list of sources, environment variables and config of packages.
 For example consider a `WORKSPACE.YAML` with this variants section:
