@@ -1992,6 +1992,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("DEP_%s=%s", arg, val))
 	}
 	buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("__GIT_COMMIT=%s", p.C.Git().Commit))
+	// Pass SOURCE_DATE_EPOCH for deterministic Docker image timestamps
+	buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("SOURCE_DATE_EPOCH=%d", mtime))
 	if cfg.Squash {
 		buildcmd = append(buildcmd, "--squash")
 	}

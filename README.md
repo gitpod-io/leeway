@@ -329,10 +329,39 @@ packages:
 
 **Docker builds:**
 
-For Docker packages, leeway automatically enables BuildKit (`DOCKER_BUILDKIT=1`) and exports `SOURCE_DATE_EPOCH`. For deterministic Docker images, see PR #285 which passes the value as a build arg (requires `ARG SOURCE_DATE_EPOCH` in Dockerfiles).
+For Docker packages, leeway automatically enables BuildKit (`DOCKER_BUILDKIT=1`) and exports `SOURCE_DATE_EPOCH`. Additionally, leeway passes `SOURCE_DATE_EPOCH` as a build arg to enable deterministic image timestamps.
 
 BuildKit is the default builder since Docker Engine v23.0 and is always used in Docker Desktop.
 
+**Dockerfile requirements for deterministic images:**
+
+Dockerfiles MUST declare the build arg for BuildKit to use the timestamp for image metadata:
+
+```dockerfile
+FROM alpine:3.18
+ARG SOURCE_DATE_EPOCH
+COPY app /usr/local/bin/app
+```
+
+With the `ARG SOURCE_DATE_EPOCH` declaration, BuildKit (>= v0.13) automatically uses the timestamp for:
+- Layer creation timestamps
+- Image config `created` timestamp
+- History timestamps
+- OCI annotations
+
+Without the ARG declaration, images will have non-deterministic timestamps even though leeway sets the environment variable.
+
+For multi-stage builds, declare the ARG in each stage:
+
+```dockerfile
+FROM golang:1.21 AS builder
+ARG SOURCE_DATE_EPOCH
+RUN go build -o app
+
+FROM alpine:3.18
+ARG SOURCE_DATE_EPOCH
+COPY --from=builder /app /app
+```
 ## Package Variants
 Leeway supports build-time variance through "package variants". Those variants are defined on the workspace level and can modify the list of sources, environment variables and config of packages.
 For example consider a `WORKSPACE.YAML` with this variants section:
