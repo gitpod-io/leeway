@@ -1051,30 +1051,11 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
-	// Handle provenance subjects
-	if p.C.W.Provenance.Enabled {
-		if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
-			return err
-		}
-	}
-
-	// Generate SBOM if enabled
+	// Generate SBOM if enabled (before packaging)
 	if p.C.W.SBOM.Enabled {
 		if err := writeSBOM(buildctx, p, builddir); err != nil {
 			return err
 		}
-	}
-
-	// Handle test coverage if available
-	if bld.TestCoverage != nil {
-		coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
-		if err != nil {
-			return err
-		}
-		pkgRep.TestCoverageAvailable = true
-		pkgRep.TestCoveragePercentage = coverage
-		pkgRep.FunctionsWithoutTest = funcsWithoutTest
-		pkgRep.FunctionsWithTest = funcsWithTest
 	}
 
 	// Package the build results
@@ -1090,6 +1071,25 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 			log.WithError(err).WithField("package", p.FullName()).Warn("Failed to record cache artifact checksum")
 			// Don't fail build - this is defensive, not critical path
 		}
+	}
+
+	// Handle provenance subjects (after packaging - artifact now exists)
+	if p.C.W.Provenance.Enabled {
+		if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
+			return err
+		}
+	}
+
+	// Handle test coverage if available
+	if bld.TestCoverage != nil {
+		coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
+		if err != nil {
+			return err
+		}
+		pkgRep.TestCoverageAvailable = true
+		pkgRep.TestCoveragePercentage = coverage
+		pkgRep.FunctionsWithoutTest = funcsWithoutTest
+		pkgRep.FunctionsWithTest = funcsWithTest
 	}
 
 	// Register newly built package
