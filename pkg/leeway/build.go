@@ -2221,7 +2221,11 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 		// Add PostProcess to create structured metadata file
 		res.PostProcess = func(buildCtx *buildContext, pkg *Package, buildDir string) error {
-			return createDockerExportMetadata(buildDir, version, cfg)
+			mtime, err := pkg.getDeterministicMtime()
+			if err != nil {
+				return fmt.Errorf("failed to get deterministic mtime: %w", err)
+			}
+			return createDockerExportMetadata(buildDir, version, cfg, mtime)
 		}
 
 		// Add subjects function for provenance generation
@@ -2367,11 +2371,11 @@ type DockerImageMetadata struct {
 }
 
 // createDockerExportMetadata creates metadata file for exported Docker images
-func createDockerExportMetadata(wd, version string, cfg DockerPkgConfig) error {
+func createDockerExportMetadata(wd, version string, cfg DockerPkgConfig, mtime int64) error {
 	metadata := DockerImageMetadata{
 		ImageNames:   cfg.Image,
 		BuiltVersion: version,
-		BuildTime:    time.Now(),
+		BuildTime:    time.Unix(mtime, 0),
 		CustomMeta:   cfg.Metadata,
 	}
 
