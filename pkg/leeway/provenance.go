@@ -23,14 +23,15 @@ import (
 )
 
 const (
-	// provenanceBundleFilename is the name of the attestation bundle file
-	// we store in the archived build artefacts.
+	// ProvenanceBundleFilename is the filename suffix for provenance bundles stored alongside artifacts.
+	// Provenance is stored as <artifact>.tar.gz + ProvenanceBundleFilename to keep it separate from the
+	// deterministic artifact tar.gz.
 	//
 	// BEWARE: when you change this value this will break consumers. Existing
 	//		   cached artefacts will not have the new filename which will break
 	//         builds. If you change this value, make sure you introduce a cache-invalidating
 	//         change, e.g. update the provenanceProcessVersion.
-	provenanceBundleFilename = "provenance-bundle.jsonl"
+	ProvenanceBundleFilename = ".provenance.jsonl"
 
 	// provenanceProcessVersion is the version of the provenance generating process.
 	// If provenance is enabled in a workspace, this version becomes part of the manifest,
@@ -76,7 +77,7 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 
 	// Write provenance alongside artifact: <artifact>.provenance.jsonl
 	// This keeps provenance metadata separate from the artifact for determinism
-	provenancePath := artifactPath + ".provenance.jsonl"
+	provenancePath := artifactPath + ProvenanceBundleFilename
 	
 	// Ensure directory exists
 	dir := filepath.Dir(provenancePath)
@@ -155,7 +156,7 @@ func AccessAttestationBundleInCachedArchive(fn string, handler func(bundle io.Re
 		}
 	}()
 
-	provenancePath := fn + ".provenance.jsonl"
+	provenancePath := fn + ProvenanceBundleFilename
 	if !fileExists(provenancePath) {
 		return ErrNoAttestationBundle
 	}
