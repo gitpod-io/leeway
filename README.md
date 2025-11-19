@@ -362,6 +362,18 @@ FROM alpine:3.18
 ARG SOURCE_DATE_EPOCH
 COPY --from=builder /app /app
 ```
+
+**OCI Layout for deterministic caching:**
+
+When `exportToCache` is enabled, Docker images are exported in OCI layout format instead of using `docker save`. This ensures fully deterministic cache artifacts:
+
+- **Format**: OCI Image Layout (standard)
+- **Loading**: `docker load -i image.tar` (automatic, backward compatible)
+- **Benefit**: Same source code produces identical cache checksums
+- **SLSA L3**: Enables provenance verification with matching digests
+
+The OCI layout format is content-addressed and eliminates the non-deterministic symlink timestamps that occur with `docker save`.
+
 ## Package Variants
 Leeway supports build-time variance through "package variants". Those variants are defined on the workspace level and can modify the list of sources, environment variables and config of packages.
 For example consider a `WORKSPACE.YAML` with this variants section:

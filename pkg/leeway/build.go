@@ -1984,7 +1984,19 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		return nil, err
 	}
 
-	buildcmd := []string{"docker", "build", "--pull", "-t", version}
+	// Use buildx for OCI layout export when exporting to cache
+	var buildcmd []string
+	if *cfg.ExportToCache {
+		// Build with OCI layout export for deterministic caching
+		imageTarPath := filepath.Join(wd, "image.tar")
+		buildcmd = []string{"docker", "buildx", "build", "--pull"}
+		buildcmd = append(buildcmd, "--output", fmt.Sprintf("type=oci,dest=%s", imageTarPath))
+		buildcmd = append(buildcmd, "--tag", version)
+	} else {
+		// Normal build (load to daemon for pushing)
+		buildcmd = []string{"docker", "build", "--pull", "-t", version}
+	}
+	
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
 	}
@@ -2163,13 +2175,10 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		res.Subjects = createDockerSubjectsFunction(version, cfg)
 	} else if len(cfg.Image) > 0 && *cfg.ExportToCache {
 		// Export to cache for signing
-		log.WithField("package", p.FullName()).Debug("Exporting Docker image to cache")
+		log.WithField("package", p.FullName()).Debug("Exporting Docker image to cache (OCI layout)")
 
-		// Export the image to tar
-		imageTarPath := filepath.Join(wd, "image.tar")
-		pkgCommands = append(pkgCommands,
-			[]string{"docker", "save", version, "-o", imageTarPath},
-		)
+		// Note: image.tar is already created by buildx --output type=oci
+		// No docker save needed!
 
 		// Store image names for later use
 		for _, img := range cfg.Image {

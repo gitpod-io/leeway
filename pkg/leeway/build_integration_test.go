@@ -6,6 +6,7 @@ package leeway
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -528,4 +529,174 @@ CMD ["cat", "/test-file.txt"]`
 	exec.Command("docker", "rmi", "-f", testImage).Run()
 
 	t.Log("✅ Round-trip test passed: image exported, cached, extracted, loaded, and executed successfully")
+}
+
+func TestDockerPackage_OCILayout_Determinism_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Ensure Docker is available
+	if err := exec.Command("docker", "version").Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Ensure buildx is available
+	if err := exec.Command("docker", "buildx", "version").Run(); err != nil {
+		t.Skip("Docker buildx not available, skipping integration test")
+	}
+
+	// Create test workspace
+	tmpDir := t.TempDir()
+	wsDir := filepath.Join(tmpDir, "workspace")
+	if err := os.MkdirAll(wsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create WORKSPACE.yaml
+	workspaceYAML := `defaultTarget: ":test-image"`
+	if err := os.WriteFile(filepath.Join(wsDir, "WORKSPACE.yaml"), []byte(workspaceYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create Dockerfile with ARG SOURCE_DATE_EPOCH
+	dockerfile := `FROM alpine:3.18
+ARG SOURCE_DATE_EPOCH
+RUN echo "Build time: $SOURCE_DATE_EPOCH" > /build-time.txt
+CMD ["cat", "/build-time.txt"]
+`
+	if err := os.WriteFile(filepath.Join(wsDir, "Dockerfile"), []byte(dockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create BUILD.yaml
+	buildYAML := `packages:
+  - name: test-image
+    type: docker
+    config:
+      dockerfile: Dockerfile
+      image:
+        - localhost/leeway-determinism-test:latest
+      exportToCache: true
+`
+	if err := os.WriteFile(filepath.Join(wsDir, "BUILD.yaml"), []byte(buildYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize git repo (required for deterministic mtime)
+	gitInit := exec.Command("git", "init")
+	gitInit.Dir = wsDir
+	if err := gitInit.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	gitAdd := exec.Command("git", "add", ".")
+	gitAdd.Dir = wsDir
+	if err := gitAdd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	gitCommit := exec.Command("git", "commit", "-m", "initial")
+	gitCommit.Dir = wsDir
+	if err := gitCommit.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build first time
+	cacheDir1 := filepath.Join(tmpDir, "cache1")
+	if err := os.MkdirAll(cacheDir1, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	buildCtx1 := &buildContext{
+		LocalCache:           &FilesystemCache{Location: cacheDir1},
+		DockerExportToCache:  true,
+		DockerExportSet:      true,
+		Reporter:             &ConsoleReporter{},
+	}
+
+	ws1, err := Load(wsDir)
+	if err != nil {
+		t.Fatalf("Failed to load workspace: %v", err)
+	}
+
+	pkg1, exists := ws1.Packages[":test-image"]
+	if !exists {
+		t.Fatal("Package :test-image not found")
+	}
+
+	if _, err := pkg1.build(buildCtx1); err != nil {
+		t.Fatalf("First build failed: %v", err)
+	}
+
+	// Get checksum of first build
+	cacheFiles1, err := filepath.Glob(filepath.Join(cacheDir1, "*.tar.gz"))
+	if err != nil || len(cacheFiles1) == 0 {
+		t.Fatal("No cache file found after first build")
+	}
+	checksum1, err := checksumFile(cacheFiles1[0])
+	if err != nil {
+		t.Fatalf("Failed to checksum first build: %v", err)
+	}
+
+	// Build second time (clean cache)
+	cacheDir2 := filepath.Join(tmpDir, "cache2")
+	if err := os.MkdirAll(cacheDir2, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	buildCtx2 := &buildContext{
+		LocalCache:           &FilesystemCache{Location: cacheDir2},
+		DockerExportToCache:  true,
+		DockerExportSet:      true,
+		Reporter:             &ConsoleReporter{},
+	}
+
+	ws2, err := Load(wsDir)
+	if err != nil {
+		t.Fatalf("Failed to load workspace: %v", err)
+	}
+
+	pkg2, exists := ws2.Packages[":test-image"]
+	if !exists {
+		t.Fatal("Package :test-image not found")
+	}
+
+	if _, err := pkg2.build(buildCtx2); err != nil {
+		t.Fatalf("Second build failed: %v", err)
+	}
+
+	// Get checksum of second build
+	cacheFiles2, err := filepath.Glob(filepath.Join(cacheDir2, "*.tar.gz"))
+	if err != nil || len(cacheFiles2) == 0 {
+		t.Fatal("No cache file found after second build")
+	}
+	checksum2, err := checksumFile(cacheFiles2[0])
+	if err != nil {
+		t.Fatalf("Failed to checksum second build: %v", err)
+	}
+
+	// Compare checksums
+	if checksum1 != checksum2 {
+		t.Errorf("Builds are not deterministic!\nBuild 1: %s\nBuild 2: %s", checksum1, checksum2)
+		t.Log("This indicates the OCI layout export is not fully deterministic")
+	} else {
+		t.Logf("✅ Deterministic builds verified: %s", checksum1)
+	}
+}
+
+// checksumFile computes SHA256 checksum of a file
+func checksumFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
