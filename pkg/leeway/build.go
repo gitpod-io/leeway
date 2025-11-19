@@ -1445,9 +1445,8 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			packageJSONFiles = fs
 		}
 		packageJSONFiles = append(packageJSONFiles, pkgYarnLock)
-		if p.C.W.Provenance.Enabled {
-			packageJSONFiles = append(packageJSONFiles, provenanceBundleFilename)
-		}
+		// Note: provenance bundle is written alongside the artifact as <artifact>.provenance.jsonl
+		// (outside tar.gz) to maintain artifact determinism
 		if p.C.W.SBOM.Enabled {
 			packageJSONFiles = append(packageJSONFiles, sbomBaseFilename+sbomCycloneDXFileExtension)
 			packageJSONFiles = append(packageJSONFiles, sbomBaseFilename+sbomSPDXFileExtension)
@@ -2136,9 +2135,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 
 		// Prepare for packaging
 		sourcePaths := []string{fmt.Sprintf("./%s", dockerImageNamesFiles), fmt.Sprintf("./%s", dockerMetadataFile)}
-		if p.C.W.Provenance.Enabled {
-			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
-		}
+
 		if p.C.W.SBOM.Enabled {
 			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomBaseFilename+sbomCycloneDXFileExtension))
 			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomBaseFilename+sbomSPDXFileExtension))
@@ -2196,9 +2193,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		if len(cfg.Metadata) > 0 {
 			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", dockerMetadataFile))
 		}
-		if p.C.W.Provenance.Enabled {
-			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
-		}
+
 		if p.C.W.SBOM.Enabled {
 			sourcePaths = append(sourcePaths,
 				fmt.Sprintf("./%s", sbomBaseFilename+sbomCycloneDXFileExtension),
@@ -2495,12 +2490,8 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 
 		// Use buildTarCommand directly which will handle compression internally
 		var tarCmd []string
-		if p.C.W.Provenance.Enabled || p.C.W.SBOM.Enabled {
+		if p.C.W.SBOM.Enabled {
 			var sourcePaths []string
-
-			if p.C.W.Provenance.Enabled {
-				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", provenanceBundleFilename))
-			}
 
 			if p.C.W.SBOM.Enabled {
 				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomBaseFilename+sbomCycloneDXFileExtension))
