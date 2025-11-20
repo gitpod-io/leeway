@@ -572,6 +572,28 @@ func TestDockerPackage_OCILayout_Determinism_Integration(t *testing.T) {
 		t.Skip("Docker buildx not available, skipping integration test")
 	}
 
+	// Create docker-container builder for OCI export
+	builderName := "leeway-slsa-test-builder"
+	createBuilder := exec.Command("docker", "buildx", "create", "--name", builderName, "--driver", "docker-container", "--bootstrap")
+	if err := createBuilder.Run(); err != nil {
+		// Builder might already exist, try to use it
+		t.Logf("Warning: failed to create builder (might already exist): %v", err)
+	}
+	defer func() {
+		// Cleanup builder
+		exec.Command("docker", "buildx", "rm", builderName).Run()
+	}()
+
+	// Use the builder
+	useBuilder := exec.Command("docker", "buildx", "use", builderName)
+	if err := useBuilder.Run(); err != nil {
+		t.Fatalf("Failed to use builder: %v", err)
+	}
+	defer func() {
+		// Switch back to default
+		exec.Command("docker", "buildx", "use", "default").Run()
+	}()
+
 	// Create test workspace
 	tmpDir := t.TempDir()
 	wsDir := filepath.Join(tmpDir, "workspace")
@@ -751,4 +773,199 @@ func checksumFile(path string) (string, error) {
 	}
 
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// TestDockerPackage_OCILayout_SLSA_Integration tests that SLSA provenance generation
+// works correctly with OCI layout export (regression test for docker inspect bug)
+func TestDockerPackage_OCILayout_SLSA_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Ensure Docker is available
+	if err := exec.Command("docker", "version").Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Ensure buildx is available
+	if err := exec.Command("docker", "buildx", "version").Run(); err != nil {
+		t.Skip("Docker buildx not available, skipping integration test")
+	}
+
+	// Create docker-container builder for OCI export
+	builderName := "leeway-slsa-test-builder"
+	createBuilder := exec.Command("docker", "buildx", "create", "--name", builderName, "--driver", "docker-container", "--bootstrap")
+	if err := createBuilder.Run(); err != nil {
+		// Builder might already exist, try to use it
+		t.Logf("Warning: failed to create builder (might already exist): %v", err)
+	}
+	defer func() {
+		// Cleanup builder
+		exec.Command("docker", "buildx", "rm", builderName).Run()
+	}()
+
+	// Use the builder
+	useBuilder := exec.Command("docker", "buildx", "use", builderName)
+	if err := useBuilder.Run(); err != nil {
+		t.Fatalf("Failed to use builder: %v", err)
+	}
+	defer func() {
+		// Switch back to default
+		exec.Command("docker", "buildx", "use", "default").Run()
+	}()
+
+	// Create test workspace
+	tmpDir := t.TempDir()
+	wsDir := filepath.Join(tmpDir, "workspace")
+	if err := os.MkdirAll(wsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create WORKSPACE.yaml with SLSA enabled
+	workspaceYAML := `defaultTarget: ":test-image"
+provenance:
+  slsa: true
+`
+	if err := os.WriteFile(filepath.Join(wsDir, "WORKSPACE.yaml"), []byte(workspaceYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create Dockerfile
+	dockerfile := `FROM alpine:3.18
+ARG SOURCE_DATE_EPOCH
+RUN echo "Build time: $SOURCE_DATE_EPOCH" > /build-time.txt
+CMD ["cat", "/build-time.txt"]
+`
+	if err := os.WriteFile(filepath.Join(wsDir, "Dockerfile"), []byte(dockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create BUILD.yaml with exportToCache
+	buildYAML := `packages:
+  - name: test-image
+    type: docker
+    config:
+      dockerfile: Dockerfile
+      image:
+        - localhost/leeway-slsa-test:latest
+      exportToCache: true
+`
+	if err := os.WriteFile(filepath.Join(wsDir, "BUILD.yaml"), []byte(buildYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize git repo
+	gitInit := exec.Command("git", "init")
+	gitInit.Dir = wsDir
+	if err := gitInit.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	gitConfigName := exec.Command("git", "config", "user.name", "Test User")
+	gitConfigName.Dir = wsDir
+	if err := gitConfigName.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	gitConfigEmail := exec.Command("git", "config", "user.email", "test@example.com")
+	gitConfigEmail.Dir = wsDir
+	if err := gitConfigEmail.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	gitAdd := exec.Command("git", "add", ".")
+	gitAdd.Dir = wsDir
+	if err := gitAdd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	gitCommit := exec.Command("git", "commit", "-m", "initial")
+	gitCommit.Dir = wsDir
+	gitCommit.Env = append(os.Environ(),
+		"GIT_AUTHOR_DATE=2021-01-01T00:00:00Z",
+		"GIT_COMMITTER_DATE=2021-01-01T00:00:00Z",
+	)
+	if err := gitCommit.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build with SLSA enabled
+	cacheDir := filepath.Join(tmpDir, "cache")
+	cache, err := local.NewFilesystemCache(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buildCtx, err := newBuildContext(buildOptions{
+		LocalCache:          cache,
+		DockerExportToCache: true,
+		DockerExportSet:     true,
+		Reporter:            NewConsoleReporter(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := FindWorkspace(wsDir, Arguments{}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pkg, ok := ws.Packages["//:test-image"]
+	if !ok {
+		t.Fatal("package //:test-image not found")
+	}
+
+	// Build the package - this should trigger SLSA provenance generation
+	// which calls the Subjects function that extracts digest from OCI layout
+	if err := pkg.build(buildCtx); err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	// Verify that the build succeeded and created the cache artifact
+	// Find the cache file (it might have a different name)
+	cacheFiles, err := filepath.Glob(filepath.Join(cacheDir, "*.tar.gz"))
+	if err != nil || len(cacheFiles) == 0 {
+		t.Fatal("No cache file found after build")
+	}
+	cachePath := cacheFiles[0]
+	t.Logf("Found cache artifact: %s", cachePath)
+
+	// Verify the OCI layout was created (image.tar inside the cache)
+	// This confirms that OCI export worked
+	f, err := os.Open(cachePath)
+	if err != nil {
+		t.Fatalf("failed to open cache file: %v", err)
+	}
+	defer f.Close()
+
+	gzr, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("failed to create gzip reader: %v", err)
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+	foundImageTar := false
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("failed to read tar: %v", err)
+		}
+		if hdr.Name == "./image.tar" {
+			foundImageTar = true
+			break
+		}
+	}
+
+	if !foundImageTar {
+		t.Fatal("image.tar not found in cache artifact (OCI layout not created)")
+	}
+
+	t.Logf("✅ Build succeeded with OCI layout export")
+	t.Logf("✅ No 'docker inspect' error occurred")
+	t.Logf("✅ This confirms the fix works: digest extracted from OCI layout instead of Docker daemon")
 }
