@@ -40,7 +40,7 @@ type Reporter interface {
 	// The root package will also be passed into PackageBuildFinished once it's been built.
 	BuildFinished(pkg *Package, err error)
 
-		// PackageBuildStarted is called when a package build actually gets underway. At this point
+	// PackageBuildStarted is called when a package build actually gets underway. At this point
 	// all transitive dependencies of the package have been built.
 	PackageBuildStarted(pkg *Package, builddir string)
 
@@ -695,13 +695,13 @@ func (sr *GitHubActionReporter) PackageBuildFinished(pkg *Package, rep *PackageB
 type OTelReporter struct {
 	NoopReporter
 
-	tracer      trace.Tracer
-	parentCtx   context.Context
-	rootCtx     context.Context
-	rootSpan    trace.Span
-	packageCtxs map[string]context.Context
+	tracer       trace.Tracer
+	parentCtx    context.Context
+	rootCtx      context.Context
+	rootSpan     trace.Span
+	packageCtxs  map[string]context.Context
 	packageSpans map[string]trace.Span
-	mu          sync.RWMutex
+	mu           sync.RWMutex
 }
 
 // NewOTelReporter creates a new OpenTelemetry reporter with the given tracer and parent context
@@ -751,10 +751,10 @@ func (r *OTelReporter) BuildStarted(pkg *Package, status map[*Package]PackageBui
 
 	// Add build status summary
 	var (
-		cached    int
-		remote    int
-		download  int
-		toBuild   int
+		cached   int
+		remote   int
+		download int
+		toBuild  int
 	)
 	for _, s := range status {
 		switch s {
