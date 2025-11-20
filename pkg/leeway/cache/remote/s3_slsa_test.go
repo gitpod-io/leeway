@@ -28,11 +28,11 @@ func (m *mockS3StorageWithSLSA) HasObject(ctx context.Context, key string) (bool
 	m.mu.Lock()
 	m.callLog = append(m.callLog, "HasObject:"+key)
 	m.mu.Unlock()
-	
+
 	if err, exists := m.objectErrors[key]; exists {
 		return false, err
 	}
-	
+
 	_, exists := m.objects[key]
 	return exists, nil
 }
@@ -41,20 +41,20 @@ func (m *mockS3StorageWithSLSA) GetObject(ctx context.Context, key string, dest 
 	m.mu.Lock()
 	m.callLog = append(m.callLog, "GetObject:"+key)
 	m.mu.Unlock()
-	
+
 	if err, exists := m.objectErrors[key]; exists {
 		return 0, err
 	}
-	
+
 	data, exists := m.objects[key]
 	if !exists {
 		return 0, &mockNotFoundError{key: key}
 	}
-	
+
 	if err := os.WriteFile(dest, data, 0644); err != nil {
 		return 0, err
 	}
-	
+
 	return int64(len(data)), nil
 }
 
@@ -123,7 +123,7 @@ func createTestConfig(slsaEnabled bool) *cache.RemoteConfig {
 			RequireAttestation: false,
 		}
 	}
-	
+
 	return &cache.RemoteConfig{
 		BucketName: "test-bucket",
 		SLSA:       slsaConfig,
@@ -179,7 +179,7 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 			packages: []cache.Package{
 				&mockPackage{version: "v1"},
 			},
-			expectDownload:      true,  // Should download unverified
+			expectDownload:      true, // Should download unverified
 			expectVerification:  false,
 			expectedLogContains: "downloading without verification",
 		},
@@ -222,7 +222,7 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 			packages: []cache.Package{
 				&mockPackage{version: "v1"},
 			},
-			expectDownload:      true,  // Downloads without verification when RequireAttestation=false
+			expectDownload:      true, // Downloads without verification when RequireAttestation=false
 			expectVerification:  false,
 			expectedLogContains: "downloading without verification",
 		},
@@ -263,7 +263,7 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 			if tt.config.SLSA != nil && tt.config.SLSA.Verification && tt.config.SLSA.SourceURI != "" {
 				// Use mock verifier for testing
 				mockVerifier := slsa.NewMockVerifier()
-				
+
 				// Configure mock verifier based on test expectations
 				if tt.expectVerification {
 					if strings.Contains(tt.name, "invalid") {
@@ -272,7 +272,7 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 						mockVerifier.SetVerifyResult(nil) // Success
 					}
 				}
-				
+
 				s3Cache.slsaVerifier = mockVerifier
 			}
 
@@ -307,7 +307,7 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 						hasAttestationCheck = true
 					}
 				}
-				
+
 				if !hasArtifactCheck {
 					t.Error("Expected artifact existence check when SLSA verification enabled")
 				}
@@ -379,17 +379,17 @@ func TestS3Cache_SLSAVerificationPerformance(t *testing.T) {
 	t.Run("performance overhead validation", func(t *testing.T) {
 		// Test both with and without verification to measure overhead
 		// For now, we just ensure the test structure is in place
-		
+
 		baselineTime := measureDownloadTime(t, false)
 		slsaTime := measureDownloadTime(t, true)
-		
+
 		if baselineTime == 0 || slsaTime == 0 {
 			t.Skip("Performance measurement not implemented yet")
 		}
-		
+
 		overhead := float64(slsaTime-baselineTime) / float64(baselineTime) * 100
 		t.Logf("Baseline: %v, SLSA: %v, Overhead: %.2f%%", baselineTime, slsaTime, overhead)
-		
+
 		// Note: In real implementation, we'd validate < 15% overhead
 		// if overhead > 15.0 {
 		//     t.Errorf("SLSA verification overhead %.2f%% exceeds 15%% target", overhead)
@@ -406,9 +406,9 @@ func measureDownloadTime(t *testing.T, withSLSA bool) time.Duration {
 // TestMockVerifierIntegration tests the mock verifier integration
 func TestMockVerifierIntegration(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupVerifier  func(*slsa.MockVerifier)
-		expectError    bool
+		name            string
+		setupVerifier   func(*slsa.MockVerifier)
+		expectError     bool
 		expectCallCount int
 	}{
 		{

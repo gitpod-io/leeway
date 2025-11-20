@@ -110,7 +110,7 @@ func TestDockerPackage_ExportToCache_Integration(t *testing.T) {
 			exportToCache:    true,
 			hasImages:        false,
 			expectFiles:      []string{"content"},
-			expectError:      true, // OCI layout export requires an image tag
+			expectError:      true,                     // OCI layout export requires an image tag
 			expectErrorMatch: "(?i)(not found|failed)", // Build fails without image config in OCI mode
 		},
 	}
@@ -196,13 +196,13 @@ CMD ["echo", "test"]`
 				WithLocalCache(localCache),
 				WithDontTest(true),
 			)
-			
+
 			// Handle expected errors (e.g., push failures without credentials)
 			if tt.expectError {
 				if err == nil {
 					t.Fatal("Expected build to fail but it succeeded")
 				}
-				
+
 				// Validate error matches expected pattern
 				if tt.expectErrorMatch != "" {
 					matched, regexErr := regexp.MatchString(tt.expectErrorMatch, err.Error())
@@ -210,15 +210,15 @@ CMD ["echo", "test"]`
 						t.Fatalf("Invalid error regex pattern: %v", regexErr)
 					}
 					if !matched {
-						t.Fatalf("Error doesn't match expected pattern.\nExpected pattern: %s\nActual error: %v", 
+						t.Fatalf("Error doesn't match expected pattern.\nExpected pattern: %s\nActual error: %v",
 							tt.expectErrorMatch, err)
 					}
-					t.Logf("Build failed as expected with error matching pattern '%s': %v", 
+					t.Logf("Build failed as expected with error matching pattern '%s': %v",
 						tt.expectErrorMatch, err)
 				} else {
 					t.Logf("Build failed as expected: %v", err)
 				}
-				
+
 				// For legacy push test, we expect it to fail at push step
 				// The detailed Docker error (e.g., "push access denied", "authorization failed")
 				// is logged but wrapped in a generic "build failed" error.
@@ -227,7 +227,7 @@ CMD ["echo", "test"]`
 				// Skip further validation for this test case
 				return
 			}
-			
+
 			if err != nil {
 				t.Fatalf("Build failed: %v", err)
 			}
@@ -255,10 +255,10 @@ CMD ["echo", "test"]`
 					// Normalize paths for comparison (remove leading ./)
 					normalizedActual := strings.TrimPrefix(actualFile, "./")
 					normalizedExpected := strings.TrimPrefix(expectedFile, "./")
-					
-					if filepath.Base(normalizedActual) == normalizedExpected || 
-					   normalizedActual == normalizedExpected ||
-					   strings.HasPrefix(normalizedActual, normalizedExpected+"/") {
+
+					if filepath.Base(normalizedActual) == normalizedExpected ||
+						normalizedActual == normalizedExpected ||
+						strings.HasPrefix(normalizedActual, normalizedExpected+"/") {
 						found = true
 						break
 					}
@@ -464,7 +464,7 @@ CMD ["cat", "/test-file.txt"]`
 
 	// Step 4: Extract image.tar from cache and load into Docker
 	t.Log("Step 4: Extracting image.tar and loading into Docker")
-	
+
 	// First, remove the image if it exists
 	exec.Command("docker", "rmi", "-f", testImage).Run()
 
@@ -492,19 +492,19 @@ CMD ["cat", "/test-file.txt"]`
 	if err := os.MkdirAll(ociDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	extractOCICmd := exec.Command("tar", "-xf", imageTarPath, "-C", ociDir)
 	if output, err := extractOCICmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to extract OCI layout: %v\nOutput: %s", err, string(output))
 	}
-	
+
 	// Try skopeo first, fall back to crane, then fail with helpful message
 	var loadCmd *exec.Cmd
 	var toolUsed string
-	
+
 	if _, err := exec.LookPath("skopeo"); err == nil {
 		// Use skopeo to load OCI layout directory
-		loadCmd = exec.Command("skopeo", "copy", 
+		loadCmd = exec.Command("skopeo", "copy",
 			fmt.Sprintf("oci:%s", ociDir),
 			fmt.Sprintf("docker-daemon:%s", testImage))
 		toolUsed = "skopeo"
@@ -518,7 +518,7 @@ CMD ["cat", "/test-file.txt"]`
 			"  apt-get install skopeo  # or\n" +
 			"  go install github.com/google/go-containerregistry/cmd/crane@latest")
 	}
-	
+
 	loadOutput, err := loadCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("Failed to load OCI image using %s: %v\nOutput: %s", toolUsed, err, string(loadOutput))
@@ -527,7 +527,7 @@ CMD ["cat", "/test-file.txt"]`
 
 	// Step 5: Verify the loaded image works
 	t.Log("Step 5: Verifying loaded image works")
-	
+
 	// Get the digest of the loaded image
 	inspectCmd := exec.Command("docker", "inspect", "--format={{index .Id}}", testImage)
 	inspectOutput, err := inspectCmd.Output()
@@ -535,7 +535,7 @@ CMD ["cat", "/test-file.txt"]`
 		t.Fatalf("Failed to inspect loaded image: %v", err)
 	}
 	loadedDigest := strings.TrimSpace(string(inspectOutput))
-	
+
 	t.Logf("Loaded image digest: %s", loadedDigest)
 	t.Logf("Original metadata digest: %s", metadata.Digest)
 

@@ -1111,7 +1111,7 @@ func TestFetchGitHubOIDCToken(t *testing.T) {
 			if tt.setupEnv != nil {
 				tt.setupEnv(t)
 			}
-			
+
 			var server *httptest.Server
 			if tt.mockServer != nil {
 				server = tt.mockServer(t)
@@ -1241,7 +1241,7 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 					}`)
 					signature := base64EncodeForTest("fake-signature")
 					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
-					
+
 					w.Header().Set("Content-Type", "application/json")
 					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
 						t.Errorf("Failed to encode response: %v", err)
@@ -1271,7 +1271,7 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 					}`)
 					signature := base64EncodeForTest("fake-signature")
 					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
-					
+
 					w.Header().Set("Content-Type", "application/json")
 					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
 						t.Errorf("Failed to encode response: %v", err)
@@ -1320,7 +1320,7 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 					payload := base64EncodeForTest(`{"aud": "sigstore"}`)
 					signature := base64EncodeForTest("fake-signature")
 					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
-					
+
 					w.Header().Set("Content-Type", "application/json")
 					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
 						t.Errorf("Failed to encode response: %v", err)
@@ -1346,7 +1346,7 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 					payload := base64EncodeForTest(`{"sub": "   ", "aud": "sigstore"}`)
 					signature := base64EncodeForTest("fake-signature")
 					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
-					
+
 					w.Header().Set("Content-Type", "application/json")
 					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
 						t.Errorf("Failed to encode response: %v", err)
@@ -1376,7 +1376,7 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 					}`)
 					signature := base64EncodeForTest("fake-signature")
 					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
-					
+
 					w.Header().Set("Content-Type", "application/json")
 					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
 						t.Errorf("Failed to encode response: %v", err)
@@ -1405,7 +1405,7 @@ func TestExtractBuilderIDFromOIDC(t *testing.T) {
 					}`)
 					signature := base64EncodeForTest("fake-signature")
 					token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
-					
+
 					w.Header().Set("Content-Type", "application/json")
 					if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
 						t.Errorf("Failed to encode response: %v", err)
@@ -1513,7 +1513,7 @@ func TestBuilderIDMatchesCertificateIdentity(t *testing.T) {
 				}`, tt.oidcSubClaim))
 				signature := base64EncodeForTest("fake-signature")
 				token := fmt.Sprintf("%s.%s.%s", header, payload, signature)
-				
+
 				w.Header().Set("Content-Type", "application/json")
 				if err := json.NewEncoder(w).Encode(map[string]string{"value": token}); err != nil {
 					t.Errorf("Failed to encode response: %v", err)

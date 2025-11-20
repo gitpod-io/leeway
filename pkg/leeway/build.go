@@ -793,19 +793,19 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 	for _, p := range allpkg {
 		// Check actual state in local cache
 		_, inCache := ctx.LocalCache.Location(p)
-		
+
 		if !inCache {
 			// Package not in cache (shouldn't happen if build succeeded)
 			continue
 		}
-		
+
 		total++
 
 		// Determine what happened to this package
 		if newlyBuiltMap[p.FullName()] {
 			// Package was built during this build
 			builtLocally++
-			
+
 			// Check if this was supposed to be downloaded but wasn't
 			// This indicates verification or download failure
 			if pkgsToDownloadMap[p.FullName()] && statusAfterDownload[p] != PackageDownloaded {
@@ -1996,7 +1996,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// Normal build (load to daemon for pushing)
 		buildcmd = []string{"docker", "build", "--pull", "-t", version}
 	}
-	
+
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
 	}
@@ -2424,19 +2424,19 @@ func (p *Package) getDeterministicMtime() (int64, error) {
 			}
 			return timestamp, nil
 		}
-		
+
 		// Check if we're in a test environment
 		if isTestEnvironment() {
 			// Test fixtures don't have git - use epoch for determinism
 			return 0, nil
 		}
-		
+
 		// Production build without git is an error - prevents cache pollution
-		return 0, fmt.Errorf("no git commit available for deterministic mtime. "+
-			"Ensure repository is properly cloned with git history, or set SOURCE_DATE_EPOCH environment variable. "+
+		return 0, fmt.Errorf("no git commit available for deterministic mtime. " +
+			"Ensure repository is properly cloned with git history, or set SOURCE_DATE_EPOCH environment variable. " +
 			"Building from source tarballs without git metadata will cause cache inconsistencies")
 	}
-	
+
 	timestamp, err := GetCommitTimestamp(context.Background(), p.C.Git())
 	if err != nil {
 		return 0, fmt.Errorf("failed to get deterministic timestamp for tar mtime: %w. "+
@@ -2453,12 +2453,12 @@ func isTestEnvironment() bool {
 	if strings.HasSuffix(os.Args[0], ".test") {
 		return true
 	}
-	
+
 	// Check for explicit test mode environment variable
 	if os.Getenv("LEEWAY_TEST_MODE") == "true" {
 		return true
 	}
-	
+
 	return false
 }
 
@@ -2605,18 +2605,18 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 
 	env := append(os.Environ(), p.Environment...)
 	env = append(env, fmt.Sprintf("%s=%s", EnvvarWorkspaceRoot, p.C.W.Origin))
-	
+
 	// Export SOURCE_DATE_EPOCH for reproducible builds
 	// BuildKit (Docker >= v23.0) automatically uses this for deterministic image timestamps
 	mtime, err := p.getDeterministicMtime()
 	if err == nil {
 		env = append(env, fmt.Sprintf("SOURCE_DATE_EPOCH=%d", mtime))
 	}
-	
+
 	// Enable BuildKit to ensure SOURCE_DATE_EPOCH is used for Docker builds
 	// BuildKit is default since Docker v23.0, but we set it explicitly for older versions
 	env = append(env, "DOCKER_BUILDKIT=1")
-	
+
 	for _, cmd := range commands {
 		if len(cmd) == 0 {
 			continue // Skip empty commands

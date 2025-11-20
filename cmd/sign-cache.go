@@ -39,7 +39,7 @@ Example:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		manifestPath, _ := cmd.Flags().GetString("from-manifest")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		
+
 		// Get max concurrency setting (env var as default, CLI flag overrides)
 		maxConcurrency, _ := cmd.Flags().GetInt("max-signing-concurrency")
 		if !cmd.Flags().Changed("max-signing-concurrency") {

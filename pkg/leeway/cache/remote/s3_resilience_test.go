@@ -38,26 +38,26 @@ type mockS3WithFailures struct {
 func (m *mockS3WithFailures) GetObject(ctx context.Context, key string, dest string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.calls++
-	
+
 	// Simulate delay if configured
 	if m.callDelay > 0 {
 		time.Sleep(m.callDelay)
 	}
-	
+
 	// Check for context cancellation
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	default:
 	}
-	
+
 	// Simulate failures until threshold
 	if m.calls <= m.failUntilCall {
 		return 0, m.failureType
 	}
-	
+
 	// Return data if available
 	if data, ok := m.data[key]; ok {
 		// Simulate successful download
@@ -69,53 +69,53 @@ func (m *mockS3WithFailures) GetObject(ctx context.Context, key string, dest str
 func (m *mockS3WithFailures) PutObject(ctx context.Context, key string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.calls++
-	
+
 	// Simulate delay if configured
 	if m.callDelay > 0 {
 		time.Sleep(m.callDelay)
 	}
-	
+
 	// Check for context cancellation
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
-	
+
 	// Simulate failures until threshold
 	if m.calls <= m.failUntilCall {
 		return m.failureType
 	}
-	
+
 	// Store data
 	if m.data == nil {
 		m.data = make(map[string][]byte)
 	}
 	m.data[key] = data
-	
+
 	return nil
 }
 
 func (m *mockS3WithFailures) HasObject(ctx context.Context, key string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.calls++
-	
+
 	// Check for context cancellation
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
 	default:
 	}
-	
+
 	// Simulate failures until threshold
 	if m.calls <= m.failUntilCall {
 		return false, m.failureType
 	}
-	
+
 	_, exists := m.data[key]
 	return exists, nil
 }
@@ -123,26 +123,26 @@ func (m *mockS3WithFailures) HasObject(ctx context.Context, key string) (bool, e
 func (m *mockS3WithFailures) UploadObject(ctx context.Context, key string, src string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.calls++
-	
+
 	// Simulate delay if configured
 	if m.callDelay > 0 {
 		time.Sleep(m.callDelay)
 	}
-	
+
 	// Check for context cancellation
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
-	
+
 	// Simulate failures until threshold
 	if m.calls <= m.failUntilCall {
 		return m.failureType
 	}
-	
+
 	// Read source file and store
 	if data, err := os.ReadFile(src); err == nil {
 		if m.data == nil {
@@ -150,21 +150,21 @@ func (m *mockS3WithFailures) UploadObject(ctx context.Context, key string, src s
 		}
 		m.data[key] = data
 	}
-	
+
 	return nil
 }
 
 func (m *mockS3WithFailures) ListObjects(ctx context.Context, prefix string) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	var keys []string
 	for key := range m.data {
 		if strings.HasPrefix(key, prefix) {
 			keys = append(keys, key)
 		}
 	}
-	
+
 	return keys, nil
 }
 
@@ -196,7 +196,7 @@ func createMockS3Cache(storage *mockS3WithFailures, config *cache.RemoteConfig) 
 			},
 		}
 	}
-	
+
 	return &S3Cache{
 		storage:     storage,
 		cfg:         config,
@@ -233,7 +233,7 @@ func TestS3Cache_NetworkTimeout(t *testing.T) {
 			expectSuccess: true, // Should download without verification
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock storage with transient failures
@@ -245,7 +245,7 @@ func TestS3Cache_NetworkTimeout(t *testing.T) {
 					"test-package:v1.tar.gz.att": []byte(`{"attestation":"data"}`),
 				},
 			}
-			
+
 			config := &cache.RemoteConfig{
 				BucketName: "test-bucket",
 				SLSA: &cache.SLSAConfig{
@@ -253,20 +253,20 @@ func TestS3Cache_NetworkTimeout(t *testing.T) {
 					RequireAttestation: false,
 				},
 			}
-			
+
 			s3Cache := createMockS3Cache(mockStorage, config)
-			
+
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			
+
 			tmpDir := t.TempDir()
 			localCache, err := local.NewFilesystemCache(tmpDir)
 			require.NoError(t, err)
-			
+
 			pkg := &mockPackageResilience{version: "v1"}
-			
+
 			err = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
-			
+
 			if tt.expectSuccess {
 				// Should succeed with retry or graceful fallback
 				assert.NoError(t, err, "Should succeed with retry or fallback")
@@ -297,7 +297,7 @@ func TestS3Cache_SigstoreOutage(t *testing.T) {
 			expectDownload:     false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &cache.RemoteConfig{
@@ -307,28 +307,28 @@ func TestS3Cache_SigstoreOutage(t *testing.T) {
 					RequireAttestation: tt.requireAttestation,
 				},
 			}
-			
+
 			mockStorage := &mockS3WithFailures{
 				data: map[string][]byte{
 					"test-package:v1.tar.gz":     []byte("artifact"),
 					"test-package:v1.tar.gz.att": []byte(`{"attestation":"data"}`),
 				},
 			}
-			
+
 			s3Cache := createMockS3Cache(mockStorage, config)
 			// Note: SLSA verification would be tested separately in SLSA-specific tests
-			
+
 			tmpDir := t.TempDir()
 			localCache, err := local.NewFilesystemCache(tmpDir)
 			require.NoError(t, err)
-			
+
 			pkg := &mockPackageResilience{version: "v1"}
-			
+
 			err = s3Cache.Download(context.Background(), localCache, []cache.Package{pkg})
-			
+
 			// Should not fail the build
 			assert.NoError(t, err, "Sigstore outage should not fail builds")
-			
+
 			// Check if download occurred
 			artifactPath, exists := localCache.Location(pkg)
 			if tt.expectDownload {
@@ -351,26 +351,26 @@ func TestS3Cache_ContextCancellation(t *testing.T) {
 			"test-package:v1.tar.gz": []byte("artifact data"),
 		},
 	}
-	
+
 	s3Cache := createMockS3Cache(mockStorage, nil)
-	
+
 	tmpDir := t.TempDir()
 	localCache, err := local.NewFilesystemCache(tmpDir)
 	require.NoError(t, err)
-	
+
 	pkg := &mockPackageResilience{version: "v1"}
-	
+
 	// Create context that will be cancelled
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Cancel after a short delay
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	
+
 	err = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
-	
+
 	// Should handle cancellation gracefully
 	// The cache system should not fail builds due to cancellation
 	assert.NoError(t, err, "Context cancellation should not fail builds")
@@ -386,24 +386,24 @@ func TestS3Cache_PartialFailure(t *testing.T) {
 			// package2 is missing to simulate failure
 		},
 	}
-	
+
 	s3Cache := createMockS3Cache(mockStorage, nil)
-	
+
 	tmpDir := t.TempDir()
 	localCache, err := local.NewFilesystemCache(tmpDir)
 	require.NoError(t, err)
-	
+
 	packages := []cache.Package{
 		&mockPackageResilience{version: "v1", fullName: "package1:v1"},
 		&mockPackageResilience{version: "v1", fullName: "package2:v1"}, // Will fail
 		&mockPackageResilience{version: "v1", fullName: "package3:v1"},
 	}
-	
+
 	err = s3Cache.Download(context.Background(), localCache, packages)
-	
+
 	// Should not fail the entire operation due to partial failures
 	assert.NoError(t, err, "Partial failures should not fail the entire download")
-	
+
 	// Verify successful downloads
 	for _, pkg := range packages {
 		path, exists := localCache.Location(pkg)
@@ -421,26 +421,26 @@ func TestS3Cache_RateLimiting(t *testing.T) {
 			"test-package:v1.tar.gz": []byte("artifact"),
 		},
 	}
-	
+
 	config := &cache.RemoteConfig{
 		BucketName: "test-bucket",
 	}
-	
+
 	s3Cache := createMockS3Cache(rateLimitedStorage, config)
-	
+
 	tmpDir := t.TempDir()
 	localCache, err := local.NewFilesystemCache(tmpDir)
 	require.NoError(t, err)
-	
+
 	pkg := &mockPackageResilience{version: "v1"}
-	
+
 	start := time.Now()
 	err = s3Cache.Download(context.Background(), localCache, []cache.Package{pkg})
 	duration := time.Since(start)
-	
+
 	// Should eventually succeed or gracefully handle rate limiting
 	assert.NoError(t, err, "Should handle rate limiting gracefully")
-	
+
 	t.Logf("Handled rate limiting in %v", duration)
 }
 
@@ -449,12 +449,12 @@ func TestS3Cache_ConcurrentDownloadsRateLimit(t *testing.T) {
 	// Configure rate limiter simulation with reduced load
 	const maxConcurrent = 3
 	const packageCount = 5
-	
+
 	mockStorage := &mockS3WithFailures{
 		data:      make(map[string][]byte),
 		callDelay: 10 * time.Millisecond, // Short delay for testing
 	}
-	
+
 	// Create multiple packages
 	packages := make([]cache.Package, packageCount)
 	for i := 0; i < packageCount; i++ {
@@ -463,30 +463,30 @@ func TestS3Cache_ConcurrentDownloadsRateLimit(t *testing.T) {
 		packages[i] = &mockPackageResilience{version: version, fullName: fullName}
 		mockStorage.data[fullName+".tar.gz"] = []byte(fmt.Sprintf("artifact %d", i))
 	}
-	
+
 	config := &cache.RemoteConfig{
 		BucketName: "test-bucket",
 	}
-	
+
 	s3Cache := createMockS3Cache(mockStorage, config)
-	
+
 	tmpDir := t.TempDir()
 	localCache, err := local.NewFilesystemCache(tmpDir)
 	require.NoError(t, err)
-	
+
 	// Track concurrent operations (for future implementation)
 	var maxConcurrentOps int32 = maxConcurrent
-	
+
 	// Download all packages with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	start := time.Now()
 	err = s3Cache.Download(ctx, localCache, packages)
 	duration := time.Since(start)
-	
+
 	assert.NoError(t, err, "Should handle concurrent downloads")
-	
+
 	t.Logf("Downloaded %d packages in %v with max %d concurrent operations",
 		packageCount, duration, maxConcurrentOps)
 }
@@ -502,28 +502,28 @@ func TestS3Cache_ExponentialBackoff(t *testing.T) {
 			"test-package:v1.tar.gz": []byte("artifact data"),
 		},
 	}
-	
+
 	s3Cache := createMockS3Cache(mockStorage, nil)
-	
+
 	tmpDir := t.TempDir()
 	localCache, err := local.NewFilesystemCache(tmpDir)
 	require.NoError(t, err)
-	
+
 	pkg := &mockPackageResilience{version: "v1"}
-	
+
 	// Use timeout to prevent hanging
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	start := time.Now()
 	err = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
 	duration := time.Since(start)
-	
+
 	// Should eventually succeed with exponential backoff
 	assert.NoError(t, err, "Should succeed with exponential backoff")
-	
+
 	// Verify that retries occurred (should take some time due to backoff)
-	t.Logf("Recovered with exponential backoff in %v after %d calls", 
+	t.Logf("Recovered with exponential backoff in %v after %d calls",
 		duration, mockStorage.calls)
 }
 
@@ -538,27 +538,27 @@ func TestS3Cache_MaxRetryLimit(t *testing.T) {
 			"test-package:v1.tar.gz": []byte("artifact data"),
 		},
 	}
-	
+
 	s3Cache := createMockS3Cache(mockStorage, nil)
-	
+
 	tmpDir := t.TempDir()
 	localCache, err := local.NewFilesystemCache(tmpDir)
 	require.NoError(t, err)
-	
+
 	pkg := &mockPackageResilience{version: "v1"}
-	
+
 	// Use a shorter timeout to avoid long test runs
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	
+
 	start := time.Now()
 	err = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
 	duration := time.Since(start)
-	
+
 	// Should gracefully handle retry exhaustion
 	assert.NoError(t, err, "Should gracefully handle retry exhaustion")
-	
-	t.Logf("Handled retry exhaustion in %v after %d calls", 
+
+	t.Logf("Handled retry exhaustion in %v after %d calls",
 		duration, mockStorage.calls)
 }
 
@@ -590,7 +590,7 @@ func TestS3Cache_MixedFailureTypes(t *testing.T) {
 			expectRetry: false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			retryCount := 2 // Reduced from 3
@@ -602,33 +602,33 @@ func TestS3Cache_MixedFailureTypes(t *testing.T) {
 					"test-package:v1.tar.gz": []byte("artifact data"),
 				},
 			}
-			
+
 			s3Cache := createMockS3Cache(mockStorage, nil)
-			
+
 			tmpDir := t.TempDir()
 			localCache, err := local.NewFilesystemCache(tmpDir)
 			require.NoError(t, err)
-			
+
 			pkg := &mockPackageResilience{version: "v1"}
-			
+
 			// Use timeout to prevent hanging
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			
+
 			start := time.Now()
 			err = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
 			duration := time.Since(start)
-			
+
 			// Should always gracefully handle errors
 			assert.NoError(t, err, "Should gracefully handle %s", tt.name)
-			
+
 			if tt.expectRetry {
 				// Should have made multiple calls for retryable errors
-				t.Logf("Retryable error %s: %d calls in %v", 
+				t.Logf("Retryable error %s: %d calls in %v",
 					tt.name, mockStorage.calls, duration)
 			} else {
 				// Should have made fewer calls for non-retryable errors
-				t.Logf("Non-retryable error %s: %d calls in %v", 
+				t.Logf("Non-retryable error %s: %d calls in %v",
 					tt.name, mockStorage.calls, duration)
 			}
 		})

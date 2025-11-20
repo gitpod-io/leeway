@@ -170,7 +170,7 @@ func TestIsTestEnvironment(t *testing.T) {
 	if !isTestEnvironment() {
 		t.Error("isTestEnvironment() should return true when running in test binary")
 	}
-	
+
 	// Test with explicit environment variable
 	originalEnv := os.Getenv("LEEWAY_TEST_MODE")
 	defer func() {
@@ -180,12 +180,12 @@ func TestIsTestEnvironment(t *testing.T) {
 			os.Unsetenv("LEEWAY_TEST_MODE")
 		}
 	}()
-	
+
 	os.Setenv("LEEWAY_TEST_MODE", "true")
 	if !isTestEnvironment() {
 		t.Error("isTestEnvironment() should return true when LEEWAY_TEST_MODE=true")
 	}
-	
+
 	os.Setenv("LEEWAY_TEST_MODE", "false")
 	// Should still be true because we're in a test binary
 	if !isTestEnvironment() {

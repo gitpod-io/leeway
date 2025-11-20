@@ -33,7 +33,7 @@ func TestConsoleReporter(t *testing.T) {
 		Expect   Expectation
 	}{
 		{
-						Name: "all phases",
+			Name: "all phases",
 			Func: func(t *testing.T, r *ConsoleReporter) {
 				r.PackageBuildStarted(pkg, "/tmp/build")
 
