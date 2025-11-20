@@ -18,11 +18,21 @@ func boolPtr(b bool) *bool {
 const dummyDocker = `#!/bin/bash
 
 POSITIONAL_ARGS=()
+OUTPUT=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     -o)
       OUTPUT="$2"
+      shift # past argument
+      shift # past value
+      ;;
+    --output)
+      # Handle --output type=oci,dest=path
+      OUTPUT_ARG="$2"
+      if [[ "$OUTPUT_ARG" =~ dest=(.+) ]]; then
+        OUTPUT="${BASH_REMATCH[1]}"
+      fi
       shift # past argument
       shift # past value
       ;;
@@ -40,8 +50,20 @@ done
 
 set -- "${POSITIONAL_ARGS[@]}" # restore positional parameters
 
-if [ "${POSITIONAL_ARGS}" == "save" ]; then
+# Handle docker save
+if [[ " ${POSITIONAL_ARGS[@]} " =~ " save " ]]; then
 	tar cvvfz "${OUTPUT}" -T /dev/null
+fi
+
+# Handle docker buildx build --output type=oci
+if [[ " ${POSITIONAL_ARGS[@]} " =~ " buildx " ]] && [[ " ${POSITIONAL_ARGS[@]} " =~ " build " ]] && [[ -n "${OUTPUT}" ]]; then
+	# Create a minimal OCI layout tar
+	mkdir -p /tmp/oci-layout-$$
+	echo '{"imageLayoutVersion": "1.0.0"}' > /tmp/oci-layout-$$/oci-layout
+	echo '{"schemaVersion": 2, "manifests": []}' > /tmp/oci-layout-$$/index.json
+	mkdir -p /tmp/oci-layout-$$/blobs/sha256
+	tar -cf "${OUTPUT}" -C /tmp/oci-layout-$$ .
+	rm -rf /tmp/oci-layout-$$
 fi
 `
 
