@@ -54,7 +54,7 @@ jobs:
           echo "=== Verifying deterministic builds ==="
           for i in 1 2 3; do
             echo "Run $i:"
-            go test -tags=integration ./pkg/leeway \
+            go test -tags=integration -v ./pkg/leeway \
               -run TestDockerPackage_OCILayout_Determinism_Integration \
-              -timeout 5m 2>&1 | grep "Deterministic builds verified" || true
+              -timeout 5m 2>&1 | grep "Deterministic builds verified" || echo "  (test may have been cached or failed)"
           done
