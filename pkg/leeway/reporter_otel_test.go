@@ -15,7 +15,9 @@ func TestOTelReporter_BuildLifecycle(t *testing.T) {
 	tp := trace.NewTracerProvider(
 		trace.WithSyncer(exporter),
 	)
-	defer tp.Shutdown(context.Background())
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
 
 	tracer := tp.Tracer("test")
 	reporter := NewOTelReporter(tracer, context.Background())
@@ -76,7 +78,9 @@ func TestOTelReporter_PackageLifecycle(t *testing.T) {
 	tp := trace.NewTracerProvider(
 		trace.WithSyncer(exporter),
 	)
-	defer tp.Shutdown(context.Background())
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
 
 	tracer := tp.Tracer("test")
 	reporter := NewOTelReporter(tracer, context.Background())
@@ -193,7 +197,9 @@ func TestOTelReporter_ConcurrentPackages(t *testing.T) {
 	tp := trace.NewTracerProvider(
 		trace.WithSyncer(exporter),
 	)
-	defer tp.Shutdown(context.Background())
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
 
 	tracer := tp.Tracer("test")
 	reporter := NewOTelReporter(tracer, context.Background())
@@ -281,7 +287,9 @@ func TestOTelReporter_WithParentContext(t *testing.T) {
 	tp := trace.NewTracerProvider(
 		trace.WithSyncer(exporter),
 	)
-	defer tp.Shutdown(context.Background())
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
 
 	// Create parent span
 	tracer := tp.Tracer("test")
@@ -310,7 +318,7 @@ func TestOTelReporter_WithParentContext(t *testing.T) {
 
 	reporter.BuildStarted(pkg, status)
 	reporter.BuildFinished(pkg, nil)
-	
+
 	// End parent span so it appears in exporter
 	parentSpan.End()
 
