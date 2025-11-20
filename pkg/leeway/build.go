@@ -2171,8 +2171,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			Commands: commands,
 		}
 
-		// Add subjects function for provenance generation
-		res.Subjects = createDockerSubjectsFunction(version, cfg)
+		// Add subjects function for provenance generation (image in Docker daemon)
+		res.Subjects = createDockerInspectSubjectsFunction(version, cfg)
 	} else if len(cfg.Image) > 0 && *cfg.ExportToCache {
 		// Export to cache for signing
 		log.WithField("package", p.FullName()).Debug("Exporting Docker image to cache (OCI layout)")
@@ -2228,17 +2228,22 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			Commands: commands,
 		}
 
-		// Add PostProcess to create structured metadata file
+		// Add PostProcess to create structured metadata file and set up subjects function
 		res.PostProcess = func(buildCtx *buildContext, pkg *Package, buildDir string) error {
 			mtime, err := pkg.getDeterministicMtime()
 			if err != nil {
 				return fmt.Errorf("failed to get deterministic mtime: %w", err)
 			}
-			return createDockerExportMetadata(buildDir, version, cfg, mtime)
+			
+			// Create metadata
+			if err := createDockerExportMetadata(buildDir, version, cfg, mtime); err != nil {
+				return err
+			}
+			
+			// Set up subjects function with buildDir for OCI layout extraction
+			res.Subjects = createOCILayoutSubjectsFunction(version, cfg, buildDir)
+			return nil
 		}
-
-		// Add subjects function for provenance generation
-		res.Subjects = createDockerSubjectsFunction(version, cfg)
 	}
 
 	return res, nil
@@ -2298,13 +2303,49 @@ func extractImageNameFromCache(pkgName, cacheBundleFN string) (imgname string, e
 	return "", nil
 }
 
-// createDockerSubjectsFunction creates a function that generates SLSA provenance subjects for Docker images
-func createDockerSubjectsFunction(version string, cfg DockerPkgConfig) func() ([]in_toto.Subject, error) {
+// extractDigestFromOCILayout extracts the image digest from an OCI layout directory
+func extractDigestFromOCILayout(ociLayoutPath string) (common.DigestSet, error) {
+	// Read index.json from OCI layout
+	indexPath := filepath.Join(ociLayoutPath, "index.json")
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		return nil, xerrors.Errorf("failed to read OCI index.json: %w", err)
+	}
+
+	// Parse index.json to get manifest digest
+	var index struct {
+		Manifests []struct {
+			Digest string `json:"digest"`
+		} `json:"manifests"`
+	}
+
+	if err := json.Unmarshal(indexData, &index); err != nil {
+		return nil, xerrors.Errorf("failed to parse OCI index.json: %w", err)
+	}
+
+	if len(index.Manifests) == 0 {
+		return nil, xerrors.Errorf("no manifests found in OCI index.json")
+	}
+
+	// Extract digest from first manifest (format: "sha256:abc123...")
+	digestStr := index.Manifests[0].Digest
+	parts := strings.Split(digestStr, ":")
+	if len(parts) != 2 {
+		return nil, xerrors.Errorf("invalid digest format in OCI index: %s", digestStr)
+	}
+
+	return common.DigestSet{
+		parts[0]: parts[1],
+	}, nil
+}
+
+// createDockerInspectSubjectsFunction creates a function that generates SLSA provenance subjects
+// by inspecting the Docker image in the daemon (legacy push workflow)
+func createDockerInspectSubjectsFunction(version string, cfg DockerPkgConfig) func() ([]in_toto.Subject, error) {
 	return func() ([]in_toto.Subject, error) {
 		subjectLogger := log.WithField("operation", "provenance-subjects")
-		subjectLogger.Debug("Calculating provenance subjects for Docker images")
+		subjectLogger.Debug("Extracting digest from Docker daemon")
 
-		// Get image digest with improved error handling
 		out, err := exec.Command("docker", "inspect", version).CombinedOutput()
 		if err != nil {
 			return nil, xerrors.Errorf("failed to inspect image %s: %w\nOutput: %s",
@@ -2356,6 +2397,48 @@ func createDockerSubjectsFunction(version string, cfg DockerPkgConfig) func() ([
 		}
 
 		subjectLogger.WithField("digest", digest).Debug("Found image digest")
+
+		// Create subjects for each image
+		result := make([]in_toto.Subject, 0, len(cfg.Image))
+		for _, tag := range cfg.Image {
+			result = append(result, in_toto.Subject{
+				Name:   tag,
+				Digest: digest,
+			})
+		}
+
+		return result, nil
+	}
+}
+
+// createOCILayoutSubjectsFunction creates a function that generates SLSA provenance subjects
+// by extracting the digest from OCI layout files (exportToCache workflow)
+func createOCILayoutSubjectsFunction(version string, cfg DockerPkgConfig, buildDir string) func() ([]in_toto.Subject, error) {
+	return func() ([]in_toto.Subject, error) {
+		subjectLogger := log.WithField("operation", "provenance-subjects")
+		subjectLogger.Debug("Extracting digest from OCI layout")
+
+		ociLayoutPath := filepath.Join(buildDir, "image.tar.extracted")
+
+		// Extract image.tar to temporary directory
+		if err := os.MkdirAll(ociLayoutPath, 0755); err != nil {
+			return nil, xerrors.Errorf("failed to create OCI layout extraction directory: %w", err)
+		}
+		defer os.RemoveAll(ociLayoutPath)
+
+		// Extract image.tar
+		imageTarPath := filepath.Join(buildDir, "image.tar")
+		extractCmd := exec.Command("tar", "-xf", imageTarPath, "-C", ociLayoutPath)
+		if out, err := extractCmd.CombinedOutput(); err != nil {
+			return nil, xerrors.Errorf("failed to extract OCI layout: %w\nOutput: %s", err, string(out))
+		}
+
+		digest, err := extractDigestFromOCILayout(ociLayoutPath)
+		if err != nil {
+			return nil, xerrors.Errorf("failed to extract digest from OCI layout: %w", err)
+		}
+
+		subjectLogger.WithField("digest", digest).Debug("Found image digest from OCI layout")
 
 		// Create subjects for each image
 		result := make([]in_toto.Subject, 0, len(cfg.Image))
