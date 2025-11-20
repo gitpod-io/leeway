@@ -109,9 +109,9 @@ func TestDockerPackage_ExportToCache_Integration(t *testing.T) {
 			name:             "export without image config",
 			exportToCache:    true,
 			hasImages:        false,
-			expectFiles:      []string{"content"},
-			expectError:      true, // OCI layout export requires an image tag
-			expectErrorMatch: "(?i)(not found|failed)", // Build fails without image config in OCI mode
+			expectFiles:      []string{"content"}, // Without image config, extracts container filesystem
+			expectError:      false,
+			expectErrorMatch: "",
 		},
 	}
 
@@ -120,6 +120,26 @@ func TestDockerPackage_ExportToCache_Integration(t *testing.T) {
 			// Skip if test has a skip reason
 			if tt.skipReason != "" {
 				t.Skip(tt.skipReason)
+			}
+
+			// Create docker-container builder for OCI export if needed
+			if tt.exportToCache {
+				builderName := "leeway-export-test-builder"
+				createBuilder := exec.Command("docker", "buildx", "create", "--name", builderName, "--driver", "docker-container", "--bootstrap")
+				if err := createBuilder.Run(); err != nil {
+					// Builder might already exist, try to use it
+					t.Logf("Builder creation failed (might already exist): %v", err)
+				}
+				defer func() {
+					removeBuilder := exec.Command("docker", "buildx", "rm", builderName)
+					_ = removeBuilder.Run()
+				}()
+
+				// Set builder as default for this test
+				useBuilder := exec.Command("docker", "buildx", "use", builderName)
+				if err := useBuilder.Run(); err != nil {
+					t.Fatalf("Failed to use builder: %v", err)
+				}
 			}
 
 			// Create temporary workspace
@@ -332,6 +352,22 @@ func TestDockerPackage_CacheRoundTrip_Integration(t *testing.T) {
 	// Ensure Docker is available
 	if err := exec.Command("docker", "version").Run(); err != nil {
 		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Create docker-container builder for OCI export
+	builderName := "leeway-roundtrip-test-builder"
+	createBuilder := exec.Command("docker", "buildx", "create", "--name", builderName, "--driver", "docker-container", "--bootstrap")
+	if err := createBuilder.Run(); err != nil {
+		t.Logf("Builder creation failed (might already exist): %v", err)
+	}
+	defer func() {
+		removeBuilder := exec.Command("docker", "buildx", "rm", builderName)
+		_ = removeBuilder.Run()
+	}()
+
+	useBuilder := exec.Command("docker", "buildx", "use", builderName)
+	if err := useBuilder.Run(); err != nil {
+		t.Fatalf("Failed to use builder: %v", err)
 	}
 
 	// This test verifies that a Docker image can be:
@@ -968,4 +1004,165 @@ CMD ["cat", "/build-time.txt"]
 	t.Logf("✅ Build succeeded with OCI layout export")
 	t.Logf("✅ No 'docker inspect' error occurred")
 	t.Logf("✅ This confirms the fix works: digest extracted from OCI layout instead of Docker daemon")
+}
+
+// TestDockerPackage_ContainerExtraction_Integration tests container filesystem extraction
+// with both Docker daemon and OCI layout paths
+func TestDockerPackage_ContainerExtraction_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Ensure Docker is available
+	if err := exec.Command("docker", "version").Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Ensure buildx is available
+	if err := exec.Command("docker", "buildx", "version").Run(); err != nil {
+		t.Skip("Docker buildx not available, skipping integration test")
+	}
+
+	// Create docker-container builder for OCI export
+	builderName := "leeway-extract-test-builder"
+	createBuilder := exec.Command("docker", "buildx", "create", "--name", builderName, "--driver", "docker-container", "--bootstrap")
+	if err := createBuilder.Run(); err != nil {
+		t.Logf("Warning: failed to create builder (might already exist): %v", err)
+	}
+	defer func() {
+		exec.Command("docker", "buildx", "rm", builderName).Run()
+	}()
+
+	useBuilder := exec.Command("docker", "buildx", "use", builderName)
+	if err := useBuilder.Run(); err != nil {
+		t.Fatalf("Failed to use builder: %v", err)
+	}
+	defer func() {
+		exec.Command("docker", "buildx", "use", "default").Run()
+	}()
+
+	// Test both paths
+	testCases := []struct {
+		name            string
+		exportToCache   bool
+		expectedMessage string
+	}{
+		{
+			name:            "with_docker_daemon",
+			exportToCache:   false,
+			expectedMessage: "Image found in Docker daemon",
+		},
+		{
+			name:            "with_oci_layout",
+			exportToCache:   true,
+			expectedMessage: "OCI layout image.tar found and valid",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			wsDir := filepath.Join(tmpDir, "workspace")
+			if err := os.MkdirAll(wsDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+
+			// Create WORKSPACE.yaml
+			workspaceYAML := `defaultTarget: ":test-extract"`
+			if err := os.WriteFile(filepath.Join(wsDir, "WORKSPACE.yaml"), []byte(workspaceYAML), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			// Create Dockerfile
+			dockerfile := `FROM alpine:3.18
+RUN echo "test content" > /test.txt
+`
+			if err := os.WriteFile(filepath.Join(wsDir, "Dockerfile"), []byte(dockerfile), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			// Create BUILD.yaml with container extraction
+			buildYAML := fmt.Sprintf(`packages:
+  - name: test-extract
+    type: docker
+    config:
+      dockerfile: Dockerfile
+      exportToCache: %v
+`, tc.exportToCache)
+			if err := os.WriteFile(filepath.Join(wsDir, "BUILD.yaml"), []byte(buildYAML), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			// Initialize git repo
+			gitInit := exec.Command("git", "init")
+			gitInit.Dir = wsDir
+			if err := gitInit.Run(); err != nil {
+				t.Fatal(err)
+			}
+
+			gitConfigName := exec.Command("git", "config", "user.name", "Test User")
+			gitConfigName.Dir = wsDir
+			if err := gitConfigName.Run(); err != nil {
+				t.Fatal(err)
+			}
+
+			gitConfigEmail := exec.Command("git", "config", "user.email", "test@example.com")
+			gitConfigEmail.Dir = wsDir
+			if err := gitConfigEmail.Run(); err != nil {
+				t.Fatal(err)
+			}
+
+			gitAdd := exec.Command("git", "add", ".")
+			gitAdd.Dir = wsDir
+			if err := gitAdd.Run(); err != nil {
+				t.Fatal(err)
+			}
+
+			gitCommit := exec.Command("git", "commit", "-m", "initial")
+			gitCommit.Dir = wsDir
+			gitCommit.Env = append(os.Environ(),
+				"GIT_AUTHOR_DATE=2021-01-01T00:00:00Z",
+				"GIT_COMMITTER_DATE=2021-01-01T00:00:00Z",
+			)
+			if err := gitCommit.Run(); err != nil {
+				t.Fatal(err)
+			}
+
+			// Build
+			cacheDir := filepath.Join(tmpDir, "cache")
+			cache, err := local.NewFilesystemCache(cacheDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			buildCtx, err := newBuildContext(buildOptions{
+				LocalCache:          cache,
+				DockerExportToCache: tc.exportToCache,
+				DockerExportSet:     true,
+				Reporter:            NewConsoleReporter(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			ws, err := FindWorkspace(wsDir, Arguments{}, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			pkg, ok := ws.Packages["//:test-extract"]
+			if !ok {
+				t.Fatal("package //:test-extract not found")
+			}
+
+			// Build the package - this should extract the container filesystem
+			if err := pkg.build(buildCtx); err != nil {
+				t.Fatalf("build failed: %v", err)
+			}
+
+			t.Logf("✅ Build succeeded with exportToCache=%v", tc.exportToCache)
+			t.Logf("✅ Container filesystem extraction completed")
+			t.Logf("✅ No 'image not found' error occurred")
+		})
+	}
 }

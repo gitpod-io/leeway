@@ -2044,13 +2044,29 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			})
 			extractLogger.Debug("Extracting container filesystem")
 
-			// First, verify the image exists
-			imageExists, err := checkImageExists(version)
-			if err != nil {
-				return xerrors.Errorf("failed to check if image exists: %w", err)
-			}
-			if !imageExists {
-				return xerrors.Errorf("image %s not found - build may have failed silently", version)
+			// Verify the image exists (check OCI layout or Docker daemon based on export mode)
+			if *cfg.ExportToCache {
+				// Check OCI layout
+				extractLogger.Debug("Checking OCI layout image.tar")
+				ociExists, err := checkOCILayoutExists(buildDir)
+				if err != nil {
+					return xerrors.Errorf("failed to check OCI layout: %w", err)
+				}
+				if !ociExists {
+					return xerrors.Errorf("OCI layout image.tar not found in %s - build may have failed silently", buildDir)
+				}
+				extractLogger.Debug("OCI layout image.tar found and valid")
+			} else {
+				// Check Docker daemon
+				extractLogger.Debug("Checking Docker daemon for image")
+				imageExists, err := checkImageExists(version)
+				if err != nil {
+					return xerrors.Errorf("failed to check if image exists in Docker daemon: %w", err)
+				}
+				if !imageExists {
+					return xerrors.Errorf("image %s not found in Docker daemon - build may have failed silently", version)
+				}
+				extractLogger.Debug("Image found in Docker daemon")
 			}
 
 			// Use the OCI libraries for extraction with more robust error handling
@@ -2800,6 +2816,31 @@ func checkImageExists(imageName string) (bool, error) {
 		}
 		return false, err
 	}
+	return true, nil
+}
+
+// checkOCILayoutExists checks if an OCI layout image.tar exists and is valid
+func checkOCILayoutExists(buildDir string) (bool, error) {
+	imageTarPath := filepath.Join(buildDir, "image.tar")
+	
+	// Check if image.tar exists
+	info, err := os.Stat(imageTarPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, xerrors.Errorf("failed to stat image.tar: %w", err)
+	}
+	
+	// Check if it's a regular file and not empty
+	if !info.Mode().IsRegular() {
+		return false, xerrors.Errorf("image.tar is not a regular file")
+	}
+	
+	if info.Size() == 0 {
+		return false, xerrors.Errorf("image.tar is empty")
+	}
+	
 	return true, nil
 }
 
