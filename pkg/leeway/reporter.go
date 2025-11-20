@@ -1,6 +1,7 @@
 package leeway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,9 @@ import (
 	"github.com/gookit/color"
 	segment "github.com/segmentio/analytics-go/v3"
 	"github.com/segmentio/textio"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Reporter provides feedback about the build progress to the user.
@@ -686,3 +690,255 @@ func (sr *GitHubActionReporter) PackageBuildFinished(pkg *Package, rep *PackageB
 	}
 	fmt.Fprintf(f, "%s=%v\n", pkg.FilesystemSafeName(), success)
 }
+
+// OTelReporter reports build progress using OpenTelemetry tracing
+type OTelReporter struct {
+	NoopReporter
+
+	tracer      trace.Tracer
+	parentCtx   context.Context
+	rootCtx     context.Context
+	rootSpan    trace.Span
+	packageCtxs map[string]context.Context
+	packageSpans map[string]trace.Span
+	mu          sync.RWMutex
+}
+
+// NewOTelReporter creates a new OpenTelemetry reporter with the given tracer and parent context
+func NewOTelReporter(tracer trace.Tracer, parentCtx context.Context) *OTelReporter {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	return &OTelReporter{
+		tracer:       tracer,
+		parentCtx:    parentCtx,
+		packageCtxs:  make(map[string]context.Context),
+		packageSpans: make(map[string]trace.Span),
+	}
+}
+
+// BuildStarted implements Reporter
+func (r *OTelReporter) BuildStarted(pkg *Package, status map[*Package]PackageBuildStatus) {
+	if r.tracer == nil {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Create root span for the build
+	ctx, span := r.tracer.Start(r.parentCtx, "leeway.build",
+		trace.WithSpanKind(trace.SpanKindInternal),
+	)
+	r.rootCtx = ctx
+	r.rootSpan = span
+
+	// Add root span attributes
+	version, err := pkg.Version()
+	if err != nil {
+		version = "unknown"
+	}
+
+	span.SetAttributes(
+		attribute.String("leeway.version", Version),
+		attribute.String("leeway.workspace.root", pkg.C.W.Origin),
+		attribute.String("leeway.target.package", pkg.FullName()),
+		attribute.String("leeway.target.version", version),
+	)
+
+	// Add GitHub context attributes if available
+	r.addGitHubAttributes(span)
+
+	// Add build status summary
+	var (
+		cached    int
+		remote    int
+		download  int
+		toBuild   int
+	)
+	for _, s := range status {
+		switch s {
+		case PackageBuilt:
+			cached++
+		case PackageInRemoteCache:
+			remote++
+		case PackageDownloaded:
+			download++
+		case PackageNotBuiltYet:
+			toBuild++
+		}
+	}
+
+	span.SetAttributes(
+		attribute.Int("leeway.packages.total", len(status)),
+		attribute.Int("leeway.packages.cached", cached),
+		attribute.Int("leeway.packages.remote", remote),
+		attribute.Int("leeway.packages.downloaded", download),
+		attribute.Int("leeway.packages.to_build", toBuild),
+	)
+}
+
+// BuildFinished implements Reporter
+func (r *OTelReporter) BuildFinished(pkg *Package, err error) {
+	if r.tracer == nil {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.rootSpan == nil {
+		return
+	}
+
+	// Set error status if build failed
+	if err != nil {
+		r.rootSpan.RecordError(err)
+		r.rootSpan.SetStatus(codes.Error, err.Error())
+	} else {
+		r.rootSpan.SetStatus(codes.Ok, "build completed successfully")
+	}
+
+	// End root span
+	r.rootSpan.End()
+	r.rootSpan = nil
+	r.rootCtx = nil
+}
+
+// PackageBuildStarted implements Reporter
+func (r *OTelReporter) PackageBuildStarted(pkg *Package, builddir string) {
+	if r.tracer == nil {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.rootCtx == nil {
+		log.Warn("PackageBuildStarted called before BuildStarted")
+		return
+	}
+
+	pkgName := pkg.FullName()
+
+	// Create package span as child of root span
+	ctx, span := r.tracer.Start(r.rootCtx, "leeway.package",
+		trace.WithSpanKind(trace.SpanKindInternal),
+	)
+
+	// Add package attributes
+	version, err := pkg.Version()
+	if err != nil {
+		version = "unknown"
+	}
+
+	span.SetAttributes(
+		attribute.String("leeway.package.name", pkgName),
+		attribute.String("leeway.package.type", string(pkg.Type)),
+		attribute.String("leeway.package.version", version),
+		attribute.String("leeway.package.builddir", builddir),
+	)
+
+	// Store context and span
+	r.packageCtxs[pkgName] = ctx
+	r.packageSpans[pkgName] = span
+}
+
+// PackageBuildFinished implements Reporter
+func (r *OTelReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildReport) {
+	if r.tracer == nil {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	pkgName := pkg.FullName()
+	span, ok := r.packageSpans[pkgName]
+	if !ok {
+		log.WithField("package", pkgName).Warn("PackageBuildFinished called without corresponding PackageBuildStarted")
+		return
+	}
+
+	// Add build report attributes
+	span.SetAttributes(
+		attribute.String("leeway.package.last_phase", string(rep.LastPhase())),
+		attribute.Int64("leeway.package.duration_ms", rep.TotalTime().Milliseconds()),
+	)
+
+	// Add phase durations
+	for _, phase := range rep.Phases {
+		duration := rep.PhaseDuration(phase)
+		if duration >= 0 {
+			span.SetAttributes(
+				attribute.Int64(fmt.Sprintf("leeway.package.phase.%s.duration_ms", phase), duration.Milliseconds()),
+			)
+		}
+	}
+
+	// Add test coverage if available
+	if rep.TestCoverageAvailable {
+		span.SetAttributes(
+			attribute.Int("leeway.package.test.coverage_percentage", rep.TestCoveragePercentage),
+			attribute.Int("leeway.package.test.functions_with_test", rep.FunctionsWithTest),
+			attribute.Int("leeway.package.test.functions_without_test", rep.FunctionsWithoutTest),
+		)
+	}
+
+	// Set error status if build failed
+	if rep.Error != nil {
+		span.RecordError(rep.Error)
+		span.SetStatus(codes.Error, rep.Error.Error())
+	} else {
+		span.SetStatus(codes.Ok, "package built successfully")
+	}
+
+	// End span
+	span.End()
+
+	// Clean up
+	delete(r.packageSpans, pkgName)
+	delete(r.packageCtxs, pkgName)
+}
+
+// addGitHubAttributes adds GitHub Actions context attributes to the span
+func (r *OTelReporter) addGitHubAttributes(span trace.Span) {
+	// Check if running in GitHub Actions
+	if os.Getenv("GITHUB_ACTIONS") != "true" {
+		return
+	}
+
+	// Add GitHub context attributes
+	if val := os.Getenv("GITHUB_WORKFLOW"); val != "" {
+		span.SetAttributes(attribute.String("github.workflow", val))
+	}
+	if val := os.Getenv("GITHUB_RUN_ID"); val != "" {
+		span.SetAttributes(attribute.String("github.run_id", val))
+	}
+	if val := os.Getenv("GITHUB_RUN_NUMBER"); val != "" {
+		span.SetAttributes(attribute.String("github.run_number", val))
+	}
+	if val := os.Getenv("GITHUB_JOB"); val != "" {
+		span.SetAttributes(attribute.String("github.job", val))
+	}
+	if val := os.Getenv("GITHUB_ACTOR"); val != "" {
+		span.SetAttributes(attribute.String("github.actor", val))
+	}
+	if val := os.Getenv("GITHUB_REPOSITORY"); val != "" {
+		span.SetAttributes(attribute.String("github.repository", val))
+	}
+	if val := os.Getenv("GITHUB_REF"); val != "" {
+		span.SetAttributes(attribute.String("github.ref", val))
+	}
+	if val := os.Getenv("GITHUB_SHA"); val != "" {
+		span.SetAttributes(attribute.String("github.sha", val))
+	}
+	if val := os.Getenv("GITHUB_SERVER_URL"); val != "" {
+		span.SetAttributes(attribute.String("github.server_url", val))
+	}
+	if val := os.Getenv("GITHUB_WORKFLOW_REF"); val != "" {
+		span.SetAttributes(attribute.String("github.workflow_ref", val))
+	}
+}
+
+var _ Reporter = (*OTelReporter)(nil)
