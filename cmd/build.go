@@ -50,7 +50,8 @@ Examples:
 		if pkg == nil {
 			log.Fatal("build needs a package")
 		}
-		opts, localCache := getBuildOpts(cmd)
+		opts, localCache, shutdown := getBuildOpts(cmd)
+		defer shutdown()
 
 		var (
 			watch, _ = cmd.Flags().GetBool("watch")
@@ -217,7 +218,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().String("trace-state", os.Getenv("TRACESTATE"), "W3C Trace Context tracestate header for distributed tracing (defaults to $TRACESTATE)")
 }
 
-func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
+func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, func()) {
 	// Track if user explicitly set LEEWAY_DOCKER_EXPORT_TO_CACHE before workspace loading.
 	// This allows us to distinguish:
 	// - User set explicitly: High priority (overrides package config)
@@ -320,9 +321,15 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 
 	// Initialize OpenTelemetry reporter if endpoint is configured
 	var tracerProvider *sdktrace.TracerProvider
+	var otelShutdown func()
 	if otelEndpoint, err := cmd.Flags().GetString("otel-endpoint"); err != nil {
 		log.Fatal(err)
 	} else if otelEndpoint != "" {
+		// Set environment variable for InitTracer if not already set
+		if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+			os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", otelEndpoint)
+		}
+		
 		// Initialize tracer
 		tp, err := telemetry.InitTracer(context.Background())
 		if err != nil {
@@ -352,14 +359,14 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 			tracer := otel.Tracer("leeway")
 			reporter = append(reporter, leeway.NewOTelReporter(tracer, parentCtx))
 			
-			// Register shutdown handler
-			defer func() {
+			// Create shutdown function
+			otelShutdown = func() {
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				if err := telemetry.Shutdown(shutdownCtx, tracerProvider); err != nil {
 					log.WithError(err).Warn("failed to shutdown tracer provider")
 				}
-			}()
+			}
 		}
 	}
 
@@ -425,6 +432,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		dockerExportSet = true
 	}
 
+	// Create a no-op shutdown function if otelShutdown is nil
+	if otelShutdown == nil {
+		otelShutdown = func() {}
+	}
+	
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
@@ -442,7 +454,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		leeway.WithInFlightChecksums(inFlightChecksums),
 		leeway.WithDockerExportToCache(dockerExportToCache, dockerExportSet),
 		leeway.WithDockerExportEnv(dockerExportEnvValue, dockerExportEnvSet),
-	}, localCache
+	}, localCache, otelShutdown
 }
 
 type pushOnlyRemoteCache struct {
