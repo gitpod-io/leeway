@@ -30,7 +30,7 @@ If no package is specified, the workspace's default target is used.`,
 		}
 
 		// Get cache
-		_, localCache := getBuildOpts(cmd)
+		_, localCache, _ := getBuildOpts(cmd)
 
 		// Get output directory
 		outputDir, _ := cmd.Flags().GetString("output-dir")

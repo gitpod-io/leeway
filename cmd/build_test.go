@@ -242,7 +242,7 @@ func TestGetBuildOptsWithInFlightChecksums(t *testing.T) {
 			}
 
 			// Test getBuildOpts function
-			opts, localCache := getBuildOpts(cmd)
+			opts, localCache, _ := getBuildOpts(cmd)
 
 			// We can't directly test the WithInFlightChecksums option since it's internal,
 			// but we can verify the function doesn't error and returns options
