@@ -15,9 +15,12 @@ import (
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache/local"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
+	"github.com/gitpod-io/leeway/pkg/leeway/telemetry"
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // buildCmd represents the build command
@@ -209,6 +212,9 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
 	cmd.Flags().Bool("fixed-build-dir", true, "Use a fixed build directory for each package, instead of based on the package version, to better utilize caches based on absolute paths (defaults to true)")
 	cmd.Flags().Bool("docker-export-to-cache", false, "Export Docker images to cache instead of pushing directly (enables SLSA L3 compliance)")
+	cmd.Flags().String("otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "OpenTelemetry OTLP endpoint URL for tracing (defaults to $OTEL_EXPORTER_OTLP_ENDPOINT)")
+	cmd.Flags().String("trace-parent", os.Getenv("TRACEPARENT"), "W3C Trace Context traceparent header for distributed tracing (defaults to $TRACEPARENT)")
+	cmd.Flags().String("trace-state", os.Getenv("TRACESTATE"), "W3C Trace Context tracestate header for distributed tracing (defaults to $TRACESTATE)")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
@@ -310,6 +316,51 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		log.Fatal(err)
 	} else if github {
 		reporter = append(reporter, leeway.NewGitHubReporter())
+	}
+
+	// Initialize OpenTelemetry reporter if endpoint is configured
+	var tracerProvider *sdktrace.TracerProvider
+	if otelEndpoint, err := cmd.Flags().GetString("otel-endpoint"); err != nil {
+		log.Fatal(err)
+	} else if otelEndpoint != "" {
+		// Initialize tracer
+		tp, err := telemetry.InitTracer(context.Background())
+		if err != nil {
+			log.WithError(err).Warn("failed to initialize OpenTelemetry tracer")
+		} else {
+			tracerProvider = tp
+			
+			// Parse trace context if provided
+			traceParent, _ := cmd.Flags().GetString("trace-parent")
+			traceState, _ := cmd.Flags().GetString("trace-state")
+			
+			parentCtx := context.Background()
+			if traceParent != "" {
+				if err := telemetry.ValidateTraceParent(traceParent); err != nil {
+					log.WithError(err).Warn("invalid trace-parent format")
+				} else {
+					ctx, err := telemetry.ParseTraceContext(traceParent, traceState)
+					if err != nil {
+						log.WithError(err).Warn("failed to parse trace context")
+					} else {
+						parentCtx = ctx
+					}
+				}
+			}
+			
+			// Create OTel reporter
+			tracer := otel.Tracer("leeway")
+			reporter = append(reporter, leeway.NewOTelReporter(tracer, parentCtx))
+			
+			// Register shutdown handler
+			defer func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := telemetry.Shutdown(shutdownCtx, tracerProvider); err != nil {
+					log.WithError(err).Warn("failed to shutdown tracer provider")
+				}
+			}()
+		}
 	}
 
 	dontTest, err := cmd.Flags().GetBool("dont-test")
