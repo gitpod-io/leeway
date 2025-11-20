@@ -114,7 +114,7 @@ const (
 var buildProcessVersions = map[PackageType]int{
 	YarnPackage:    7,
 	GoPackage:      2,
-	DockerPackage:  3,
+	DockerPackage:  4, // Bumped for OCI layout format change (PR #286)
 	GenericPackage: 1,
 }
 
