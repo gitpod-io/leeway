@@ -1,11 +1,14 @@
 package leeway
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
@@ -173,4 +176,54 @@ func (info *GitInfo) DirtyFiles(files []string) bool {
 		}
 	}
 	return false
+}
+
+// GetCommitTimestamp returns the timestamp of a git commit.
+// It first checks SOURCE_DATE_EPOCH for reproducible builds, then falls back to git.
+// The context allows for cancellation of the git command if the build is cancelled.
+//
+// This function is used for:
+// - Deterministic tar mtime in package builds
+// - SBOM timestamp normalization
+// - Any operation requiring reproducible timestamps
+func GetCommitTimestamp(ctx context.Context, gitInfo *GitInfo) (time.Time, error) {
+	// Try SOURCE_DATE_EPOCH first (for reproducible builds)
+	// This takes precedence over git to allow explicit override
+	if epoch := os.Getenv("SOURCE_DATE_EPOCH"); epoch != "" {
+		timestamp, err := strconv.ParseInt(epoch, 10, 64)
+		if err == nil {
+			return time.Unix(timestamp, 0).UTC(), nil
+		}
+		// Log warning but continue to git fallback
+		log.WithError(err).WithField("SOURCE_DATE_EPOCH", epoch).Warn("Invalid SOURCE_DATE_EPOCH, falling back to git commit timestamp")
+	}
+
+	// Validate git information is available
+	if gitInfo == nil {
+		return time.Time{}, fmt.Errorf("no git information available")
+	}
+
+	if gitInfo.Commit == "" {
+		return time.Time{}, fmt.Errorf("no git commit available")
+	}
+
+	// Execute git command with context support for cancellation
+	cmd := exec.CommandContext(ctx, "git", "show", "-s", "--format=%ct", gitInfo.Commit)
+	cmd.Dir = gitInfo.WorkingCopyLoc
+	
+	output, err := cmd.Output()
+	if err != nil {
+		return time.Time{}, &GitError{
+			Op:  fmt.Sprintf("show -s --format=%%ct %s", gitInfo.Commit),
+			Err: err,
+		}
+	}
+
+	// Parse Unix timestamp
+	timestamp, err := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse commit timestamp '%s': %w", strings.TrimSpace(string(output)), err)
+	}
+
+	return time.Unix(timestamp, 0).UTC(), nil
 }
