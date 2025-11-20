@@ -17,12 +17,11 @@ import (
 )
 
 // InitTracer initializes the OpenTelemetry tracer with OTLP HTTP exporter.
-// It reads the OTEL_EXPORTER_OTLP_ENDPOINT environment variable for the endpoint.
+// The endpoint parameter specifies the OTLP endpoint URL (e.g., "localhost:4318").
 // Returns the TracerProvider which must be shut down when done.
-func InitTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+func InitTracer(ctx context.Context, endpoint string) (*sdktrace.TracerProvider, error) {
 	if endpoint == "" {
-		return nil, xerrors.Errorf("OTEL_EXPORTER_OTLP_ENDPOINT not set")
+		return nil, xerrors.Errorf("OTLP endpoint not provided")
 	}
 
 	// Create OTLP HTTP exporter
