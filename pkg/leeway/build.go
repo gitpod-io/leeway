@@ -2437,11 +2437,11 @@ func (p *Package) getDeterministicMtime() (int64, error) {
 			"Building from source tarballs without git metadata will cause cache inconsistencies")
 	}
 	
-	timestamp, err := getGitCommitTimestamp(context.Background(), commit)
+	timestamp, err := GetCommitTimestamp(context.Background(), p.C.Git())
 	if err != nil {
-		return 0, fmt.Errorf("failed to get deterministic timestamp for tar mtime (commit: %s): %w. "+
+		return 0, fmt.Errorf("failed to get deterministic timestamp for tar mtime: %w. "+
 			"Ensure git is available and the repository is not a shallow clone, or set SOURCE_DATE_EPOCH environment variable",
-			commit, err)
+			err)
 	}
 	return timestamp.Unix(), nil
 }

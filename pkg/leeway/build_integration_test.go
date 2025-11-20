@@ -590,42 +590,64 @@ CMD ["cat", "/build-time.txt"]
 		t.Fatal(err)
 	}
 
+	gitConfigName := exec.Command("git", "config", "user.name", "Test User")
+	gitConfigName.Dir = wsDir
+	if err := gitConfigName.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	gitConfigEmail := exec.Command("git", "config", "user.email", "test@example.com")
+	gitConfigEmail.Dir = wsDir
+	if err := gitConfigEmail.Run(); err != nil {
+		t.Fatal(err)
+	}
+
 	gitAdd := exec.Command("git", "add", ".")
 	gitAdd.Dir = wsDir
 	if err := gitAdd.Run(); err != nil {
 		t.Fatal(err)
 	}
 
+	// Use fixed timestamp for deterministic git commit
+	// This ensures the commit timestamp is the same across test runs
 	gitCommit := exec.Command("git", "commit", "-m", "initial")
 	gitCommit.Dir = wsDir
+	gitCommit.Env = append(os.Environ(),
+		"GIT_AUTHOR_DATE=2021-01-01T00:00:00Z",
+		"GIT_COMMITTER_DATE=2021-01-01T00:00:00Z",
+	)
 	if err := gitCommit.Run(); err != nil {
 		t.Fatal(err)
 	}
 
 	// Build first time
 	cacheDir1 := filepath.Join(tmpDir, "cache1")
-	if err := os.MkdirAll(cacheDir1, 0755); err != nil {
+	cache1, err := local.NewFilesystemCache(cacheDir1)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	buildCtx1 := &buildContext{
-		LocalCache:           &FilesystemCache{Location: cacheDir1},
-		DockerExportToCache:  true,
-		DockerExportSet:      true,
-		Reporter:             &ConsoleReporter{},
+	buildCtx1, err := newBuildContext(buildOptions{
+		LocalCache:          cache1,
+		DockerExportToCache: true,
+		DockerExportSet:     true,
+		Reporter:            NewConsoleReporter(),
+	})
+	if err != nil {
+		t.Fatalf("Failed to create build context: %v", err)
 	}
 
-	ws1, err := Load(wsDir)
+	ws1, err := FindWorkspace(wsDir, Arguments{}, "", "")
 	if err != nil {
 		t.Fatalf("Failed to load workspace: %v", err)
 	}
 
-	pkg1, exists := ws1.Packages[":test-image"]
+	pkg1, exists := ws1.Packages["//:test-image"]
 	if !exists {
-		t.Fatal("Package :test-image not found")
+		t.Fatal("Package //:test-image not found")
 	}
 
-	if _, err := pkg1.build(buildCtx1); err != nil {
+	if err := pkg1.build(buildCtx1); err != nil {
 		t.Fatalf("First build failed: %v", err)
 	}
 
@@ -641,28 +663,32 @@ CMD ["cat", "/build-time.txt"]
 
 	// Build second time (clean cache)
 	cacheDir2 := filepath.Join(tmpDir, "cache2")
-	if err := os.MkdirAll(cacheDir2, 0755); err != nil {
+	cache2, err := local.NewFilesystemCache(cacheDir2)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	buildCtx2 := &buildContext{
-		LocalCache:           &FilesystemCache{Location: cacheDir2},
-		DockerExportToCache:  true,
-		DockerExportSet:      true,
-		Reporter:             &ConsoleReporter{},
+	buildCtx2, err := newBuildContext(buildOptions{
+		LocalCache:          cache2,
+		DockerExportToCache: true,
+		DockerExportSet:     true,
+		Reporter:            NewConsoleReporter(),
+	})
+	if err != nil {
+		t.Fatalf("Failed to create build context: %v", err)
 	}
 
-	ws2, err := Load(wsDir)
+	ws2, err := FindWorkspace(wsDir, Arguments{}, "", "")
 	if err != nil {
 		t.Fatalf("Failed to load workspace: %v", err)
 	}
 
-	pkg2, exists := ws2.Packages[":test-image"]
+	pkg2, exists := ws2.Packages["//:test-image"]
 	if !exists {
-		t.Fatal("Package :test-image not found")
+		t.Fatal("Package //:test-image not found")
 	}
 
-	if _, err := pkg2.build(buildCtx2); err != nil {
+	if err := pkg2.build(buildCtx2); err != nil {
 		t.Fatalf("Second build failed: %v", err)
 	}
 

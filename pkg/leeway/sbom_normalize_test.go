@@ -67,7 +67,7 @@ func TestGenerateDeterministicUUID(t *testing.T) {
 	}
 }
 
-func TestGetGitCommitTimestamp_SourceDateEpoch(t *testing.T) {
+func TestGetCommitTimestamp_SourceDateEpoch(t *testing.T) {
 	// Save original env var
 	originalEnv := os.Getenv("SOURCE_DATE_EPOCH")
 	defer func() {
@@ -111,7 +111,12 @@ func TestGetGitCommitTimestamp_SourceDateEpoch(t *testing.T) {
 			}
 
 			// Use HEAD as commit (should exist in test environment)
-			timestamp, err := getGitCommitTimestamp(context.Background(), "HEAD")
+			wd, _ := os.Getwd()
+			gitInfo := &GitInfo{
+				Commit:         "HEAD",
+				WorkingCopyLoc: wd,
+			}
+			timestamp, err := GetCommitTimestamp(context.Background(), gitInfo)
 
 			if tt.wantErr && err == nil {
 				t.Error("expected error, got nil")
@@ -128,11 +133,17 @@ func TestGetGitCommitTimestamp_SourceDateEpoch(t *testing.T) {
 	}
 }
 
-func TestGetGitCommitTimestamp_GitCommit(t *testing.T) {
+func TestGetCommitTimestamp_GitCommit(t *testing.T) {
 	// This test requires being in a git repository
 	// Use HEAD as a known commit
 	ctx := context.Background()
-	timestamp, err := getGitCommitTimestamp(ctx, "HEAD")
+	wd, _ := os.Getwd()
+	gitInfo := &GitInfo{
+		Commit:         "HEAD",
+		WorkingCopyLoc: wd,
+	}
+	
+	timestamp, err := GetCommitTimestamp(ctx, gitInfo)
 	if err != nil {
 		t.Skipf("skipping test: not in a git repository or git not available: %v", err)
 	}
@@ -148,7 +159,7 @@ func TestGetGitCommitTimestamp_GitCommit(t *testing.T) {
 	}
 
 	// Verify deterministic: calling twice should return same result
-	timestamp2, err := getGitCommitTimestamp(ctx, "HEAD")
+	timestamp2, err := GetCommitTimestamp(ctx, gitInfo)
 	if err != nil {
 		t.Fatalf("second call failed: %v", err)
 	}
@@ -157,12 +168,18 @@ func TestGetGitCommitTimestamp_GitCommit(t *testing.T) {
 	}
 }
 
-func TestGetGitCommitTimestamp_ContextCancellation(t *testing.T) {
+func TestGetCommitTimestamp_ContextCancellation(t *testing.T) {
 	// Create a cancelled context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	_, err := getGitCommitTimestamp(ctx, "HEAD")
+	wd, _ := os.Getwd()
+	gitInfo := &GitInfo{
+		Commit:         "HEAD",
+		WorkingCopyLoc: wd,
+	}
+	
+	_, err := GetCommitTimestamp(ctx, gitInfo)
 	if err == nil {
 		t.Error("expected error with cancelled context, got nil")
 	}

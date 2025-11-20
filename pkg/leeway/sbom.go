@@ -10,11 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -103,33 +101,6 @@ func GetSBOMParallelism(sbomConfig WorkspaceSBOM) int {
 	return runtime.NumCPU()
 }
 
-// getGitCommitTimestamp returns the timestamp of the git commit.
-// The context allows for cancellation of the git command if the build is cancelled.
-func getGitCommitTimestamp(ctx context.Context, commit string) (time.Time, error) {
-	// Try SOURCE_DATE_EPOCH first (for reproducible builds)
-	if epoch := os.Getenv("SOURCE_DATE_EPOCH"); epoch != "" {
-		timestamp, err := strconv.ParseInt(epoch, 10, 64)
-		if err == nil {
-			return time.Unix(timestamp, 0).UTC(), nil
-		}
-		// Log warning but continue to git fallback
-		log.WithError(err).WithField("SOURCE_DATE_EPOCH", epoch).Warn("Invalid SOURCE_DATE_EPOCH, falling back to git commit timestamp")
-	}
-
-	// Get commit timestamp from git with context support for cancellation
-	cmd := exec.CommandContext(ctx, "git", "show", "-s", "--format=%ct", commit)
-	output, err := cmd.Output()
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to get commit timestamp: %w", err)
-	}
-
-	timestamp, err := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse commit timestamp: %w", err)
-	}
-
-	return time.Unix(timestamp, 0).UTC(), nil
-}
 
 // generateDeterministicUUID generates a UUIDv5 from content
 func generateDeterministicUUID(content []byte) string {
@@ -324,11 +295,11 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 	}
 
 	// Normalize SBOMs after generation
-	timestamp, err := getGitCommitTimestamp(context.Background(), p.C.Git().Commit)
+	timestamp, err := GetCommitTimestamp(context.Background(), p.C.Git())
 	if err != nil {
-		return fmt.Errorf("failed to get deterministic timestamp for SBOM normalization (commit: %s): %w. "+
+		return fmt.Errorf("failed to get deterministic timestamp for SBOM normalization: %w. "+
 			"Ensure git is available and the repository is not a shallow clone, or set SOURCE_DATE_EPOCH environment variable", 
-			p.C.Git().Commit, err)
+			err)
 	}
 
 	// Normalize CycloneDX
