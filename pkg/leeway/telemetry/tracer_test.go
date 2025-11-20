@@ -170,9 +170,11 @@ func TestFormatTraceContext_Invalid(t *testing.T) {
 func TestInitTracer_NoEndpoint(t *testing.T) {
 	// Save and restore environment
 	oldEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	defer os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", oldEndpoint)
+	defer func() {
+		_ = os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", oldEndpoint)
+	}()
 
-	os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	_ = os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
 	_, err := InitTracer(context.Background())
 	if err == nil {
