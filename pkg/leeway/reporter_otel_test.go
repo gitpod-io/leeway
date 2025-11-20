@@ -2,6 +2,8 @@ package leeway
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -344,5 +346,212 @@ func TestOTelReporter_WithParentContext(t *testing.T) {
 	// Verify parent relationship
 	if buildSpan.Parent.SpanID() != parentSpanID {
 		t.Error("Build span should have parent span as parent")
+	}
+}
+
+func TestOTelReporter_GitHubAttributes(t *testing.T) {
+	// Save and restore environment
+	githubVars := []string{
+		"GITHUB_ACTIONS",
+		"GITHUB_WORKFLOW",
+		"GITHUB_RUN_ID",
+		"GITHUB_RUN_NUMBER",
+		"GITHUB_JOB",
+		"GITHUB_ACTOR",
+		"GITHUB_REPOSITORY",
+		"GITHUB_REF",
+		"GITHUB_SHA",
+		"GITHUB_SERVER_URL",
+		"GITHUB_WORKFLOW_REF",
+	}
+	
+	oldVars := make(map[string]string)
+	for _, key := range githubVars {
+		oldVars[key] = os.Getenv(key)
+	}
+	
+	defer func() {
+		for key, val := range oldVars {
+			if val == "" {
+				_ = os.Unsetenv(key)
+			} else {
+				_ = os.Setenv(key, val)
+			}
+		}
+	}()
+
+	// Set GitHub environment variables
+	_ = os.Setenv("GITHUB_ACTIONS", "true")
+	_ = os.Setenv("GITHUB_WORKFLOW", "test-workflow")
+	_ = os.Setenv("GITHUB_RUN_ID", "123456789")
+	_ = os.Setenv("GITHUB_RUN_NUMBER", "42")
+	_ = os.Setenv("GITHUB_JOB", "test-job")
+	_ = os.Setenv("GITHUB_ACTOR", "test-user")
+	_ = os.Setenv("GITHUB_REPOSITORY", "test-org/test-repo")
+	_ = os.Setenv("GITHUB_REF", "refs/heads/main")
+	_ = os.Setenv("GITHUB_SHA", "abc123def456")
+	_ = os.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	_ = os.Setenv("GITHUB_WORKFLOW_REF", "test-org/test-repo/.github/workflows/test.yml@refs/heads/main")
+
+	// Create in-memory exporter for testing
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSyncer(exporter),
+	)
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
+
+	tracer := tp.Tracer("test")
+	reporter := NewOTelReporter(tracer, context.Background())
+
+	pkg := &Package{
+		C: &Component{
+			Name: "test-component",
+			W: &Workspace{
+				Origin: "/workspace",
+			},
+		},
+		PackageInternal: PackageInternal{
+			Name: "test-package",
+			Type: GenericPackage,
+		},
+	}
+
+	status := map[*Package]PackageBuildStatus{
+		pkg: PackageNotBuiltYet,
+	}
+
+	reporter.BuildStarted(pkg, status)
+	reporter.BuildFinished(pkg, nil)
+
+	// Verify spans were created
+	spans := exporter.GetSpans()
+	if len(spans) == 0 {
+		t.Fatal("Expected at least one span to be created")
+	}
+
+	// Find build span
+	var buildSpan *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "leeway.build" {
+			buildSpan = &spans[i]
+			break
+		}
+	}
+
+	if buildSpan == nil {
+		t.Fatal("Expected to find build span")
+	}
+
+	// Verify GitHub attributes are present
+	expectedAttrs := map[string]string{
+		"github.workflow":     "test-workflow",
+		"github.run_id":       "123456789",
+		"github.run_number":   "42",
+		"github.job":          "test-job",
+		"github.actor":        "test-user",
+		"github.repository":   "test-org/test-repo",
+		"github.ref":          "refs/heads/main",
+		"github.sha":          "abc123def456",
+		"github.server_url":   "https://github.com",
+		"github.workflow_ref": "test-org/test-repo/.github/workflows/test.yml@refs/heads/main",
+	}
+
+	foundAttrs := make(map[string]string)
+	for _, attr := range buildSpan.Attributes {
+		key := string(attr.Key)
+		if strings.HasPrefix(key, "github.") {
+			foundAttrs[key] = attr.Value.AsString()
+		}
+	}
+
+	// Check all expected attributes are present with correct values
+	for key, expectedValue := range expectedAttrs {
+		actualValue, found := foundAttrs[key]
+		if !found {
+			t.Errorf("Expected GitHub attribute '%s' not found in span", key)
+		} else if actualValue != expectedValue {
+			t.Errorf("GitHub attribute '%s': expected '%s', got '%s'", key, expectedValue, actualValue)
+		}
+	}
+
+	// Verify we found all expected attributes
+	if len(foundAttrs) != len(expectedAttrs) {
+		t.Errorf("Expected %d GitHub attributes, found %d", len(expectedAttrs), len(foundAttrs))
+	}
+}
+
+func TestOTelReporter_NoGitHubAttributes(t *testing.T) {
+	// Save and restore GITHUB_ACTIONS
+	oldValue := os.Getenv("GITHUB_ACTIONS")
+	defer func() {
+		if oldValue == "" {
+			_ = os.Unsetenv("GITHUB_ACTIONS")
+		} else {
+			_ = os.Setenv("GITHUB_ACTIONS", oldValue)
+		}
+	}()
+
+	// Ensure GITHUB_ACTIONS is not set
+	_ = os.Unsetenv("GITHUB_ACTIONS")
+
+	// Create in-memory exporter for testing
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSyncer(exporter),
+	)
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
+
+	tracer := tp.Tracer("test")
+	reporter := NewOTelReporter(tracer, context.Background())
+
+	pkg := &Package{
+		C: &Component{
+			Name: "test-component",
+			W: &Workspace{
+				Origin: "/workspace",
+			},
+		},
+		PackageInternal: PackageInternal{
+			Name: "test-package",
+			Type: GenericPackage,
+		},
+	}
+
+	status := map[*Package]PackageBuildStatus{
+		pkg: PackageNotBuiltYet,
+	}
+
+	reporter.BuildStarted(pkg, status)
+	reporter.BuildFinished(pkg, nil)
+
+	// Verify spans were created
+	spans := exporter.GetSpans()
+	if len(spans) == 0 {
+		t.Fatal("Expected at least one span to be created")
+	}
+
+	// Find build span
+	var buildSpan *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "leeway.build" {
+			buildSpan = &spans[i]
+			break
+		}
+	}
+
+	if buildSpan == nil {
+		t.Fatal("Expected to find build span")
+	}
+
+	// Verify NO GitHub attributes are present
+	for _, attr := range buildSpan.Attributes {
+		key := string(attr.Key)
+		if strings.HasPrefix(key, "github.") {
+			t.Errorf("Unexpected GitHub attribute '%s' found when GITHUB_ACTIONS is not set", key)
+		}
 	}
 }
