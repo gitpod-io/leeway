@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"go.opentelemetry.io/otel/trace"
@@ -168,17 +167,9 @@ func TestFormatTraceContext_Invalid(t *testing.T) {
 }
 
 func TestInitTracer_NoEndpoint(t *testing.T) {
-	// Save and restore environment
-	oldEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	defer func() {
-		_ = os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", oldEndpoint)
-	}()
-
-	_ = os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-
-	_, err := InitTracer(context.Background())
+	_, err := InitTracer(context.Background(), "")
 	if err == nil {
-		t.Error("InitTracer() should fail when OTEL_EXPORTER_OTLP_ENDPOINT is not set")
+		t.Error("InitTracer() should fail when endpoint is empty")
 	}
 }
 

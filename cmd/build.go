@@ -325,13 +325,8 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, f
 	if otelEndpoint, err := cmd.Flags().GetString("otel-endpoint"); err != nil {
 		log.Fatal(err)
 	} else if otelEndpoint != "" {
-		// Set environment variable for InitTracer if not already set
-		if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-			os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", otelEndpoint)
-		}
-
-		// Initialize tracer
-		tp, err := telemetry.InitTracer(context.Background())
+		// Initialize tracer with the provided endpoint
+		tp, err := telemetry.InitTracer(context.Background(), otelEndpoint)
 		if err != nil {
 			log.WithError(err).Warn("failed to initialize OpenTelemetry tracer")
 		} else {
