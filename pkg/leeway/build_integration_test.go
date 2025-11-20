@@ -70,6 +70,13 @@ func extractDockerMetadataFromCache(cacheBundleFN string) (*DockerImageMetadata,
 	return nil, fmt.Errorf("docker-export-metadata.json not found in cache bundle")
 }
 
+// TestDockerPackage_ExportToCache_Integration verifies OCI layout export functionality.
+// Tests three scenarios:
+// 1. Legacy push behavior (exportToCache=false) - pushes to registry
+// 2. New OCI export (exportToCache=true) - creates image.tar in cache
+// 3. Export without image config - extracts container filesystem
+//
+// SLSA relevance: Validates that exportToCache creates OCI layout required for SLSA L3.
 func TestDockerPackage_ExportToCache_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -344,6 +351,10 @@ func listTarGzContents(path string) ([]string, error) {
 	return files, nil
 }
 
+// TestDockerPackage_CacheRoundTrip_Integration verifies the complete cache workflow:
+// Build with OCI export → Cache → Restore → Load into Docker → Verify image works
+//
+// SLSA relevance: Validates end-to-end cache workflow required for SLSA L3 compliance.
 func TestDockerPackage_CacheRoundTrip_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -593,6 +604,11 @@ CMD ["cat", "/test-file.txt"]`
 	t.Log("✅ Round-trip test passed: image exported, cached, extracted, loaded, and executed successfully")
 }
 
+// TestDockerPackage_OCILayout_Determinism_Integration verifies deterministic builds with OCI layout.
+// Builds the same package twice and compares SHA256 hashes of the resulting image.tar files.
+//
+// SLSA relevance: CRITICAL for SLSA L3 - deterministic builds enable reproducible builds
+// and build provenance verification. This validates that OCI layout export is deterministic.
 func TestDockerPackage_OCILayout_Determinism_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -811,8 +827,16 @@ func checksumFile(path string) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-// TestDockerPackage_OCILayout_SLSA_Integration tests that SLSA provenance generation
-// works correctly with OCI layout export (regression test for docker inspect bug)
+// TestDockerPackage_OCILayout_SLSA_Integration is the PRIMARY SLSA L3 TEST.
+// Tests end-to-end SLSA provenance generation with OCI layout export:
+// - Workspace with provenance.slsa: true
+// - Package with exportToCache: true
+// - Build creates OCI layout (image.tar)
+// - SLSA provenance generation succeeds
+// - Digest extracted from index.json (not docker inspect)
+//
+// This validates the exact workflow used in production SLSA L3 builds.
+// Regression test for the docker inspect bug where digest extraction failed with OCI layout.
 func TestDockerPackage_OCILayout_SLSA_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -1007,7 +1031,13 @@ CMD ["cat", "/build-time.txt"]
 }
 
 // TestDockerPackage_ContainerExtraction_Integration tests container filesystem extraction
-// with both Docker daemon and OCI layout paths
+// with both Docker daemon and OCI layout paths. Validates the fix for checkOCILayoutExists().
+//
+// Tests two scenarios:
+// 1. with_docker_daemon (exportToCache=false) - uses docker image inspect
+// 2. with_oci_layout (exportToCache=true) - uses checkOCILayoutExists()
+//
+// SLSA relevance: Ensures packages that extract files from Docker images work with SLSA L3 caching.
 func TestDockerPackage_ContainerExtraction_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
