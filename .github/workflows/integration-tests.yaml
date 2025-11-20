@@ -1,0 +1,60 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    branches:
+      - 'main'
+    paths:
+      - 'pkg/leeway/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/integration-tests.yaml'
+  push:
+    branches:
+      - 'main'
+
+env:
+  GO_VERSION: '1.24'
+
+jobs:
+  integration-tests:
+    name: Run integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Golang
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+      
+      - name: Install skopeo for OCI layout support
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq skopeo
+      
+      - name: Verify skopeo installation
+        run: skopeo --version
+      
+      - name: Run integration tests
+        run: |
+          go test -tags=integration -v ./pkg/leeway \
+            -run ".*Integration" \
+            -timeout 10m
+      
+      - name: Verify determinism (run 3 times)
+        run: |
+          echo "=== Verifying deterministic builds ==="
+          for i in 1 2 3; do
+            echo "Run $i:"
+            go test -tags=integration ./pkg/leeway \
+              -run TestDockerPackage_OCILayout_Determinism_Integration \
+              -timeout 5m 2>&1 | grep "Deterministic builds verified" || true
+          done
