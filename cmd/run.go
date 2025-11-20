@@ -27,7 +27,7 @@ Should any of the scripts fail Leeway will exit with an exit code of 1 once all 
 				if script == nil {
 					return errors.New("run needs a script")
 				}
-				opts, _ := getBuildOpts(cmd)
+				opts, _, _ := getBuildOpts(cmd)
 				return script.Run(opts...)
 			})
 		}
