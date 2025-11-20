@@ -329,18 +329,18 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, f
 		if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
 			os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", otelEndpoint)
 		}
-		
+
 		// Initialize tracer
 		tp, err := telemetry.InitTracer(context.Background())
 		if err != nil {
 			log.WithError(err).Warn("failed to initialize OpenTelemetry tracer")
 		} else {
 			tracerProvider = tp
-			
+
 			// Parse trace context if provided
 			traceParent, _ := cmd.Flags().GetString("trace-parent")
 			traceState, _ := cmd.Flags().GetString("trace-state")
-			
+
 			parentCtx := context.Background()
 			if traceParent != "" {
 				if err := telemetry.ValidateTraceParent(traceParent); err != nil {
@@ -354,11 +354,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, f
 					}
 				}
 			}
-			
+
 			// Create OTel reporter
 			tracer := otel.Tracer("leeway")
 			reporter = append(reporter, leeway.NewOTelReporter(tracer, parentCtx))
-			
+
 			// Create shutdown function
 			otelShutdown = func() {
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -436,7 +436,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, f
 	if otelShutdown == nil {
 		otelShutdown = func() {}
 	}
-	
+
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
@@ -515,7 +515,7 @@ func parseSLSAConfig(cmd *cobra.Command) (*cache.SLSAConfig, error) {
 	slsaVerificationEnabled := os.Getenv(EnvvarSLSACacheVerification) == "true"
 	slsaSourceURI := os.Getenv(EnvvarSLSASourceURI)
 	requireAttestation := os.Getenv(EnvvarSLSARequireAttestation) == "true"
-	
+
 	// CLI flags override environment variables (if cmd is provided)
 	if cmd != nil {
 		if cmd.Flags().Changed("slsa-cache-verification") {
@@ -534,17 +534,17 @@ func parseSLSAConfig(cmd *cobra.Command) (*cache.SLSAConfig, error) {
 			}
 		}
 	}
-	
+
 	// If verification is disabled, return nil
 	if !slsaVerificationEnabled {
 		return nil, nil
 	}
-	
+
 	// Validation: source URI is required when verification is enabled
 	if slsaSourceURI == "" {
 		return nil, fmt.Errorf("--slsa-source-uri is required when using --slsa-cache-verification")
 	}
-	
+
 	return &cache.SLSAConfig{
 		Verification:       true,
 		SourceURI:          slsaSourceURI,
@@ -556,19 +556,19 @@ func parseSLSAConfig(cmd *cobra.Command) (*cache.SLSAConfig, error) {
 func getRemoteCache(cmd *cobra.Command) cache.RemoteCache {
 	remoteCacheBucket := os.Getenv(EnvvarRemoteCacheBucket)
 	remoteStorage := os.Getenv(EnvvarRemoteCacheStorage)
-	
+
 	// Parse SLSA configuration
 	slsaConfig, err := parseSLSAConfig(cmd)
 	if err != nil {
 		log.Fatalf("SLSA configuration error: %v", err)
 	}
-	
+
 	if remoteCacheBucket != "" {
 		config := &cache.RemoteConfig{
 			BucketName: remoteCacheBucket,
 			SLSA:       slsaConfig,
 		}
-		
+
 		switch remoteStorage {
 		case "GCP":
 			if slsaConfig != nil && slsaConfig.Verification {
