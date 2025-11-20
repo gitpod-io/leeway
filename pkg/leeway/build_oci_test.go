@@ -145,6 +145,85 @@ func TestExtractDigestFromOCILayout_MissingFile(t *testing.T) {
 	}
 }
 
+// TestCheckOCILayoutExists tests the OCI layout validation function
+func TestCheckOCILayoutExists(t *testing.T) {
+	tests := []struct {
+		name        string
+		setup       func(string) error
+		wantExists  bool
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "valid image.tar exists",
+			setup: func(dir string) error {
+				return os.WriteFile(filepath.Join(dir, "image.tar"), []byte("fake tar content"), 0644)
+			},
+			wantExists: true,
+			wantErr:    false,
+		},
+		{
+			name: "image.tar missing",
+			setup: func(dir string) error {
+				// Don't create image.tar
+				return nil
+			},
+			wantExists: false,
+			wantErr:    false,
+		},
+		{
+			name: "image.tar is empty",
+			setup: func(dir string) error {
+				return os.WriteFile(filepath.Join(dir, "image.tar"), []byte{}, 0644)
+			},
+			wantExists:  false,
+			wantErr:     true,
+			errContains: "empty",
+		},
+		{
+			name: "image.tar is a directory",
+			setup: func(dir string) error {
+				return os.Mkdir(filepath.Join(dir, "image.tar"), 0755)
+			},
+			wantExists:  false,
+			wantErr:     true,
+			errContains: "not a regular file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			
+			if err := tt.setup(tmpDir); err != nil {
+				t.Fatalf("setup failed: %v", err)
+			}
+
+			exists, err := checkOCILayoutExists(tmpDir)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("checkOCILayoutExists() expected error, got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("checkOCILayoutExists() error = %v, want error containing %q", err, tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("checkOCILayoutExists() unexpected error: %v", err)
+				return
+			}
+
+			if exists != tt.wantExists {
+				t.Errorf("checkOCILayoutExists() = %v, want %v", exists, tt.wantExists)
+			}
+		})
+	}
+}
+
 // TestCreateOCILayoutSubjectsFunction tests the OCI layout subjects function
 // Note: This function is set up regardless of SLSA being enabled, but is only
 // called when SLSA provenance generation is active. This test verifies the
