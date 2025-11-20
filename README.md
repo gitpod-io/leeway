@@ -200,6 +200,11 @@ E.g. `component/nested:docker` becomes `COMPONENT_NESTED__DOCKER`.
 - CLI flag: `leeway build --docker-export-to-cache`
 - Environment variable: `LEEWAY_DOCKER_EXPORT_TO_CACHE=true`
 
+**Requirements for OCI export (`exportToCache: true`):**
+- Docker Buildx with `docker-container` driver (the default `docker` driver does not support OCI export)
+- **Local development:** Create a builder with `docker buildx create --name leeway-builder --driver docker-container --bootstrap && docker buildx use leeway-builder`
+- **CI/CD:** Use `docker/setup-buildx-action` which automatically creates a `docker-container` builder by default
+
 See `leeway build --help` for more details.
 
 ### Generic packages
