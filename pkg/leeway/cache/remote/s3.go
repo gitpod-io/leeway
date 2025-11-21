@@ -579,40 +579,7 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 		}
 
 		// Step 6: Download provenance bundle if it exists (best effort, non-blocking)
-		// Provenance bundles are stored alongside artifacts as <artifact>.provenance.jsonl
-		// This is needed for dependency provenance collection during local builds
-		provenanceKey := artifactKey + ".provenance.jsonl"
-		provenancePath := localPath + ".provenance.jsonl"
-		tmpProvenancePath := provenancePath + ".tmp"
-
-		// Try to download provenance bundle (non-critical, don't fail if missing)
-		if err := s.waitForRateLimit(ctx); err == nil {
-			downloadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-
-			if _, err := s.storage.GetObject(downloadCtx, provenanceKey, tmpProvenancePath); err == nil {
-				// Successfully downloaded, move to final location
-				if err := s.atomicMove(tmpProvenancePath, provenancePath); err != nil {
-					log.WithError(err).WithFields(log.Fields{
-						"package": p.FullName(),
-						"key":     provenanceKey,
-					}).Debug("Failed to move provenance bundle, continuing")
-					s.cleanupTempFiles(tmpProvenancePath)
-				} else {
-					log.WithFields(log.Fields{
-						"package": p.FullName(),
-						"key":     provenanceKey,
-					}).Debug("Successfully downloaded provenance bundle")
-				}
-			} else {
-				// Provenance not found - this is expected for older artifacts
-				log.WithFields(log.Fields{
-					"package": p.FullName(),
-					"key":     provenanceKey,
-				}).Debug("Provenance bundle not found in remote cache (expected for older artifacts)")
-				s.cleanupTempFiles(tmpProvenancePath)
-			}
-		}
+		s.downloadProvenanceBundle(ctx, p.FullName(), artifactKey, localPath)
 
 		// Clean up temporary attestation file
 		s.cleanupTempFiles(tmpAttestationPath)
@@ -1004,37 +971,8 @@ func (s *S3Cache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache
 			"key":     key,
 		}).Debug("successfully uploaded package to remote cache")
 
-		// Upload provenance bundle if it exists
-		// Provenance bundles are stored alongside artifacts as <artifact>.provenance.jsonl
-		provenancePath := localPath + ".provenance.jsonl"
-		if fileExists(provenancePath) {
-			provenanceKey := key + ".provenance.jsonl"
-
-			// Wait for rate limiter permission
-			if err := s.waitForRateLimit(ctx); err != nil {
-				log.WithError(err).WithFields(log.Fields{
-					"package": p.FullName(),
-					"key":     provenanceKey,
-				}).Warn("rate limiter error during provenance upload - continuing")
-				// Don't add to uploadErrors - provenance is optional
-				return nil
-			}
-
-			timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-			defer cancel()
-			if err := s.storage.UploadObject(timeoutCtx, provenanceKey, provenancePath); err != nil {
-				log.WithError(err).WithFields(log.Fields{
-					"package": p.FullName(),
-					"key":     provenanceKey,
-				}).Warn("failed to upload provenance bundle to remote cache - continuing")
-				// Don't add to uploadErrors - provenance is optional
-			} else {
-				log.WithFields(log.Fields{
-					"package": p.FullName(),
-					"key":     provenanceKey,
-				}).Debug("successfully uploaded provenance bundle to remote cache")
-			}
-		}
+		// Upload provenance bundle if it exists (non-blocking)
+		s.uploadProvenanceBundle(ctx, p.FullName(), key, localPath)
 
 		return nil
 	})
@@ -1299,4 +1237,119 @@ func fileExists(filename string) bool {
 		return false
 	}
 	return !info.IsDir()
+}
+
+// uploadProvenanceBundle uploads a provenance bundle to S3 with retry logic.
+// This is a non-blocking operation - failures are logged but don't fail the build.
+// Provenance bundles are stored alongside artifacts as <artifact>.provenance.jsonl
+// and are needed for dependency provenance collection during local builds.
+func (s *S3Cache) uploadProvenanceBundle(ctx context.Context, packageName, artifactKey, localPath string) {
+	provenancePath := localPath + ".provenance.jsonl"
+	
+	// Check if provenance file exists
+	if !fileExists(provenancePath) {
+		log.WithFields(log.Fields{
+			"package": packageName,
+			"path":    provenancePath,
+		}).Debug("Provenance bundle not found locally, skipping upload")
+		return
+	}
+
+	provenanceKey := artifactKey + ".provenance.jsonl"
+
+	// Wait for rate limiter permission
+	if err := s.waitForRateLimit(ctx); err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"package": packageName,
+			"key":     provenanceKey,
+		}).Warn("Rate limiter error during provenance upload, skipping")
+		return
+	}
+
+	// Upload with timeout and retry logic (via storage layer)
+	uploadCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	if err := s.storage.UploadObject(uploadCtx, provenanceKey, provenancePath); err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"package": packageName,
+			"key":     provenanceKey,
+			"path":    provenancePath,
+		}).Warn("Failed to upload provenance bundle to remote cache")
+		return
+	}
+
+	log.WithFields(log.Fields{
+		"package": packageName,
+		"key":     provenanceKey,
+	}).Debug("Successfully uploaded provenance bundle to remote cache")
+}
+
+// downloadProvenanceBundle downloads a provenance bundle from S3 with verification.
+// This is a best-effort operation - missing provenance is expected for older artifacts.
+// Returns true if provenance was successfully downloaded, false otherwise.
+func (s *S3Cache) downloadProvenanceBundle(ctx context.Context, packageName, artifactKey, localPath string) bool {
+	provenanceKey := artifactKey + ".provenance.jsonl"
+	provenancePath := localPath + ".provenance.jsonl"
+	tmpProvenancePath := provenancePath + ".tmp"
+
+	// Wait for rate limiter permission
+	if err := s.waitForRateLimit(ctx); err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"package": packageName,
+			"key":     provenanceKey,
+		}).Debug("Rate limiter error during provenance download, skipping")
+		return false
+	}
+
+	// Download with timeout
+	downloadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	bytesDownloaded, err := s.storage.GetObject(downloadCtx, provenanceKey, tmpProvenancePath)
+	if err != nil {
+		// Provenance not found - this is expected for older artifacts
+		log.WithFields(log.Fields{
+			"package": packageName,
+			"key":     provenanceKey,
+		}).Debug("Provenance bundle not found in remote cache (expected for older artifacts)")
+		s.cleanupTempFiles(tmpProvenancePath)
+		return false
+	}
+
+	// Verify the downloaded file exists and has content
+	if !fileExists(tmpProvenancePath) {
+		log.WithFields(log.Fields{
+			"package": packageName,
+			"key":     provenanceKey,
+		}).Warn("Provenance bundle download reported success but file not found")
+		s.cleanupTempFiles(tmpProvenancePath)
+		return false
+	}
+
+	if bytesDownloaded == 0 {
+		log.WithFields(log.Fields{
+			"package": packageName,
+			"key":     provenanceKey,
+		}).Warn("Provenance bundle downloaded but file is empty")
+		s.cleanupTempFiles(tmpProvenancePath)
+		return false
+	}
+
+	// Atomically move to final location
+	if err := s.atomicMove(tmpProvenancePath, provenancePath); err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"package": packageName,
+			"key":     provenanceKey,
+		}).Warn("Failed to move provenance bundle to final location")
+		s.cleanupTempFiles(tmpProvenancePath)
+		return false
+	}
+
+	log.WithFields(log.Fields{
+		"package": packageName,
+		"key":     provenanceKey,
+		"bytes":   bytesDownloaded,
+	}).Debug("Successfully downloaded provenance bundle")
+	return true
 }
