@@ -46,8 +46,12 @@ Leeway supports W3C Trace Context propagation, allowing builds to be part of lar
 
 - `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP endpoint URL (e.g., `localhost:4318` or `api.honeycomb.io:443`)
 - `OTEL_EXPORTER_OTLP_INSECURE`: Disable TLS for OTLP endpoint (`true` or `false`, default: `false`)
+- `OTEL_EXPORTER_OTLP_HEADERS`: HTTP headers for OTLP requests (e.g., `x-honeycomb-team=YOUR_API_KEY`)
+- `OTEL_EXPORTER_OTLP_TRACES_HEADERS`: Trace-specific headers (takes precedence over `OTEL_EXPORTER_OTLP_HEADERS`)
 - `TRACEPARENT`: W3C Trace Context traceparent header (format: `00-{trace-id}-{span-id}-{flags}`)
 - `TRACESTATE`: W3C Trace Context tracestate header (optional)
+
+**Note:** The OpenTelemetry SDK automatically reads `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_TRACES_HEADERS` from the environment. No additional configuration is required.
 
 ### CLI Flags
 
