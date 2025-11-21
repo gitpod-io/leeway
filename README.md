@@ -602,25 +602,35 @@ Leeway supports distributed tracing using OpenTelemetry to provide visibility in
 Enable tracing by setting the OTLP endpoint:
 
 ```bash
+# Local development (Jaeger)
 export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318
+export OTEL_EXPORTER_OTLP_INSECURE=true
+leeway build :my-package
+
+# Production (Honeycomb)
+export OTEL_EXPORTER_OTLP_ENDPOINT=api.honeycomb.io:443
+export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=YOUR_API_KEY"
 leeway build :my-package
 ```
 
 Or using CLI flags:
 
 ```bash
-leeway build :my-package --otel-endpoint=localhost:4318
+leeway build :my-package --otel-endpoint=localhost:4318 --otel-insecure
 ```
 
 ## Environment Variables
 
 - `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP endpoint URL
+- `OTEL_EXPORTER_OTLP_INSECURE`: Disable TLS (`true` or `false`, default: `false`)
+- `OTEL_EXPORTER_OTLP_HEADERS`: Additional headers (e.g., API keys)
 - `TRACEPARENT`: W3C Trace Context traceparent header for distributed tracing
 - `TRACESTATE`: W3C Trace Context tracestate header
 
 ## CLI Flags
 
 - `--otel-endpoint`: OTLP endpoint URL (overrides environment variable)
+- `--otel-insecure`: Disable TLS for OTLP endpoint
 - `--trace-parent`: W3C traceparent header for parent trace context
 - `--trace-state`: W3C tracestate header
 
@@ -641,8 +651,9 @@ docker run -d --name jaeger \
   -p 16686:16686 \
   jaegertracing/all-in-one:latest
 
-# Build with tracing
+# Build with tracing (insecure for local development)
 export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318
+export OTEL_EXPORTER_OTLP_INSECURE=true
 leeway build :my-package
 
 # View traces at http://localhost:16686
