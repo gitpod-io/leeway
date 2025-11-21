@@ -19,18 +19,14 @@ OpenTelemetry tracing in leeway captures:
 ```
 Root Span (leeway.build)
 ├── Package Span 1 (leeway.package)
-│   ├── Phase: prep
-│   ├── Phase: pull
-│   ├── Phase: lint
-│   ├── Phase: test
-│   └── Phase: build
 ├── Package Span 2 (leeway.package)
 └── Package Span N (leeway.package)
 ```
 
 - **Root Span**: Created when `BuildStarted` is called, represents the entire build operation
 - **Package Spans**: Created for each package being built, as children of the root span
-- **Phase Spans**: (Future) Individual build phases within each package
+
+Build phase durations (prep, pull, lint, test, build, package) are captured as attributes on package spans, not as separate spans.
 
 ### Context Propagation
 
@@ -298,8 +294,10 @@ Tests use in-memory exporters (`tracetest.NewInMemoryExporter()`) to verify:
 
 ## Future Enhancements
 
-- Phase-level spans for detailed timing
-- Custom span events for build milestones
-- Metrics integration (build duration histograms, cache hit rates)
-- Sampling configuration
-- Additional exporters (Zipkin, Prometheus)
+Potential improvements for future iterations:
+
+- **Phase-level spans**: Create individual spans for each build phase (prep, pull, lint, test, build, package) instead of just attributes
+- **Span events**: Add timeline events for build milestones (e.g., cache hit, dependency resolution)
+- **Metrics integration**: Export metrics alongside traces (build duration histograms, cache hit rates, concurrent build count)
+- **Sampling configuration**: Add configurable sampling strategies for high-volume builds
+- **Additional exporters**: Support for Zipkin, Jaeger native protocol, or Prometheus

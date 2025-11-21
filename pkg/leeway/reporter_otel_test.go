@@ -364,12 +364,12 @@ func TestOTelReporter_GitHubAttributes(t *testing.T) {
 		"GITHUB_SERVER_URL",
 		"GITHUB_WORKFLOW_REF",
 	}
-	
+
 	oldVars := make(map[string]string)
 	for _, key := range githubVars {
 		oldVars[key] = os.Getenv(key)
 	}
-	
+
 	defer func() {
 		for key, val := range oldVars {
 			if val == "" {
