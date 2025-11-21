@@ -600,11 +600,9 @@ variables have an effect on leeway:
 
 # OpenTelemetry Tracing
 
-Leeway supports distributed tracing using OpenTelemetry to provide visibility into build performance and behavior.
+Leeway supports distributed tracing using OpenTelemetry for build performance visibility.
 
-## Configuration
-
-Enable tracing by setting the OTLP endpoint:
+## Quick Start
 
 ```bash
 # Local development (Jaeger)
@@ -618,53 +616,7 @@ export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=YOUR_API_KEY"
 leeway build :my-package
 ```
 
-Or using CLI flags:
-
-```bash
-leeway build :my-package --otel-endpoint=localhost:4318 --otel-insecure
-```
-
-## Environment Variables
-
-- `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP endpoint URL
-- `OTEL_EXPORTER_OTLP_INSECURE`: Disable TLS (`true` or `false`, default: `false`)
-- `OTEL_EXPORTER_OTLP_HEADERS`: Additional headers (e.g., API keys)
-- `TRACEPARENT`: W3C Trace Context traceparent header for distributed tracing
-- `TRACESTATE`: W3C Trace Context tracestate header
-
-## CLI Flags
-
-- `--otel-endpoint`: OTLP endpoint URL (overrides environment variable)
-- `--otel-insecure`: Disable TLS for OTLP endpoint
-- `--trace-parent`: W3C traceparent header for parent trace context
-- `--trace-state`: W3C tracestate header
-
-## What Gets Traced
-
-- Build lifecycle (start to finish)
-- Individual package builds with timing
-- Build phases (prep, pull, lint, test, build, package)
-- Cache hit/miss information
-- GitHub Actions context (when running in CI)
-
-## Example with Jaeger
-
-```bash
-# Start Jaeger
-docker run -d --name jaeger \
-  -p 4318:4318 \
-  -p 16686:16686 \
-  jaegertracing/all-in-one:latest
-
-# Build with tracing (insecure for local development)
-export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318
-export OTEL_EXPORTER_OTLP_INSECURE=true
-leeway build :my-package
-
-# View traces at http://localhost:16686
-```
-
-For detailed information, see [docs/observability.md](docs/observability.md).
+**For detailed configuration, examples, and span attributes, see [docs/observability.md](docs/observability.md).**
 
 # Provenance (SLSA) - EXPERIMENTAL
 leeway can produce provenance information as part of a build. At the moment only [SLSA Provenance v0.2](https://slsa.dev/provenance/v0.2) is supported. This support is **experimental**.
