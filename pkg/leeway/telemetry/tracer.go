@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"os"
 	"strings"
 	"time"
 
@@ -16,19 +15,34 @@ import (
 	"golang.org/x/xerrors"
 )
 
+// leewayVersion is set by the build system and used for telemetry
+var leewayVersion = "unknown"
+
+// SetLeewayVersion sets the leeway version for telemetry reporting
+func SetLeewayVersion(version string) {
+	if version != "" {
+		leewayVersion = version
+	}
+}
+
 // InitTracer initializes the OpenTelemetry tracer with OTLP HTTP exporter.
 // The endpoint parameter specifies the OTLP endpoint URL (e.g., "localhost:4318").
+// The insecure parameter controls whether to use TLS (false = use TLS, true = no TLS).
 // Returns the TracerProvider which must be shut down when done.
-func InitTracer(ctx context.Context, endpoint string) (*sdktrace.TracerProvider, error) {
+func InitTracer(ctx context.Context, endpoint string, insecure bool) (*sdktrace.TracerProvider, error) {
 	if endpoint == "" {
 		return nil, xerrors.Errorf("OTLP endpoint not provided")
 	}
 
-	// Create OTLP HTTP exporter
-	exporter, err := otlptracehttp.New(ctx,
+	// Create OTLP HTTP exporter with optional TLS
+	opts := []otlptracehttp.Option{
 		otlptracehttp.WithEndpoint(endpoint),
-		otlptracehttp.WithInsecure(), // Use insecure for local development; configure TLS in production
-	)
+	}
+	if insecure {
+		opts = append(opts, otlptracehttp.WithInsecure())
+	}
+
+	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
 		return nil, xerrors.Errorf("failed to create OTLP exporter: %w", err)
 	}
@@ -114,14 +128,8 @@ func ParseTraceContext(traceparent, tracestate string) (context.Context, error) 
 }
 
 // getLeewayVersion returns the leeway version for telemetry.
-// This is a placeholder that should be replaced with actual version retrieval.
 func getLeewayVersion() string {
-	// This will be imported from the leeway package
-	version := os.Getenv("LEEWAY_VERSION")
-	if version == "" {
-		version = "unknown"
-	}
-	return version
+	return leewayVersion
 }
 
 // FormatTraceContext formats a span context into W3C Trace Context format.

@@ -214,6 +214,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("fixed-build-dir", true, "Use a fixed build directory for each package, instead of based on the package version, to better utilize caches based on absolute paths (defaults to true)")
 	cmd.Flags().Bool("docker-export-to-cache", false, "Export Docker images to cache instead of pushing directly (enables SLSA L3 compliance)")
 	cmd.Flags().String("otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "OpenTelemetry OTLP endpoint URL for tracing (defaults to $OTEL_EXPORTER_OTLP_ENDPOINT)")
+	cmd.Flags().Bool("otel-insecure", os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true", "Disable TLS for OTLP endpoint (for local development only, defaults to $OTEL_EXPORTER_OTLP_INSECURE)")
 	cmd.Flags().String("trace-parent", os.Getenv("TRACEPARENT"), "W3C Trace Context traceparent header for distributed tracing (defaults to $TRACEPARENT)")
 	cmd.Flags().String("trace-state", os.Getenv("TRACESTATE"), "W3C Trace Context tracestate header for distributed tracing (defaults to $TRACESTATE)")
 }
@@ -325,8 +326,17 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, f
 	if otelEndpoint, err := cmd.Flags().GetString("otel-endpoint"); err != nil {
 		log.Fatal(err)
 	} else if otelEndpoint != "" {
-		// Initialize tracer with the provided endpoint
-		tp, err := telemetry.InitTracer(context.Background(), otelEndpoint)
+		// Set leeway version for telemetry
+		telemetry.SetLeewayVersion(leeway.Version)
+
+		// Get insecure flag
+		otelInsecure, err := cmd.Flags().GetBool("otel-insecure")
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// Initialize tracer with the provided endpoint and TLS configuration
+		tp, err := telemetry.InitTracer(context.Background(), otelEndpoint, otelInsecure)
 		if err != nil {
 			log.WithError(err).Warn("failed to initialize OpenTelemetry tracer")
 		} else {
