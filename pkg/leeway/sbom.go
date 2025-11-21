@@ -235,16 +235,41 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 	// Get the appropriate source based on package type
 	var src source.Source
 	if p.Type == DockerPackage {
-		buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from Docker image\n"))
-
-		version, err := p.Version()
-		if err != nil {
-			return xerrors.Errorf("failed to get package version: %w", err)
+		cfg, ok := p.Config.(DockerPkgConfig)
+		if !ok {
+			return xerrors.Errorf("package should have Docker config")
 		}
 
-		src, err = syft.GetSource(context.Background(), version, nil)
-		if err != nil {
-			return xerrors.Errorf("failed to get Docker image source for SBOM generation: %w", err)
+		// Check if OCI layout export is enabled
+		if cfg.ExportToCache != nil && *cfg.ExportToCache {
+			// OCI layout path - scan from oci-archive
+			buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from OCI layout\n"))
+
+			ociLayoutPath := filepath.Join(builddir, "image.tar")
+			if _, err := os.Stat(ociLayoutPath); err != nil {
+				return xerrors.Errorf("OCI layout image.tar not found in %s: %w", builddir, err)
+			}
+
+			// Syft will auto-detect the OCI archive format from the file path
+			// Use explicit source provider configuration to ensure oci-archive is tried
+			srcCfg := syft.DefaultGetSourceConfig().WithSources("oci-archive")
+			src, err = syft.GetSource(context.Background(), ociLayoutPath, srcCfg)
+			if err != nil {
+				return xerrors.Errorf("failed to get OCI archive source for SBOM generation: %w", err)
+			}
+		} else {
+			// Traditional Docker daemon path
+			buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from Docker image\n"))
+
+			version, err := p.Version()
+			if err != nil {
+				return xerrors.Errorf("failed to get package version: %w", err)
+			}
+
+			src, err = syft.GetSource(context.Background(), version, nil)
+			if err != nil {
+				return xerrors.Errorf("failed to get Docker image source for SBOM generation: %w", err)
+			}
 		}
 	} else {
 		buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from filesystem\n"))
