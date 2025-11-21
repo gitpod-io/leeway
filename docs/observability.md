@@ -44,13 +44,15 @@ Leeway supports W3C Trace Context propagation, allowing builds to be part of lar
 
 ### Environment Variables
 
-- `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP endpoint URL (e.g., `localhost:4318`)
+- `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP endpoint URL (e.g., `localhost:4318` or `api.honeycomb.io:443`)
+- `OTEL_EXPORTER_OTLP_INSECURE`: Disable TLS for OTLP endpoint (`true` or `false`, default: `false`)
 - `TRACEPARENT`: W3C Trace Context traceparent header (format: `00-{trace-id}-{span-id}-{flags}`)
 - `TRACESTATE`: W3C Trace Context tracestate header (optional)
 
 ### CLI Flags
 
 - `--otel-endpoint`: OTLP endpoint URL (overrides `OTEL_EXPORTER_OTLP_ENDPOINT`)
+- `--otel-insecure`: Disable TLS for OTLP endpoint (overrides `OTEL_EXPORTER_OTLP_INSECURE`)
 - `--trace-parent`: W3C traceparent header (overrides `TRACEPARENT`)
 - `--trace-state`: W3C tracestate header (overrides `TRACESTATE`)
 
@@ -59,6 +61,22 @@ Leeway supports W3C Trace Context propagation, allowing builds to be part of lar
 CLI flags take precedence over environment variables:
 ```
 CLI flag → Environment variable → Default (disabled)
+```
+
+### TLS Configuration
+
+By default, leeway uses **secure TLS connections** to the OTLP endpoint. For local development with tools like Jaeger, you can disable TLS:
+
+```bash
+# Local development (insecure)
+export OTEL_EXPORTER_OTLP_INSECURE=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318
+leeway build :my-package
+
+# Production (secure, default)
+export OTEL_EXPORTER_OTLP_ENDPOINT=api.honeycomb.io:443
+export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=YOUR_API_KEY"
+leeway build :my-package
 ```
 
 ## Span Attributes
@@ -165,11 +183,36 @@ docker run -d --name jaeger \
   -p 16686:16686 \
   jaegertracing/all-in-one:latest
 
-# Build with tracing
+# Build with tracing (insecure for local development)
 export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318
+export OTEL_EXPORTER_OTLP_INSECURE=true
 leeway build :my-package
 
 # View traces at http://localhost:16686
+```
+
+### With Honeycomb (Production)
+
+```bash
+# Configure Honeycomb endpoint with API key
+export OTEL_EXPORTER_OTLP_ENDPOINT=api.honeycomb.io:443
+export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=YOUR_API_KEY"
+
+# Build with tracing (secure by default)
+leeway build :my-package
+
+# View traces in Honeycomb UI
+```
+
+### In CI/CD with Distributed Tracing
+
+```bash
+# Propagate trace context from parent CI system
+export OTEL_EXPORTER_OTLP_ENDPOINT=api.honeycomb.io:443
+export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=YOUR_API_KEY"
+export TRACEPARENT="00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+leeway build :my-package
 ```
 
 ## Error Handling
