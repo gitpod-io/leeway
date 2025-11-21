@@ -610,11 +610,13 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318
 export OTEL_EXPORTER_OTLP_INSECURE=true
 leeway build :my-package
 
-# Production (Honeycomb)
+# Production (Honeycomb with API key)
 export OTEL_EXPORTER_OTLP_ENDPOINT=api.honeycomb.io:443
 export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=YOUR_API_KEY"
 leeway build :my-package
 ```
+
+The OpenTelemetry SDK automatically reads standard `OTEL_EXPORTER_OTLP_*` environment variables.
 
 **For detailed configuration, examples, and span attributes, see [docs/observability.md](docs/observability.md).**
 
