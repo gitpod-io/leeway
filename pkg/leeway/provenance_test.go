@@ -318,3 +318,22 @@ func TestProvenanceDirectoryCreation(t *testing.T) {
 		t.Errorf("Expected content %q, got %q", provenanceContent, string(content))
 	}
 }
+
+// TestGetDependenciesProvenanceBundles_MissingProvenance tests backward compatibility
+// when dependency provenance bundles are missing (artifacts built before v0.15.0-rc5)
+func TestGetDependenciesProvenanceBundles_MissingProvenance(t *testing.T) {
+	// This test verifies that builds don't fail when dependencies lack provenance bundles,
+	// which is expected during the transition period after deploying v0.15.0-rc5.
+	// The build should succeed with a warning, allowing gradual cache population.
+	
+	t.Skip("TODO: Implement test for missing provenance backward compatibility")
+	
+	// Test outline:
+	// 1. Create a mock dependency package without .provenance.jsonl file
+	// 2. Create a package that depends on it
+	// 3. Call getDependenciesProvenanceBundles
+	// 4. Verify:
+	//    - No error returned (build succeeds)
+	//    - Warning logged about missing provenance
+	//    - Provenance bundle created but incomplete
+}

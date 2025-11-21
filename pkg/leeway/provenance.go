@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -127,6 +128,23 @@ func (p *Package) getDependenciesProvenanceBundles(buildctx *buildContext, dst *
 			return dst.AddFromBundle(bundle)
 		})
 		if err != nil {
+			// Backward compatibility: Handle artifacts built before provenance bundles were stored externally.
+			// This allows gradual cache population during the transition period.
+			//
+			// TODO(SLSA): Remove this fallback after all cached artifacts have provenance bundles.
+			// Expected removal: 2025-12-15 (4 weeks after v0.15.0-rc5 deployment)
+			// Removal criteria:
+			//   1. No warnings logged for 2+ consecutive weeks
+			//   2. All CI workflows using v0.15.0-rc5 or later
+			//   3. S3 cache shows all .tar.gz files have corresponding .provenance.jsonl files
+			if errors.Is(err, ErrNoAttestationBundle) {
+				log.WithFields(log.Fields{
+					"package":    p.FullName(),
+					"dependency": dep.FullName(),
+					"location":   loc,
+				}).Warn("dependency provenance bundle not found: provenance will be incomplete (expected during transition to external provenance storage)")
+				continue // Skip this dependency's provenance, don't fail the build
+			}
 			return err
 		}
 		log.WithField("prevBundleSize", prevBundleSize).WithField("newBundleSize", dst.Len()).WithField("loc", loc).Debug("extracted bundle from cached archive")
