@@ -167,7 +167,7 @@ func TestFormatTraceContext_Invalid(t *testing.T) {
 }
 
 func TestInitTracer_NoEndpoint(t *testing.T) {
-	_, err := InitTracer(context.Background(), "")
+	_, err := InitTracer(context.Background(), "", false)
 	if err == nil {
 		t.Error("InitTracer() should fail when endpoint is empty")
 	}
