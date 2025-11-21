@@ -2,6 +2,7 @@ package leeway
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -554,4 +555,500 @@ func TestOTelReporter_NoGitHubAttributes(t *testing.T) {
 			t.Errorf("Unexpected GitHub attribute '%s' found when GITHUB_ACTIONS is not set", key)
 		}
 	}
+}
+
+func TestOTelReporter_BuildError(t *testing.T) {
+	// Create in-memory exporter for testing
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSyncer(exporter),
+	)
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
+
+	tracer := tp.Tracer("test")
+	reporter := NewOTelReporter(tracer, context.Background())
+
+	pkg := &Package{
+		C: &Component{
+			Name: "test-component",
+			W: &Workspace{
+				Origin: "/workspace",
+			},
+		},
+		PackageInternal: PackageInternal{
+			Name: "test-package",
+			Type: GenericPackage,
+		},
+	}
+
+	status := map[*Package]PackageBuildStatus{
+		pkg: PackageNotBuiltYet,
+	}
+
+	reporter.BuildStarted(pkg, status)
+	
+	// Simulate build error
+	buildErr := fmt.Errorf("build failed: compilation error")
+	reporter.BuildFinished(pkg, buildErr)
+
+	// Verify spans were created
+	spans := exporter.GetSpans()
+	if len(spans) == 0 {
+		t.Fatal("Expected at least one span to be created")
+	}
+
+	// Find build span
+	var buildSpan *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "leeway.build" {
+			buildSpan = &spans[i]
+			break
+		}
+	}
+
+	if buildSpan == nil {
+		t.Fatal("Expected to find build span")
+	}
+
+	// Verify error status
+	if buildSpan.Status.Code != 1 { // codes.Error = 1
+		t.Errorf("Expected error status code 1, got %d", buildSpan.Status.Code)
+	}
+
+	if buildSpan.Status.Description != "build failed: compilation error" {
+		t.Errorf("Expected error description 'build failed: compilation error', got '%s'", buildSpan.Status.Description)
+	}
+}
+
+func TestOTelReporter_PackageBuildError(t *testing.T) {
+	// Create in-memory exporter for testing
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSyncer(exporter),
+	)
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
+
+	tracer := tp.Tracer("test")
+	reporter := NewOTelReporter(tracer, context.Background())
+
+	pkg := &Package{
+		C: &Component{
+			Name: "test-component",
+			W: &Workspace{
+				Origin: "/workspace",
+			},
+		},
+		PackageInternal: PackageInternal{
+			Name: "test-package",
+			Type: GenericPackage,
+		},
+	}
+
+	status := map[*Package]PackageBuildStatus{
+		pkg: PackageNotBuiltYet,
+	}
+
+	reporter.BuildStarted(pkg, status)
+	reporter.PackageBuildStarted(pkg, "/tmp/build")
+
+	// Simulate package build error
+	pkgErr := fmt.Errorf("package build failed: test failure")
+	rep := &PackageBuildReport{
+		phaseEnter: make(map[PackageBuildPhase]time.Time),
+		phaseDone:  make(map[PackageBuildPhase]time.Time),
+		Phases:     []PackageBuildPhase{PackageBuildPhasePrep, PackageBuildPhaseTest},
+		Error:      pkgErr,
+	}
+	reporter.PackageBuildFinished(pkg, rep)
+	reporter.BuildFinished(pkg, nil)
+
+	// Verify spans were created
+	spans := exporter.GetSpans()
+	if len(spans) < 2 {
+		t.Fatalf("Expected at least 2 spans, got %d", len(spans))
+	}
+
+	// Find package span
+	var packageSpan *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "leeway.package" {
+			packageSpan = &spans[i]
+			break
+		}
+	}
+
+	if packageSpan == nil {
+		t.Fatal("Expected to find package span")
+	}
+
+	// Verify error status
+	if packageSpan.Status.Code != 1 { // codes.Error = 1
+		t.Errorf("Expected error status code 1, got %d", packageSpan.Status.Code)
+	}
+
+	if packageSpan.Status.Description != "package build failed: test failure" {
+		t.Errorf("Expected error description 'package build failed: test failure', got '%s'", packageSpan.Status.Description)
+	}
+}
+
+func TestOTelReporter_TestCoverageAttributes(t *testing.T) {
+	// Create in-memory exporter for testing
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSyncer(exporter),
+	)
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
+
+	tracer := tp.Tracer("test")
+	reporter := NewOTelReporter(tracer, context.Background())
+
+	pkg := &Package{
+		C: &Component{
+			Name: "test-component",
+			W: &Workspace{
+				Origin: "/workspace",
+			},
+		},
+		PackageInternal: PackageInternal{
+			Name: "test-package",
+			Type: GenericPackage,
+		},
+	}
+
+	status := map[*Package]PackageBuildStatus{
+		pkg: PackageNotBuiltYet,
+	}
+
+	reporter.BuildStarted(pkg, status)
+	reporter.PackageBuildStarted(pkg, "/tmp/build")
+
+	// Report with test coverage
+	rep := &PackageBuildReport{
+		phaseEnter:             make(map[PackageBuildPhase]time.Time),
+		phaseDone:              make(map[PackageBuildPhase]time.Time),
+		Phases:                 []PackageBuildPhase{PackageBuildPhasePrep, PackageBuildPhaseTest},
+		TestCoverageAvailable:  true,
+		TestCoveragePercentage: 85,
+		FunctionsWithTest:      42,
+		FunctionsWithoutTest:   8,
+	}
+	reporter.PackageBuildFinished(pkg, rep)
+	reporter.BuildFinished(pkg, nil)
+
+	// Verify spans were created
+	spans := exporter.GetSpans()
+	if len(spans) < 2 {
+		t.Fatalf("Expected at least 2 spans, got %d", len(spans))
+	}
+
+	// Find package span
+	var packageSpan *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "leeway.package" {
+			packageSpan = &spans[i]
+			break
+		}
+	}
+
+	if packageSpan == nil {
+		t.Fatal("Expected to find package span")
+	}
+
+	// Verify test coverage attributes
+	expectedAttrs := map[string]int64{
+		"leeway.package.test.coverage_percentage":     85,
+		"leeway.package.test.functions_with_test":     42,
+		"leeway.package.test.functions_without_test":  8,
+	}
+
+	foundAttrs := make(map[string]int64)
+	for _, attr := range packageSpan.Attributes {
+		key := string(attr.Key)
+		if strings.HasPrefix(key, "leeway.package.test.") {
+			foundAttrs[key] = attr.Value.AsInt64()
+		}
+	}
+
+	for key, expectedValue := range expectedAttrs {
+		actualValue, found := foundAttrs[key]
+		if !found {
+			t.Errorf("Expected test coverage attribute '%s' not found", key)
+		} else if actualValue != expectedValue {
+			t.Errorf("Test coverage attribute '%s': expected %d, got %d", key, expectedValue, actualValue)
+		}
+	}
+}
+
+func TestOTelReporter_PhaseDurations(t *testing.T) {
+	// Create in-memory exporter for testing
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSyncer(exporter),
+	)
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
+
+	tracer := tp.Tracer("test")
+	reporter := NewOTelReporter(tracer, context.Background())
+
+	pkg := &Package{
+		C: &Component{
+			Name: "test-component",
+			W: &Workspace{
+				Origin: "/workspace",
+			},
+		},
+		PackageInternal: PackageInternal{
+			Name: "test-package",
+			Type: GenericPackage,
+		},
+	}
+
+	status := map[*Package]PackageBuildStatus{
+		pkg: PackageNotBuiltYet,
+	}
+
+	reporter.BuildStarted(pkg, status)
+	reporter.PackageBuildStarted(pkg, "/tmp/build")
+
+	// Create report with phase durations
+	now := time.Now()
+	rep := &PackageBuildReport{
+		phaseEnter: map[PackageBuildPhase]time.Time{
+			PackageBuildPhasePrep:  now,
+			PackageBuildPhaseBuild: now.Add(100 * time.Millisecond),
+			PackageBuildPhaseTest:  now.Add(300 * time.Millisecond),
+		},
+		phaseDone: map[PackageBuildPhase]time.Time{
+			PackageBuildPhasePrep:  now.Add(100 * time.Millisecond),
+			PackageBuildPhaseBuild: now.Add(300 * time.Millisecond),
+			PackageBuildPhaseTest:  now.Add(500 * time.Millisecond),
+		},
+		Phases: []PackageBuildPhase{PackageBuildPhasePrep, PackageBuildPhaseBuild, PackageBuildPhaseTest},
+	}
+	reporter.PackageBuildFinished(pkg, rep)
+	reporter.BuildFinished(pkg, nil)
+
+	// Verify spans were created
+	spans := exporter.GetSpans()
+	if len(spans) < 2 {
+		t.Fatalf("Expected at least 2 spans, got %d", len(spans))
+	}
+
+	// Find package span
+	var packageSpan *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "leeway.package" {
+			packageSpan = &spans[i]
+			break
+		}
+	}
+
+	if packageSpan == nil {
+		t.Fatal("Expected to find package span")
+	}
+
+	// Verify phase duration attributes exist
+	expectedPhases := []string{"prep", "build", "test"}
+	foundPhases := make(map[string]bool)
+
+	for _, attr := range packageSpan.Attributes {
+		key := string(attr.Key)
+		if strings.HasPrefix(key, "leeway.package.phase.") && strings.HasSuffix(key, ".duration_ms") {
+			phase := strings.TrimPrefix(key, "leeway.package.phase.")
+			phase = strings.TrimSuffix(phase, ".duration_ms")
+			foundPhases[phase] = true
+
+			// Verify duration is reasonable (should be around 100-200ms for each phase)
+			duration := attr.Value.AsInt64()
+			if duration < 50 || duration > 300 {
+				t.Errorf("Phase '%s' duration %dms seems unreasonable", phase, duration)
+			}
+		}
+	}
+
+	for _, phase := range expectedPhases {
+		if !foundPhases[phase] {
+			t.Errorf("Expected phase duration attribute for '%s' not found", phase)
+		}
+	}
+}
+
+func TestOTelReporter_PackageBuildStatusCounts(t *testing.T) {
+	// Create in-memory exporter for testing
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSyncer(exporter),
+	)
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
+
+	tracer := tp.Tracer("test")
+	reporter := NewOTelReporter(tracer, context.Background())
+
+	// Create multiple packages with different statuses
+	pkg1 := &Package{
+		C: &Component{
+			Name: "component1",
+			W: &Workspace{
+				Origin: "/workspace",
+			},
+		},
+		PackageInternal: PackageInternal{
+			Name: "package1",
+			Type: GenericPackage,
+		},
+	}
+
+	pkg2 := &Package{
+		C: &Component{
+			Name: "component2",
+			W: &Workspace{
+				Origin: "/workspace",
+			},
+		},
+		PackageInternal: PackageInternal{
+			Name: "package2",
+			Type: GenericPackage,
+		},
+	}
+
+	pkg3 := &Package{
+		C: &Component{
+			Name: "component3",
+			W: &Workspace{
+				Origin: "/workspace",
+			},
+		},
+		PackageInternal: PackageInternal{
+			Name: "package3",
+			Type: GenericPackage,
+		},
+	}
+
+	status := map[*Package]PackageBuildStatus{
+		pkg1: PackageBuilt,
+		pkg2: PackageInRemoteCache,
+		pkg3: PackageNotBuiltYet,
+	}
+
+	reporter.BuildStarted(pkg1, status)
+	reporter.BuildFinished(pkg1, nil)
+
+	// Verify spans were created
+	spans := exporter.GetSpans()
+	if len(spans) == 0 {
+		t.Fatal("Expected at least one span to be created")
+	}
+
+	// Find build span
+	var buildSpan *tracetest.SpanStub
+	for i := range spans {
+		if spans[i].Name == "leeway.build" {
+			buildSpan = &spans[i]
+			break
+		}
+	}
+
+	if buildSpan == nil {
+		t.Fatal("Expected to find build span")
+	}
+
+	// Verify package status counts
+	expectedCounts := map[string]int64{
+		"leeway.packages.total":      3,
+		"leeway.packages.cached":     1,
+		"leeway.packages.remote":     1,
+		"leeway.packages.to_build":   1,
+		"leeway.packages.downloaded": 0,
+	}
+
+	foundCounts := make(map[string]int64)
+	for _, attr := range buildSpan.Attributes {
+		key := string(attr.Key)
+		if strings.HasPrefix(key, "leeway.packages.") {
+			foundCounts[key] = attr.Value.AsInt64()
+		}
+	}
+
+	for key, expectedValue := range expectedCounts {
+		actualValue, found := foundCounts[key]
+		if !found {
+			t.Errorf("Expected package count attribute '%s' not found", key)
+		} else if actualValue != expectedValue {
+			t.Errorf("Package count attribute '%s': expected %d, got %d", key, expectedValue, actualValue)
+		}
+	}
+}
+
+func TestOTelReporter_MemoryCleanup(t *testing.T) {
+	// Create in-memory exporter for testing
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(
+		trace.WithSyncer(exporter),
+	)
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+	}()
+
+	tracer := tp.Tracer("test")
+	reporter := NewOTelReporter(tracer, context.Background())
+
+	pkg := &Package{
+		C: &Component{
+			Name: "test-component",
+			W: &Workspace{
+				Origin: "/workspace",
+			},
+		},
+		PackageInternal: PackageInternal{
+			Name: "test-package",
+			Type: GenericPackage,
+		},
+	}
+
+	status := map[*Package]PackageBuildStatus{
+		pkg: PackageNotBuiltYet,
+	}
+
+	reporter.BuildStarted(pkg, status)
+	reporter.PackageBuildStarted(pkg, "/tmp/build")
+
+	// Verify maps are populated
+	reporter.mu.RLock()
+	if len(reporter.packageSpans) != 1 {
+		t.Errorf("Expected 1 package span in map, got %d", len(reporter.packageSpans))
+	}
+	if len(reporter.packageCtxs) != 1 {
+		t.Errorf("Expected 1 package context in map, got %d", len(reporter.packageCtxs))
+	}
+	reporter.mu.RUnlock()
+
+	// Finish package build
+	rep := &PackageBuildReport{
+		phaseEnter: make(map[PackageBuildPhase]time.Time),
+		phaseDone:  make(map[PackageBuildPhase]time.Time),
+		Phases:     []PackageBuildPhase{PackageBuildPhasePrep},
+	}
+	reporter.PackageBuildFinished(pkg, rep)
+
+	// Verify maps are cleaned up
+	reporter.mu.RLock()
+	if len(reporter.packageSpans) != 0 {
+		t.Errorf("Expected package spans map to be empty after PackageBuildFinished, got %d entries", len(reporter.packageSpans))
+	}
+	if len(reporter.packageCtxs) != 0 {
+		t.Errorf("Expected package contexts map to be empty after PackageBuildFinished, got %d entries", len(reporter.packageCtxs))
+	}
+	reporter.mu.RUnlock()
+
+	reporter.BuildFinished(pkg, nil)
 }
