@@ -195,9 +195,35 @@ CMD ["echo", "test"]`
 				t.Fatal(err)
 			}
 
+			// Initialize git repository for SBOM timestamp normalization
+			{
+				gitInit := exec.Command("git", "init")
+				gitInit.Dir = tmpDir
+				gitInit.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+				if err := gitInit.Run(); err != nil {
+					t.Fatalf("Failed to initialize git repository: %v", err)
+				}
+
+				// Configure git user for commits
+				gitConfigName := exec.Command("git", "config", "user.name", "Test User")
+				gitConfigName.Dir = tmpDir
+				gitConfigName.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+				if err := gitConfigName.Run(); err != nil {
+					t.Fatalf("Failed to configure git user.name: %v", err)
+				}
+
+				gitConfigEmail := exec.Command("git", "config", "user.email", "test@example.com")
+				gitConfigEmail.Dir = tmpDir
+				gitConfigEmail.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+				if err := gitConfigEmail.Run(); err != nil {
+					t.Fatalf("Failed to configure git user.email: %v", err)
+				}
+			}
+
 			// Create initial git commit for SBOM timestamp
 			gitAdd := exec.Command("git", "add", ".")
 			gitAdd.Dir = tmpDir
+			gitAdd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 			if err := gitAdd.Run(); err != nil {
 				t.Fatalf("Failed to git add: %v", err)
 			}
@@ -206,6 +232,8 @@ CMD ["echo", "test"]`
 			gitCommit := exec.Command("git", "commit", "-m", "initial")
 			gitCommit.Dir = tmpDir
 			gitCommit.Env = append(os.Environ(),
+				"GIT_CONFIG_GLOBAL=/dev/null",
+				"GIT_CONFIG_SYSTEM=/dev/null",
 				"GIT_AUTHOR_DATE=2021-01-01T00:00:00Z",
 				"GIT_COMMITTER_DATE=2021-01-01T00:00:00Z",
 			)
@@ -1276,23 +1304,28 @@ func TestDockerPackage_SBOM_OCI_Integration(t *testing.T) {
 			tmpDir := t.TempDir()
 
 			// Initialize git repository for SBOM timestamp normalization
-			gitInit := exec.Command("git", "init")
-			gitInit.Dir = tmpDir
-			if err := gitInit.Run(); err != nil {
-				t.Fatalf("Failed to initialize git repository: %v", err)
-			}
+			{
+				gitInit := exec.Command("git", "init")
+				gitInit.Dir = tmpDir
+				gitInit.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+				if err := gitInit.Run(); err != nil {
+					t.Fatalf("Failed to initialize git repository: %v", err)
+				}
 
-			// Configure git user for commits
-			gitConfigName := exec.Command("git", "config", "user.name", "Test User")
-			gitConfigName.Dir = tmpDir
-			if err := gitConfigName.Run(); err != nil {
-				t.Fatalf("Failed to configure git user.name: %v", err)
-			}
+				// Configure git user for commits
+				gitConfigName := exec.Command("git", "config", "user.name", "Test User")
+				gitConfigName.Dir = tmpDir
+				gitConfigName.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+				if err := gitConfigName.Run(); err != nil {
+					t.Fatalf("Failed to configure git user.name: %v", err)
+				}
 
-			gitConfigEmail := exec.Command("git", "config", "user.email", "test@example.com")
-			gitConfigEmail.Dir = tmpDir
-			if err := gitConfigEmail.Run(); err != nil {
-				t.Fatalf("Failed to configure git user.email: %v", err)
+				gitConfigEmail := exec.Command("git", "config", "user.email", "test@example.com")
+				gitConfigEmail.Dir = tmpDir
+				gitConfigEmail.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+				if err := gitConfigEmail.Run(); err != nil {
+					t.Fatalf("Failed to configure git user.email: %v", err)
+				}
 			}
 
 			// Create WORKSPACE.yaml with SBOM enabled
@@ -1335,9 +1368,35 @@ CMD ["echo", "test"]`
 				t.Fatal(err)
 			}
 
+			// Initialize git repository for SBOM timestamp normalization
+			{
+				gitInit := exec.Command("git", "init")
+				gitInit.Dir = tmpDir
+				gitInit.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+				if err := gitInit.Run(); err != nil {
+					t.Fatalf("Failed to initialize git repository: %v", err)
+				}
+
+				// Configure git user for commits
+				gitConfigName := exec.Command("git", "config", "user.name", "Test User")
+				gitConfigName.Dir = tmpDir
+				gitConfigName.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+				if err := gitConfigName.Run(); err != nil {
+					t.Fatalf("Failed to configure git user.name: %v", err)
+				}
+
+				gitConfigEmail := exec.Command("git", "config", "user.email", "test@example.com")
+				gitConfigEmail.Dir = tmpDir
+				gitConfigEmail.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+				if err := gitConfigEmail.Run(); err != nil {
+					t.Fatalf("Failed to configure git user.email: %v", err)
+				}
+			}
+
 			// Create initial git commit for SBOM timestamp
 			gitAdd := exec.Command("git", "add", ".")
 			gitAdd.Dir = tmpDir
+			gitAdd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 			if err := gitAdd.Run(); err != nil {
 				t.Fatalf("Failed to git add: %v", err)
 			}
@@ -1346,6 +1405,8 @@ CMD ["echo", "test"]`
 			gitCommit := exec.Command("git", "commit", "-m", "initial")
 			gitCommit.Dir = tmpDir
 			gitCommit.Env = append(os.Environ(),
+				"GIT_CONFIG_GLOBAL=/dev/null",
+				"GIT_CONFIG_SYSTEM=/dev/null",
 				"GIT_AUTHOR_DATE=2021-01-01T00:00:00Z",
 				"GIT_COMMITTER_DATE=2021-01-01T00:00:00Z",
 			)
