@@ -1058,6 +1058,18 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
+	// Handle test coverage if available (before packaging - needs _deps)
+	if bld.TestCoverage != nil {
+		coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
+		if err != nil {
+			return err
+		}
+		pkgRep.TestCoverageAvailable = true
+		pkgRep.TestCoveragePercentage = coverage
+		pkgRep.FunctionsWithoutTest = funcsWithoutTest
+		pkgRep.FunctionsWithTest = funcsWithTest
+	}
+
 	// Package the build results
 	if len(bld.Commands[PackageBuildPhasePackage]) > 0 {
 		if err := executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage]); err != nil {
@@ -1078,18 +1090,6 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
 			return err
 		}
-	}
-
-	// Handle test coverage if available
-	if bld.TestCoverage != nil {
-		coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
-		if err != nil {
-			return err
-		}
-		pkgRep.TestCoverageAvailable = true
-		pkgRep.TestCoveragePercentage = coverage
-		pkgRep.FunctionsWithoutTest = funcsWithoutTest
-		pkgRep.FunctionsWithTest = funcsWithTest
 	}
 
 	// Register newly built package
