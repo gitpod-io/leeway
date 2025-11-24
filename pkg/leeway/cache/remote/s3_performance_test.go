@@ -14,11 +14,13 @@ import (
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache/local"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 )
 
 // Realistic constants based on production observations
 const (
-	s3Latency       = 50 * time.Millisecond  // Network round-trip
+	s3Latency       = 50 * time.Millisecond  // Network round-trip (production)
+	s3LatencyTest   = 1 * time.Millisecond   // Reduced latency for fast tests
 	s3ThroughputMBs = 100                    // MB/s download speed
 	verifyTimeEd255 = 100 * time.Microsecond // Ed25519 signature verify
 	attestationSize = 5 * 1024               // ~5KB attestation
@@ -57,11 +59,16 @@ func createMockAttestation(t testing.TB) []byte {
 // realisticMockS3Storage implements realistic S3 performance characteristics
 type realisticMockS3Storage struct {
 	objects map[string][]byte
+	latency time.Duration // Configurable latency for testing
 }
 
 func (m *realisticMockS3Storage) HasObject(ctx context.Context, key string) (bool, error) {
 	// Simulate network latency for metadata check
-	time.Sleep(s3Latency / 2) // Metadata operations are faster
+	latency := m.latency
+	if latency == 0 {
+		latency = s3Latency // Default to realistic latency
+	}
+	time.Sleep(latency / 2) // Metadata operations are faster
 
 	_, exists := m.objects[key]
 	return exists, nil
@@ -74,7 +81,11 @@ func (m *realisticMockS3Storage) GetObject(ctx context.Context, key string, dest
 	}
 
 	// Simulate network latency
-	time.Sleep(s3Latency)
+	latency := m.latency
+	if latency == 0 {
+		latency = s3Latency // Default to realistic latency
+	}
+	time.Sleep(latency)
 
 	// Simulate download time based on size and throughput
 	sizeInMB := float64(len(data)) / (1024 * 1024)
@@ -92,7 +103,11 @@ func (m *realisticMockS3Storage) UploadObject(ctx context.Context, key string, s
 	}
 
 	// Simulate upload latency and throughput
-	time.Sleep(s3Latency)
+	latency := m.latency
+	if latency == 0 {
+		latency = s3Latency // Default to realistic latency
+	}
+	time.Sleep(latency)
 	sizeInMB := float64(len(data)) / (1024 * 1024)
 	uploadTime := time.Duration(sizeInMB / float64(s3ThroughputMBs) * float64(time.Second))
 	time.Sleep(uploadTime)
@@ -103,7 +118,11 @@ func (m *realisticMockS3Storage) UploadObject(ctx context.Context, key string, s
 
 func (m *realisticMockS3Storage) ListObjects(ctx context.Context, prefix string) ([]string, error) {
 	// Simulate network latency for list operation
-	time.Sleep(s3Latency / 2)
+	latency := m.latency
+	if latency == 0 {
+		latency = s3Latency // Default to realistic latency
+	}
+	time.Sleep(latency / 2)
 
 	var keys []string
 	for key := range m.objects {
@@ -339,18 +358,13 @@ func BenchmarkS3Cache_ParallelDownloads(b *testing.B) {
 
 // TestS3Cache_ParallelVerificationScaling tests scalability
 func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping scaling test in short mode")
-	}
-
+	// Use reduced latency and minimal packages for fast tests
 	tests := []struct {
 		packages int
 		workers  int
 	}{
-		{1, 1},
+		{2, 1},
 		{5, 2},
-		{10, 4},
-		{20, 8},
 	}
 
 	for _, tt := range tests {
@@ -366,8 +380,9 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 				}
 			}
 
-			// Setup cache
+			// Setup cache with fast latency
 			mockStorage := createRealisticMockS3StorageMultiple(t, tt.packages)
+			mockStorage.latency = s3LatencyTest // Use fast latency for tests
 			mockVerifier := &realisticMockVerifier{}
 
 			config := &cache.RemoteConfig{
@@ -379,9 +394,13 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 			}
 
 			s3Cache := &S3Cache{
-				storage:      mockStorage,
-				cfg:          config,
-				slsaVerifier: mockVerifier,
+				storage:             mockStorage,
+				cfg:                 config,
+				slsaVerifier:        mockVerifier,
+				workerCount:         defaultWorkerCount,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:           make(chan struct{}, maxConcurrentOperations),
 			}
 
 			tmpDir := t.TempDir()
@@ -394,6 +413,149 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 
 			t.Logf("Downloaded %d packages with %d workers in %v (%.2f packages/sec)",
 				tt.packages, tt.workers, duration, float64(tt.packages)/duration.Seconds())
+		})
+	}
+}
+
+// TestS3Cache_ExistingPackagesBatchOptimization tests the ListObjects optimization
+func TestS3Cache_ExistingPackagesBatchOptimization(t *testing.T) {
+	// Use reduced latency for fast tests
+	packageCounts := []int{10, 50, 100}
+
+	for _, count := range packageCounts {
+		t.Run(fmt.Sprintf("%d-packages", count), func(t *testing.T) {
+			// Create packages
+			packages := make([]cache.Package, count)
+			for i := 0; i < count; i++ {
+				packages[i] = &mockPackagePerf{
+					version:  fmt.Sprintf("package%d:v%d", i, i),
+					fullName: fmt.Sprintf("package%d", i),
+				}
+			}
+
+			// Setup mock storage with all packages and fast latency
+			mockStorage := createRealisticMockS3StorageMultiple(t, count)
+			mockStorage.latency = s3LatencyTest // Use fast latency for tests
+
+			config := &cache.RemoteConfig{
+				BucketName: "test-bucket",
+			}
+
+			s3Cache := &S3Cache{
+				storage:             mockStorage,
+				cfg:                 config,
+				workerCount:         defaultWorkerCount,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+			}
+
+			// Measure time for batch check (using ListObjects)
+			start := time.Now()
+			existing, err := s3Cache.ExistingPackages(context.Background(), packages)
+			batchDuration := time.Since(start)
+			require.NoError(t, err)
+			require.Equal(t, count, len(existing), "All packages should be found")
+
+			// Measure time for sequential check (fallback method)
+			start = time.Now()
+			existingSeq, err := s3Cache.existingPackagesSequential(context.Background(), packages)
+			seqDuration := time.Since(start)
+			require.NoError(t, err)
+			require.Equal(t, count, len(existingSeq), "All packages should be found")
+
+			// Calculate speedup
+			speedup := float64(seqDuration) / float64(batchDuration)
+
+			t.Logf("Package count: %d", count)
+			t.Logf("Batch (ListObjects): %v", batchDuration)
+			t.Logf("Sequential (HeadObject): %v", seqDuration)
+			t.Logf("Speedup: %.2fx", speedup)
+
+			// For larger package counts, batch should be significantly faster
+			if count >= 50 {
+				require.Greater(t, speedup, 3.0, "Batch optimization should be at least 3x faster for 50+ packages")
+			} else {
+				require.Greater(t, speedup, 1.0, "Batch optimization should be faster than sequential")
+			}
+		})
+	}
+}
+
+// BenchmarkS3Cache_ExistingPackages benchmarks the optimized ExistingPackages method
+func BenchmarkS3Cache_ExistingPackages(b *testing.B) {
+	if testing.Short() {
+		b.Skip("skipping benchmark in short mode")
+	}
+
+	packageCounts := []int{10, 50, 100, 200}
+
+	for _, count := range packageCounts {
+		b.Run(fmt.Sprintf("%d-packages-batch", count), func(b *testing.B) {
+			// Create packages
+			packages := make([]cache.Package, count)
+			for i := 0; i < count; i++ {
+				packages[i] = &mockPackagePerf{
+					version:  fmt.Sprintf("package%d:v%d", i, i),
+					fullName: fmt.Sprintf("package%d", i),
+				}
+			}
+
+			// Setup mock storage
+			mockStorage := createRealisticMockS3StorageMultiple(b, count)
+
+			config := &cache.RemoteConfig{
+				BucketName: "test-bucket",
+			}
+
+			s3Cache := &S3Cache{
+				storage:             mockStorage,
+				cfg:                 config,
+				workerCount:         defaultWorkerCount,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, err := s3Cache.ExistingPackages(context.Background(), packages)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("%d-packages-sequential", count), func(b *testing.B) {
+			// Create packages
+			packages := make([]cache.Package, count)
+			for i := 0; i < count; i++ {
+				packages[i] = &mockPackagePerf{
+					version:  fmt.Sprintf("package%d:v%d", i, i),
+					fullName: fmt.Sprintf("package%d", i),
+				}
+			}
+
+			// Setup mock storage
+			mockStorage := createRealisticMockS3StorageMultiple(b, count)
+
+			config := &cache.RemoteConfig{
+				BucketName: "test-bucket",
+			}
+
+			s3Cache := &S3Cache{
+				storage:             mockStorage,
+				cfg:                 config,
+				workerCount:         defaultWorkerCount,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, err := s3Cache.existingPackagesSequential(context.Background(), packages)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
 		})
 	}
 }

@@ -23,9 +23,10 @@ import (
 
 // mockS3Client implements a mock S3 client for testing
 type mockS3Client struct {
-	headObjectFunc func(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
-	getObjectFunc  func(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
-	putObjectFunc  func(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	headObjectFunc    func(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	getObjectFunc     func(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	putObjectFunc     func(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	listObjectsV2Func func(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 }
 
 func (m *mockS3Client) HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
@@ -66,6 +67,9 @@ func (m *mockS3Client) UploadPart(ctx context.Context, params *s3.UploadPartInpu
 }
 
 func (m *mockS3Client) ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	if m.listObjectsV2Func != nil {
+		return m.listObjectsV2Func(ctx, params, optFns...)
+	}
 	return &s3.ListObjectsV2Output{}, nil
 }
 
@@ -74,11 +78,12 @@ func TestS3Cache_ExistingPackages(t *testing.T) {
 	defer cancel()
 
 	tests := []struct {
-		name            string
-		packages        []cache.Package
-		mockHeadObject  func(key string) (*s3.HeadObjectOutput, error)
-		expectedResults map[string]struct{}
-		expectError     bool
+		name             string
+		packages         []cache.Package
+		mockHeadObject   func(key string) (*s3.HeadObjectOutput, error)
+		mockListObjects  func(prefix string) (*s3.ListObjectsV2Output, error)
+		expectedResults  map[string]struct{}
+		expectError      bool
 	}{
 		{
 			name: "finds tar.gz package",
@@ -90,6 +95,14 @@ func TestS3Cache_ExistingPackages(t *testing.T) {
 					return &s3.HeadObjectOutput{}, nil
 				}
 				return nil, &types.NoSuchKey{}
+			},
+			mockListObjects: func(prefix string) (*s3.ListObjectsV2Output, error) {
+				key := "v1.tar.gz"
+				return &s3.ListObjectsV2Output{
+					Contents: []types.Object{
+						{Key: &key},
+					},
+				}, nil
 			},
 			expectedResults: map[string]struct{}{
 				"v1": {},
@@ -109,6 +122,14 @@ func TestS3Cache_ExistingPackages(t *testing.T) {
 				}
 				return nil, &types.NoSuchKey{}
 			},
+			mockListObjects: func(prefix string) (*s3.ListObjectsV2Output, error) {
+				key := "v1.tar"
+				return &s3.ListObjectsV2Output{
+					Contents: []types.Object{
+						{Key: &key},
+					},
+				}, nil
+			},
 			expectedResults: map[string]struct{}{
 				"v1": {},
 			},
@@ -121,6 +142,11 @@ func TestS3Cache_ExistingPackages(t *testing.T) {
 			mockHeadObject: func(key string) (*s3.HeadObjectOutput, error) {
 				return nil, &types.NoSuchKey{}
 			},
+			mockListObjects: func(prefix string) (*s3.ListObjectsV2Output, error) {
+				return &s3.ListObjectsV2Output{
+					Contents: []types.Object{},
+				}, nil
+			},
 			expectedResults: map[string]struct{}{},
 		},
 		{
@@ -130,6 +156,14 @@ func TestS3Cache_ExistingPackages(t *testing.T) {
 			},
 			mockHeadObject: func(key string) (*s3.HeadObjectOutput, error) {
 				return &s3.HeadObjectOutput{}, nil
+			},
+			mockListObjects: func(prefix string) (*s3.ListObjectsV2Output, error) {
+				key := "v1.tar.gz"
+				return &s3.ListObjectsV2Output{
+					Contents: []types.Object{
+						{Key: &key},
+					},
+				}, nil
 			},
 			expectedResults: map[string]struct{}{},
 			expectError:     false,
@@ -142,6 +176,12 @@ func TestS3Cache_ExistingPackages(t *testing.T) {
 				headObjectFunc: func(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
 					return tt.mockHeadObject(*params.Key)
 				},
+				listObjectsV2Func: func(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+					if tt.mockListObjects != nil {
+						return tt.mockListObjects(*params.Prefix)
+					}
+					return &s3.ListObjectsV2Output{}, nil
+				},
 			}
 
 			s3Cache := &S3Cache{
@@ -149,9 +189,10 @@ func TestS3Cache_ExistingPackages(t *testing.T) {
 					client:     mockClient,
 					bucketName: "test-bucket",
 				},
-				workerCount: 1,
-				rateLimiter: rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
-				semaphore:   make(chan struct{}, maxConcurrentOperations),
+				workerCount:         1,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:           make(chan struct{}, maxConcurrentOperations),
 			}
 
 			results, err := s3Cache.ExistingPackages(ctx, tt.packages)
@@ -293,9 +334,10 @@ func TestS3Cache_Download(t *testing.T) {
 					client:     mockClient,
 					bucketName: "test-bucket",
 				},
-				workerCount: 1,
-				rateLimiter: rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
-				semaphore:   make(chan struct{}, maxConcurrentOperations),
+				workerCount:         1,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:           make(chan struct{}, maxConcurrentOperations),
 			}
 
 			err := s3Cache.Download(ctx, tt.localCache, tt.packages)
@@ -424,9 +466,10 @@ func TestS3Cache_Upload(t *testing.T) {
 					client:     mockClient,
 					bucketName: "test-bucket",
 				},
-				workerCount: 1,
-				rateLimiter: rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
-				semaphore:   make(chan struct{}, maxConcurrentOperations),
+				workerCount:         1,
+				downloadWorkerCount: defaultDownloadWorkerCount,
+				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
+				semaphore:           make(chan struct{}, maxConcurrentOperations),
 			}
 
 			err := s3Cache.Upload(ctx, tt.localCache, tt.packages)
