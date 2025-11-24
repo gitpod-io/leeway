@@ -780,6 +780,10 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 	newlyBuiltMap := make(map[string]bool)
 	for _, p := range newlyBuilt {
 		newlyBuiltMap[p.FullName()] = true
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"version": p.versionCache,
+		}).Debug("Package in newlyBuiltMap")
 	}
 
 	// Track packages that were supposed to be downloaded but weren't
@@ -802,19 +806,40 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 		total++
 
 		// Determine what happened to this package
-		if newlyBuiltMap[p.FullName()] {
+		inNewlyBuilt := newlyBuiltMap[p.FullName()]
+		inPkgsToDownload := pkgsToDownloadMap[p.FullName()]
+		status := statusAfterDownload[p]
+		
+		log.WithFields(log.Fields{
+			"package":          p.FullName(),
+			"inNewlyBuilt":     inNewlyBuilt,
+			"inPkgsToDownload": inPkgsToDownload,
+			"status":           status,
+		}).Debug("Categorizing package for build summary")
+		
+		if inNewlyBuilt {
 			// Package was built during this build
 			builtLocally++
 			
 			// Check if this was supposed to be downloaded but wasn't
 			// This indicates verification or download failure
-			if pkgsToDownloadMap[p.FullName()] && statusAfterDownload[p] != PackageDownloaded {
+			if inPkgsToDownload && status != PackageDownloaded {
 				failedDownloads = append(failedDownloads, p)
 			}
-		} else if statusAfterDownload[p] == PackageDownloaded {
+		} else if inPkgsToDownload && status != PackageDownloaded {
+			// Package was supposed to be downloaded but wasn't, yet it's now in cache
+			// This means it was built locally after download/verification failure
+			// but wasn't tracked in newlyBuiltMap (edge case - defensive fix applied)
+			log.WithFields(log.Fields{
+				"package": p.FullName(),
+				"status":  status,
+			}).Debug("Package built locally after download/verification failure (defensive fix applied)")
+			builtLocally++
+			failedDownloads = append(failedDownloads, p)
+		} else if status == PackageDownloaded {
 			// Package was downloaded
 			downloaded++
-		} else if statusAfterDownload[p] == PackageBuilt {
+		} else if status == PackageBuilt {
 			// Package was already cached
 			alreadyCached++
 		} else {
