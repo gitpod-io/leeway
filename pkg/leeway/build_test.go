@@ -67,45 +67,53 @@ if [[ " ${POSITIONAL_ARGS[@]} " =~ " buildx " ]] && [[ " ${POSITIONAL_ARGS[@]} "
 fi
 `
 
-// Create a mock for extractImageWithOCILibs to avoid dependency on actual Docker daemon
-func init() {
-	// Override with a simple mock implementation for tests
-	leeway.ExtractImageWithOCILibs = func(destDir, imgTag string) error {
-		log.WithFields(log.Fields{
-			"image":   imgTag,
-			"destDir": destDir,
-		}).Info("Mock: Extracting container filesystem")
+// mockExtractImageWithOCILibs is a mock implementation for unit tests
+// that don't have Docker available
+var mockExtractImageWithOCILibs = func(destDir, imgTag string) error {
+	log.WithFields(log.Fields{
+		"image":   imgTag,
+		"destDir": destDir,
+	}).Info("Mock: Extracting container filesystem")
 
-		// Create required directories
-		contentDir := filepath.Join(destDir, "content")
-		if err := os.MkdirAll(contentDir, 0755); err != nil {
+	// Create required directories
+	contentDir := filepath.Join(destDir, "content")
+	if err := os.MkdirAll(contentDir, 0755); err != nil {
+		return err
+	}
+
+	// Create a mock file structure similar to what a real extraction would produce
+	mockFiles := map[string]string{
+		filepath.Join(destDir, "imgnames.txt"):        imgTag + "\n",
+		filepath.Join(destDir, "metadata.yaml"):       "test: metadata\n",
+		filepath.Join(destDir, "image-metadata.json"): `{"image":"` + imgTag + `"}`,
+		filepath.Join(contentDir, "bin/testfile"):     "test content",
+		filepath.Join(contentDir, "README.md"):        "# Test Container",
+	}
+
+	// Create directories for the mock files
+	for filename := range mockFiles {
+		if err := os.MkdirAll(filepath.Dir(filename), 0755); err != nil {
 			return err
 		}
+	}
 
-		// Create a mock file structure similar to what a real extraction would produce
-		mockFiles := map[string]string{
-			filepath.Join(destDir, "imgnames.txt"):        imgTag + "\n",
-			filepath.Join(destDir, "metadata.yaml"):       "test: metadata\n",
-			filepath.Join(destDir, "image-metadata.json"): `{"image":"` + imgTag + `"}`,
-			filepath.Join(contentDir, "bin/testfile"):     "test content",
-			filepath.Join(contentDir, "README.md"):        "# Test Container",
+	// Create the mock files
+	for filename, content := range mockFiles {
+		if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+			return err
 		}
+	}
 
-		// Create directories for the mock files
-		for filename := range mockFiles {
-			if err := os.MkdirAll(filepath.Dir(filename), 0755); err != nil {
-				return err
-			}
-		}
+	return nil
+}
 
-		// Create the mock files
-		for filename, content := range mockFiles {
-			if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
-				return err
-			}
-		}
-
-		return nil
+// setupMockForUnitTests enables the mock for unit tests that don't have Docker
+// This should be called at the start of unit tests that need it
+func setupMockForUnitTests() func() {
+	original := leeway.ExtractImageWithOCILibs
+	leeway.ExtractImageWithOCILibs = mockExtractImageWithOCILibs
+	return func() {
+		leeway.ExtractImageWithOCILibs = original
 	}
 }
 
