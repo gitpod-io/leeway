@@ -15,10 +15,16 @@ import (
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache/local"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
+	"github.com/gitpod-io/leeway/pkg/leeway/telemetry"
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
+
+// CleanupFunc is a function that performs cleanup operations and must be deferred
+type CleanupFunc func()
 
 // buildCmd represents the build command
 var buildCmd = &cobra.Command{
@@ -47,7 +53,8 @@ Examples:
 		if pkg == nil {
 			log.Fatal("build needs a package")
 		}
-		opts, localCache := getBuildOpts(cmd)
+		opts, localCache, shutdown := getBuildOpts(cmd)
+		defer shutdown()
 
 		var (
 			watch, _ = cmd.Flags().GetBool("watch")
@@ -209,9 +216,13 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
 	cmd.Flags().Bool("fixed-build-dir", true, "Use a fixed build directory for each package, instead of based on the package version, to better utilize caches based on absolute paths (defaults to true)")
 	cmd.Flags().Bool("docker-export-to-cache", false, "Export Docker images to cache instead of pushing directly (enables SLSA L3 compliance)")
+	cmd.Flags().String("otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "OpenTelemetry OTLP endpoint URL for tracing (defaults to $OTEL_EXPORTER_OTLP_ENDPOINT)")
+	cmd.Flags().Bool("otel-insecure", os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true", "Disable TLS for OTLP endpoint (for local development only, defaults to $OTEL_EXPORTER_OTLP_INSECURE)")
+	cmd.Flags().String("trace-parent", os.Getenv("TRACEPARENT"), "W3C Trace Context traceparent header for distributed tracing (defaults to $TRACEPARENT)")
+	cmd.Flags().String("trace-state", os.Getenv("TRACESTATE"), "W3C Trace Context tracestate header for distributed tracing (defaults to $TRACESTATE)")
 }
 
-func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
+func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, CleanupFunc) {
 	// Track if user explicitly set LEEWAY_DOCKER_EXPORT_TO_CACHE before workspace loading.
 	// This allows us to distinguish:
 	// - User set explicitly: High priority (overrides package config)
@@ -312,6 +323,61 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		reporter = append(reporter, leeway.NewGitHubReporter())
 	}
 
+	// Initialize OpenTelemetry reporter if endpoint is configured
+	var tracerProvider *sdktrace.TracerProvider
+	var otelShutdown func()
+	if otelEndpoint, err := cmd.Flags().GetString("otel-endpoint"); err != nil {
+		log.Fatal(err)
+	} else if otelEndpoint != "" {
+		// Set leeway version for telemetry
+		telemetry.SetLeewayVersion(leeway.Version)
+
+		// Get insecure flag
+		otelInsecure, err := cmd.Flags().GetBool("otel-insecure")
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// Initialize tracer with the provided endpoint and TLS configuration
+		tp, err := telemetry.InitTracer(context.Background(), otelEndpoint, otelInsecure)
+		if err != nil {
+			log.WithError(err).Warn("failed to initialize OpenTelemetry tracer")
+		} else {
+			tracerProvider = tp
+
+			// Parse trace context if provided
+			traceParent, _ := cmd.Flags().GetString("trace-parent")
+			traceState, _ := cmd.Flags().GetString("trace-state")
+
+			parentCtx := context.Background()
+			if traceParent != "" {
+				if err := telemetry.ValidateTraceParent(traceParent); err != nil {
+					log.WithError(err).Warn("invalid trace-parent format")
+				} else {
+					ctx, err := telemetry.ParseTraceContext(traceParent, traceState)
+					if err != nil {
+						log.WithError(err).Warn("failed to parse trace context")
+					} else {
+						parentCtx = ctx
+					}
+				}
+			}
+
+			// Create OTel reporter
+			tracer := otel.Tracer("leeway")
+			reporter = append(reporter, leeway.NewOTelReporter(tracer, parentCtx))
+
+			// Create shutdown function
+			otelShutdown = func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := telemetry.Shutdown(shutdownCtx, tracerProvider); err != nil {
+					log.WithError(err).Warn("failed to shutdown tracer provider")
+				}
+			}
+		}
+	}
+
 	dontTest, err := cmd.Flags().GetBool("dont-test")
 	if err != nil {
 		log.Fatal(err)
@@ -374,6 +440,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		dockerExportSet = true
 	}
 
+	// Create a no-op shutdown function if otelShutdown is nil
+	if otelShutdown == nil {
+		otelShutdown = func() {}
+	}
+
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
@@ -391,7 +462,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		leeway.WithInFlightChecksums(inFlightChecksums),
 		leeway.WithDockerExportToCache(dockerExportToCache, dockerExportSet),
 		leeway.WithDockerExportEnv(dockerExportEnvValue, dockerExportEnvSet),
-	}, localCache
+	}, localCache, otelShutdown
 }
 
 type pushOnlyRemoteCache struct {
@@ -506,6 +577,7 @@ func getRemoteCache(cmd *cobra.Command) cache.RemoteCache {
 			SLSA:       slsaConfig,
 		}
 		
+
 		switch remoteStorage {
 		case "GCP":
 			if slsaConfig != nil && slsaConfig.Verification {
