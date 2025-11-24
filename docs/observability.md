@@ -26,7 +26,7 @@ Root Span (leeway.build)
 - **Root Span**: Created when `BuildStarted` is called, represents the entire build operation
 - **Package Spans**: Created for each package being built, as children of the root span
 
-Build phase durations (prep, pull, lint, test, build, package) are captured as attributes on package spans, not as separate spans.
+Build phase durations (prep, pull, lint, test, build, package) are captured as attributes on package spans, not as separate spans. This design provides lower overhead and simpler hierarchy while maintaining visibility into phase-level performance.
 
 ### Context Propagation
 
@@ -65,15 +65,19 @@ CLI flag → Environment variable → Default (disabled)
 
 ### TLS Configuration
 
-By default, leeway uses **secure TLS connections** to the OTLP endpoint. For local development with tools like Jaeger, you can disable TLS:
+By default, leeway uses **secure TLS connections** to the OTLP endpoint. 
+
+⚠️ **Production**: Always use secure TLS (default). Never set `OTEL_EXPORTER_OTLP_INSECURE=true` in production environments.
+
+For local development with tools like Jaeger, you can disable TLS:
 
 ```bash
-# Local development (insecure)
+# Local development (insecure - for testing only)
 export OTEL_EXPORTER_OTLP_INSECURE=true
 export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318
 leeway build :my-package
 
-# Production (secure, default)
+# Production (secure TLS, default)
 export OTEL_EXPORTER_OTLP_ENDPOINT=api.honeycomb.io:443
 export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=YOUR_API_KEY"
 leeway build :my-package

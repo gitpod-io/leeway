@@ -127,7 +127,8 @@ func ParseTraceContext(traceparent, tracestate string) (context.Context, error) 
 	return ctx, nil
 }
 
-// getLeewayVersion returns the leeway version for telemetry.
+// getLeewayVersion returns the leeway version set via SetLeewayVersion.
+// Returns "unknown" if version was not set.
 func getLeewayVersion() string {
 	return leewayVersion
 }

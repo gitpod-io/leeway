@@ -596,29 +596,20 @@ variables have an effect on leeway:
 - `LEEWAY_CACHE_DIR`: Location of the local build cache. The directory does not have to exist yet.
 - `LEEWAY_BUILD_DIR`: Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O which makes it advisable to place this on a fast SSD or in RAM.
 - `LEEWAY_YARN_MUTEX`: Configures the mutex flag leeway will pass to yarn. Defaults to "network". See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
-- `LEEWAY_EXPERIMENTAL`: Enables exprimental features
+- `LEEWAY_EXPERIMENTAL`: Enables experimental features
 
 # OpenTelemetry Tracing
 
 Leeway supports distributed tracing using OpenTelemetry for build performance visibility.
 
-## Quick Start
-
 ```bash
-# Local development (Jaeger)
-export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318
-export OTEL_EXPORTER_OTLP_INSECURE=true
-leeway build :my-package
-
-# Production (Honeycomb with API key)
+# Enable tracing by setting OTLP endpoint
 export OTEL_EXPORTER_OTLP_ENDPOINT=api.honeycomb.io:443
 export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=YOUR_API_KEY"
 leeway build :my-package
 ```
 
-The OpenTelemetry SDK automatically reads standard `OTEL_EXPORTER_OTLP_*` environment variables.
-
-**For detailed configuration, examples, and span attributes, see [docs/observability.md](docs/observability.md).**
+See [docs/observability.md](docs/observability.md) for configuration, examples, and span attributes.
 
 # Provenance (SLSA) - EXPERIMENTAL
 leeway can produce provenance information as part of a build. At the moment only [SLSA Provenance v0.2](https://slsa.dev/provenance/v0.2) is supported. This support is **experimental**.
