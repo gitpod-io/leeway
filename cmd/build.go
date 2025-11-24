@@ -23,6 +23,9 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
+// CleanupFunc is a function that performs cleanup operations and must be deferred
+type CleanupFunc func()
+
 // buildCmd represents the build command
 var buildCmd = &cobra.Command{
 	Use:   "build [targetPackage]",
@@ -219,7 +222,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().String("trace-state", os.Getenv("TRACESTATE"), "W3C Trace Context tracestate header for distributed tracing (defaults to $TRACESTATE)")
 }
 
-func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, func()) {
+func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, CleanupFunc) {
 	// Track if user explicitly set LEEWAY_DOCKER_EXPORT_TO_CACHE before workspace loading.
 	// This allows us to distinguish:
 	// - User set explicitly: High priority (overrides package config)
