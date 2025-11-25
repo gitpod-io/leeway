@@ -1365,6 +1365,11 @@ func executeBuildPhase(buildctx *buildContext, p *Package, builddir string, bld 
 		return nil
 	}
 
+	// Notify phase-aware reporters
+	if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
+		par.PackageBuildPhaseStarted(p, phase)
+	}
+
 	if phase != PackageBuildPhasePrep {
 		pkgRep.phaseEnter[phase] = time.Now()
 		pkgRep.Phases = append(pkgRep.Phases, phase)
@@ -1374,6 +1379,11 @@ func executeBuildPhase(buildctx *buildContext, p *Package, builddir string, bld 
 
 	err := executeCommandsForPackage(buildctx, p, builddir, cmds)
 	pkgRep.phaseDone[phase] = time.Now()
+
+	// Notify phase-aware reporters
+	if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
+		par.PackageBuildPhaseFinished(p, phase, err)
+	}
 
 	return err
 }
