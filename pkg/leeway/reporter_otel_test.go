@@ -818,6 +818,14 @@ func TestOTelReporter_PhaseDurations(t *testing.T) {
 	reporter.BuildStarted(pkg, status)
 	reporter.PackageBuildStarted(pkg, "/tmp/build")
 
+	// Simulate phase execution with actual phase spans
+	phases := []PackageBuildPhase{PackageBuildPhasePrep, PackageBuildPhaseBuild, PackageBuildPhaseTest}
+	for _, phase := range phases {
+		reporter.PackageBuildPhaseStarted(pkg, phase)
+		time.Sleep(10 * time.Millisecond) // Simulate work
+		reporter.PackageBuildPhaseFinished(pkg, phase, nil)
+	}
+
 	// Create report with phase durations
 	now := time.Now()
 	rep := &PackageBuildReport{
@@ -831,52 +839,41 @@ func TestOTelReporter_PhaseDurations(t *testing.T) {
 			PackageBuildPhaseBuild: now.Add(300 * time.Millisecond),
 			PackageBuildPhaseTest:  now.Add(500 * time.Millisecond),
 		},
-		Phases: []PackageBuildPhase{PackageBuildPhasePrep, PackageBuildPhaseBuild, PackageBuildPhaseTest},
+		Phases: phases,
 	}
 	reporter.PackageBuildFinished(pkg, rep)
 	reporter.BuildFinished(pkg, nil)
 
 	// Verify spans were created
 	spans := exporter.GetSpans()
-	if len(spans) < 2 {
-		t.Fatalf("Expected at least 2 spans, got %d", len(spans))
+	if len(spans) < 5 { // build + package + 3 phases
+		t.Fatalf("Expected at least 5 spans, got %d", len(spans))
 	}
 
-	// Find package span
-	var packageSpan *tracetest.SpanStub
-	for i := range spans {
-		if spans[i].Name == "leeway.package" {
-			packageSpan = &spans[i]
-			break
-		}
-	}
-
-	if packageSpan == nil {
-		t.Fatal("Expected to find package span")
-	}
-
-	// Verify phase duration attributes exist
+	// Verify phase spans exist (durations are now in nested spans, not attributes)
 	expectedPhases := []string{"prep", "build", "test"}
 	foundPhases := make(map[string]bool)
 
-	for _, attr := range packageSpan.Attributes {
-		key := string(attr.Key)
-		if strings.HasPrefix(key, "leeway.package.phase.") && strings.HasSuffix(key, ".duration_ms") {
-			phase := strings.TrimPrefix(key, "leeway.package.phase.")
-			phase = strings.TrimSuffix(phase, ".duration_ms")
-			foundPhases[phase] = true
+	for _, span := range spans {
+		if span.Name == "leeway.phase" {
+			for _, attr := range span.Attributes {
+				if string(attr.Key) == "leeway.phase.name" {
+					phaseName := attr.Value.AsString()
+					foundPhases[phaseName] = true
 
-			// Verify duration is reasonable (should be around 100-200ms for each phase)
-			duration := attr.Value.AsInt64()
-			if duration < 50 || duration > 300 {
-				t.Errorf("Phase '%s' duration %dms seems unreasonable", phase, duration)
+					// Verify span has reasonable duration
+					duration := span.EndTime.Sub(span.StartTime)
+					if duration < 5*time.Millisecond || duration > 100*time.Millisecond {
+						t.Errorf("Phase '%s' duration %v seems unreasonable", phaseName, duration)
+					}
+				}
 			}
 		}
 	}
 
 	for _, phase := range expectedPhases {
 		if !foundPhases[phase] {
-			t.Errorf("Expected phase duration attribute for '%s' not found", phase)
+			t.Errorf("Expected phase span for '%s' not found", phase)
 		}
 	}
 }
