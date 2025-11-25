@@ -611,6 +611,25 @@ export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=YOUR_API_KEY"
 leeway build :my-package
 ```
 
+The OpenTelemetry SDK automatically reads standard `OTEL_EXPORTER_OTLP_*` environment variables.
+
+## Span Hierarchy
+
+Leeway creates a nested span hierarchy for detailed build timeline visualization:
+
+```
+leeway.build (root)
+├── leeway.package (component:package-1)
+│   ├── leeway.phase (prep)
+│   ├── leeway.phase (build)
+│   └── leeway.phase (test)
+└── leeway.package (component:package-2)
+    ├── leeway.phase (prep)
+    └── leeway.phase (build)
+```
+
+Each phase span captures timing, status, and errors for individual build phases (prep, pull, lint, test, build, package).
+
 See [docs/observability.md](docs/observability.md) for configuration, examples, and span attributes.
 
 # Provenance (SLSA) - EXPERIMENTAL
