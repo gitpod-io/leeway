@@ -118,6 +118,12 @@ func setupMockForUnitTests() func() {
 }
 
 func TestBuildDockerDeps(t *testing.T) {
+	// Enable mock for this test since it uses dummy docker (not real Docker)
+	// Without the mock, container extraction would fail because dummy docker
+	// doesn't create real images or OCI tars
+	restoreMock := setupMockForUnitTests()
+	defer restoreMock()
+
 	if *testutil.Dut {
 		pth, err := os.MkdirTemp("", "")
 		if err != nil {
@@ -548,6 +554,12 @@ func TestDockerPackage_BuildContextOverride(t *testing.T) {
 }
 
 func TestDockerPostProcessing(t *testing.T) {
+	// Enable mock for this test since it uses dummy docker (not real Docker)
+	// Without the mock, container extraction would fail because dummy docker
+	// doesn't create real images or OCI tars
+	restoreMock := setupMockForUnitTests()
+	defer restoreMock()
+
 	if *testutil.Dut {
 		pth, err := os.MkdirTemp("", "")
 		if err != nil {
