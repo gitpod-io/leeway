@@ -49,7 +49,11 @@ type PackageVulnerabilityStats struct {
 // This function is called after the build process completes to identify security issues
 // in all built packages, including those loaded from cache. It generates comprehensive
 // vulnerability reports in multiple formats and collects statistics across all packages.
-func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Package, customOutputDir ...string) error {
+//
+// Only packages with successful build status (PackageBuilt or PackageDownloaded) are scanned.
+// This prevents errors when a dependency build fails in a parallel goroutine but the main
+// build continues (due to the build lock mechanism allowing other goroutines to proceed).
+func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Package, pkgstatus map[*Package]PackageBuildStatus, customOutputDir ...string) error {
 	if len(packages) == 0 {
 		return nil
 	}
@@ -74,6 +78,15 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 
 	// Process each package
 	for _, p := range packages {
+		// Skip packages that were not successfully built or downloaded
+		// This can happen when a dependency build fails in a parallel goroutine
+		// but other goroutines continue due to the build lock mechanism
+		status := pkgstatus[p]
+		if status != PackageBuilt && status != PackageDownloaded {
+			buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Skipping vulnerability scan for package %s (status: %s)\n", p.FullName(), status)))
+			continue
+		}
+
 		if !p.C.W.SBOM.Enabled {
 			errMsg := fmt.Append(nil, "SBOM feature is disabled, cannot scan for vulnerabilities")
 			buildctx.Reporter.PackageBuildLog(p, false, errMsg)
@@ -88,9 +101,10 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 
 		location, exists := buildctx.LocalCache.Location(p)
 		if !exists {
-			errMsg := fmt.Appendf(nil, "Package %s not found in local cache, cannot scan for vulnerabilities\n", p.FullName())
-			buildctx.Reporter.PackageBuildLog(p, false, errMsg)
-			return xerrors.Errorf(string(errMsg))
+			// This should not happen since we already filtered by build status,
+			// but handle it gracefully just in case
+			buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf("Package %s not found in local cache, skipping vulnerability scan\n", p.FullName())))
+			continue
 		}
 
 		// Create temporary file for SBOM content
@@ -194,6 +208,8 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 // ScanAllPackagesForVulnerabilities provides a public API for scanning packages for vulnerabilities.
 // It creates a build context with the provided local cache and reporter, then calls the internal
 // scanAllPackagesForVulnerabilities function to perform the actual scanning.
+//
+// This function assumes all provided packages are already built and available in the local cache.
 func ScanAllPackagesForVulnerabilities(localCache cache.LocalCache, packages []*Package, customOutputDir ...string) error {
 	buildctx := &buildContext{
 		buildOptions: buildOptions{
@@ -202,7 +218,14 @@ func ScanAllPackagesForVulnerabilities(localCache cache.LocalCache, packages []*
 		},
 	}
 
-	return scanAllPackagesForVulnerabilities(buildctx, packages, customOutputDir...)
+	// Create a status map marking all packages as built (since this is a public API
+	// that expects packages to already be in cache)
+	pkgstatus := make(map[*Package]PackageBuildStatus)
+	for _, p := range packages {
+		pkgstatus[p] = PackageBuilt
+	}
+
+	return scanAllPackagesForVulnerabilities(buildctx, packages, pkgstatus, customOutputDir...)
 }
 
 // scanSBOMForVulnerabilities scans an SBOM file for vulnerabilities and generates reports.
