@@ -240,8 +240,25 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 			return xerrors.Errorf("package should have Docker config")
 		}
 
+		// Determine if OCI export is enabled using the same logic as buildDocker
+		// Check: package config > environment variable > default
+		exportToCache := false
+		if cfg.ExportToCache != nil {
+			// Package explicitly sets exportToCache
+			exportToCache = *cfg.ExportToCache
+		} else {
+			// Check environment variable (set by SLSA or user)
+			envExport := os.Getenv(EnvvarDockerExportToCache)
+			exportToCache = (envExport == "true" || envExport == "1")
+		}
+		
+		// Override with CLI flag if set
+		if buildctx.DockerExportSet {
+			exportToCache = buildctx.DockerExportToCache
+		}
+
 		// Check if OCI layout export is enabled
-		if cfg.ExportToCache != nil && *cfg.ExportToCache {
+		if exportToCache {
 			// OCI layout path - scan from oci-archive
 			buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from OCI layout\n"))
 
@@ -266,7 +283,10 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 				return xerrors.Errorf("failed to get package version: %w", err)
 			}
 
-			src, err = syft.GetSource(context.Background(), version, nil)
+			// Use explicit source provider configuration to ensure docker daemon is used
+			// The version is a content hash that exists as a tag in the local Docker daemon
+			srcCfg := syft.DefaultGetSourceConfig().WithSources("docker")
+			src, err = syft.GetSource(context.Background(), version, srcCfg)
 			if err != nil {
 				return xerrors.Errorf("failed to get Docker image source for SBOM generation: %w", err)
 			}
