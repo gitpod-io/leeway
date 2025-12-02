@@ -748,8 +748,10 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 
 	// Scan all packages for vulnerabilities after the build completes
 	// This ensures we scan even cached packages that weren't rebuilt
+	// Only scan packages that were successfully built or downloaded to avoid
+	// errors when a dependency build failed in a parallel goroutine
 	if pkg.C.W.SBOM.Enabled && pkg.C.W.SBOM.ScanVulnerabilities {
-		if err := scanAllPackagesForVulnerabilities(ctx, allpkg); err != nil {
+		if err := scanAllPackagesForVulnerabilities(ctx, allpkg, pkgstatus); err != nil {
 			return err
 		}
 	}
