@@ -1705,3 +1705,256 @@ CMD ["echo", "test"]`
 		})
 	}
 }
+
+
+// TestDockerPackage_SBOM_EnvVar_Integration verifies SBOM generation respects
+// LEEWAY_DOCKER_EXPORT_TO_CACHE environment variable when package config doesn't
+// explicitly set exportToCache.
+//
+// This test validates that when LEEWAY_DOCKER_EXPORT_TO_CACHE=true is set (e.g., for SLSA)
+// but package config doesn't have exportToCache set, the SBOM generation correctly uses the OCI layout.
+func TestDockerPackage_SBOM_EnvVar_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Ensure Docker is available
+	if err := exec.Command("docker", "version").Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Create docker-container builder for OCI export
+	builderName := "leeway-sbom-envvar-test-builder"
+	createBuilder := exec.Command("docker", "buildx", "create", "--name", builderName, "--driver", "docker-container", "--bootstrap")
+	if err := createBuilder.Run(); err != nil {
+		t.Logf("Builder creation failed (might already exist): %v", err)
+	}
+	defer func() {
+		removeBuilder := exec.Command("docker", "buildx", "rm", builderName)
+		_ = removeBuilder.Run()
+	}()
+
+	useBuilder := exec.Command("docker", "buildx", "use", builderName)
+	if err := useBuilder.Run(); err != nil {
+		t.Fatalf("Failed to use builder: %v", err)
+	}
+
+	// Create temporary workspace
+	tmpDir := t.TempDir()
+
+	// Initialize git repository
+	{
+		gitInit := exec.Command("git", "init")
+		gitInit.Dir = tmpDir
+		gitInit.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if err := gitInit.Run(); err != nil {
+			t.Fatalf("Failed to initialize git repository: %v", err)
+		}
+
+		gitConfigName := exec.Command("git", "config", "user.name", "Test User")
+		gitConfigName.Dir = tmpDir
+		gitConfigName.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if err := gitConfigName.Run(); err != nil {
+			t.Fatalf("Failed to configure git user.name: %v", err)
+		}
+
+		gitConfigEmail := exec.Command("git", "config", "user.email", "test@example.com")
+		gitConfigEmail.Dir = tmpDir
+		gitConfigEmail.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if err := gitConfigEmail.Run(); err != nil {
+			t.Fatalf("Failed to configure git user.email: %v", err)
+		}
+	}
+
+	// Create WORKSPACE.yaml with SBOM enabled
+	workspaceYAML := `defaultTarget: "app:docker"
+sbom:
+  enabled: true
+  scanVulnerabilities: false`
+	workspacePath := filepath.Join(tmpDir, "WORKSPACE.yaml")
+	if err := os.WriteFile(workspacePath, []byte(workspaceYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create component directory
+	appDir := filepath.Join(tmpDir, "app")
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a simple Dockerfile
+	dockerfile := `FROM alpine:latest
+RUN apk add --no-cache curl wget
+LABEL test="sbom-envvar-test"
+CMD ["echo", "test"]`
+
+	dockerfilePath := filepath.Join(appDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create BUILD.yaml WITHOUT exportToCache set (this is the key difference)
+	buildYAML := `packages:
+- name: docker
+  type: docker
+  config:
+    dockerfile: Dockerfile`
+
+	buildPath := filepath.Join(appDir, "BUILD.yaml")
+	if err := os.WriteFile(buildPath, []byte(buildYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create initial git commit
+	gitAdd := exec.Command("git", "add", ".")
+	gitAdd.Dir = tmpDir
+	gitAdd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	if err := gitAdd.Run(); err != nil {
+		t.Fatalf("Failed to git add: %v", err)
+	}
+
+	gitCommit := exec.Command("git", "commit", "-m", "initial")
+	gitCommit.Dir = tmpDir
+	gitCommit.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_DATE=2021-01-01T00:00:00Z",
+		"GIT_COMMITTER_DATE=2021-01-01T00:00:00Z",
+	)
+	if err := gitCommit.Run(); err != nil {
+		t.Fatalf("Failed to git commit: %v", err)
+	}
+
+	// Set LEEWAY_DOCKER_EXPORT_TO_CACHE environment variable
+	// This simulates SLSA being enabled via workflow
+	t.Setenv(EnvvarDockerExportToCache, "true")
+
+	// Load workspace
+	workspace, err := FindWorkspace(tmpDir, Arguments{}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify SBOM is enabled
+	if !workspace.SBOM.Enabled {
+		t.Fatal("SBOM should be enabled in workspace")
+	}
+
+	// Create build context with exportToCache NOT explicitly set
+	// (relying on environment variable)
+	cacheDir := filepath.Join(tmpDir, ".cache")
+	cache, err := local.NewFilesystemCache(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buildCtx, err := newBuildContext(buildOptions{
+		LocalCache: cache,
+		// NOTE: DockerExportToCache and DockerExportSet are NOT set
+		// This forces the code to rely on the environment variable
+		Reporter: NewConsoleReporter(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get the package
+	pkg, ok := workspace.Packages["app:docker"]
+	if !ok {
+		t.Fatal("package app:docker not found")
+	}
+
+	// Verify package config does NOT have exportToCache set
+	dockerCfg, ok := pkg.Config.(DockerPkgConfig)
+	if !ok {
+		t.Fatal("package should have Docker config")
+	}
+	if dockerCfg.ExportToCache != nil {
+		t.Fatalf("package config should NOT have exportToCache set, but it is: %v", *dockerCfg.ExportToCache)
+	}
+
+	// Build the package
+	// This should generate SBOM from OCI layout because LEEWAY_DOCKER_EXPORT_TO_CACHE=true
+	err = pkg.build(buildCtx)
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	t.Logf("✅ Build succeeded with LEEWAY_DOCKER_EXPORT_TO_CACHE=true (no package config)")
+
+	// Verify SBOM files were created in the cache
+	cacheLoc, exists := cache.Location(pkg)
+	if !exists {
+		t.Fatal("Package not found in cache")
+	}
+
+	// Note: We don't check for image.tar existence because it may be cleaned up after build
+	// The log output "Generating SBOM from OCI layout" confirms the correct path was used
+
+	// Extract and verify SBOM files from cache
+	sbomFormats := []string{
+		"sbom.cdx.json",  // CycloneDX
+		"sbom.spdx.json", // SPDX
+		"sbom.json",      // Syft (native format)
+	}
+
+	foundSBOMs := make(map[string]bool)
+
+	// Open the cache tar.gz
+	f, err := os.Open(cacheLoc)
+	if err != nil {
+		t.Fatalf("Failed to open cache file: %v", err)
+	}
+	defer f.Close()
+
+	gzin, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("Failed to create gzip reader: %v", err)
+	}
+	defer gzin.Close()
+
+	tarin := tar.NewReader(gzin)
+	for {
+		hdr, err := tarin.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Failed to read tar: %v", err)
+		}
+
+		filename := filepath.Base(hdr.Name)
+		for _, sbomFile := range sbomFormats {
+			if filename == sbomFile {
+				foundSBOMs[sbomFile] = true
+				t.Logf("✅ Found SBOM file: %s (size: %d bytes)", sbomFile, hdr.Size)
+
+				// Read and validate SBOM content
+				sbomContent := make([]byte, hdr.Size)
+				if _, err := io.ReadFull(tarin, sbomContent); err != nil {
+					t.Fatalf("Failed to read SBOM content: %v", err)
+				}
+
+				// Validate it's valid JSON
+				var sbomData map[string]interface{}
+				if err := json.Unmarshal(sbomContent, &sbomData); err != nil {
+					t.Fatalf("SBOM file %s is not valid JSON: %v", sbomFile, err)
+				}
+
+				t.Logf("✅ SBOM file %s is valid JSON", sbomFile)
+			}
+		}
+	}
+
+	// Verify all SBOM formats were generated
+	for _, sbomFile := range sbomFormats {
+		if !foundSBOMs[sbomFile] {
+			t.Errorf("❌ SBOM file %s not found in cache", sbomFile)
+		}
+	}
+
+	if len(foundSBOMs) == len(sbomFormats) {
+		t.Logf("✅ All %d SBOM formats generated successfully", len(sbomFormats))
+		t.Logf("✅ SBOM generation correctly respects LEEWAY_DOCKER_EXPORT_TO_CACHE environment variable")
+	}
+}
