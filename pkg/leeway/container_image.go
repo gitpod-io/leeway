@@ -49,58 +49,58 @@ func extractImageWithOCILibsImpl(destDir, imgTag string) error {
 	// The OCI tar is in the parent directory of destDir (the build directory)
 	buildDir := filepath.Dir(filepath.Dir(destDir)) // destDir is buildDir/container/content
 	ociTarPath := filepath.Join(buildDir, "image.tar")
-	
+
 	var img v1.Image
-	
+
 	if _, statErr := os.Stat(ociTarPath); statErr == nil {
 		// OCI tar exists - extract and load from it
 		log.WithField("ociTar", ociTarPath).Debug("Loading image from OCI tar file")
-		
+
 		// Create a temporary directory to extract the OCI layout
 		ociLayoutDir, err := os.MkdirTemp(buildDir, "oci-layout-")
 		if err != nil {
 			return fmt.Errorf("creating temp dir for OCI layout: %w", err)
 		}
 		defer os.RemoveAll(ociLayoutDir)
-		
+
 		// Extract the OCI tar to the temporary directory
 		if err := extractTar(ociTarPath, ociLayoutDir); err != nil {
 			return fmt.Errorf("extracting OCI tar: %w", err)
 		}
-		
+
 		// Load the image from the OCI layout directory
 		layoutPath, err := layout.FromPath(ociLayoutDir)
 		if err != nil {
 			return fmt.Errorf("loading OCI layout from %s: %w", ociLayoutDir, err)
 		}
-		
+
 		// Get the image index
 		imageIndex, err := layoutPath.ImageIndex()
 		if err != nil {
 			return fmt.Errorf("getting image index from OCI layout: %w", err)
 		}
-		
+
 		// Get the manifest
 		indexManifest, err := imageIndex.IndexManifest()
 		if err != nil {
 			return fmt.Errorf("getting index manifest: %w", err)
 		}
-		
+
 		if len(indexManifest.Manifests) == 0 {
 			return fmt.Errorf("no manifests found in OCI layout")
 		}
-		
+
 		// Get the first image (there should only be one for single-platform builds)
 		img, err = layoutPath.Image(indexManifest.Manifests[0].Digest)
 		if err != nil {
 			return fmt.Errorf("getting image from OCI layout: %w", err)
 		}
-		
+
 		log.Debug("Successfully loaded image from OCI tar")
 	} else {
 		// OCI tar doesn't exist - fall back to Docker daemon
 		log.Debug("OCI tar not found, loading image from Docker daemon")
-		
+
 		ref, err := name.ParseReference(imgTag)
 		if err != nil {
 			return fmt.Errorf("parsing image reference: %w", err)
@@ -276,7 +276,7 @@ func extractTarToDir(r io.Reader, destDir string) error {
 		target := filepath.Join(destDir, header.Name)
 
 		// Prevent directory traversal attacks
-		if !strings.HasPrefix(target, destDir) {
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)) {
 			continue
 		}
 
@@ -478,48 +478,5 @@ func extractTar(tarPath, destDir string) error {
 	}
 	defer file.Close()
 
-	tarReader := tar.NewReader(file)
-
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("reading tar: %w", err)
-		}
-
-		target := filepath.Join(destDir, header.Name)
-
-		// Ensure the target is within destDir (security check)
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)) {
-			return fmt.Errorf("illegal file path in tar: %s", header.Name)
-		}
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
-				return fmt.Errorf("creating directory: %w", err)
-			}
-		case tar.TypeReg:
-			// Create parent directories
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return fmt.Errorf("creating parent directory: %w", err)
-			}
-
-			// Create file
-			outFile, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
-			if err != nil {
-				return fmt.Errorf("creating file: %w", err)
-			}
-
-			if _, err := io.Copy(outFile, tarReader); err != nil {
-				outFile.Close()
-				return fmt.Errorf("writing file: %w", err)
-			}
-			outFile.Close()
-		}
-	}
-
-	return nil
+	return extractTarToDir(file, destDir)
 }
