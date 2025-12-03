@@ -101,14 +101,13 @@ func GetSBOMParallelism(sbomConfig WorkspaceSBOM) int {
 	return runtime.NumCPU()
 }
 
-
 // generateDeterministicUUID generates a UUIDv5 from content
 func generateDeterministicUUID(content []byte) string {
 	// Use UUIDv5 (SHA-1 based) with the standard DNS namespace UUID.
 	// The DNS namespace (6ba7b810-9dad-11d1-80b4-00c04fd430c8) is defined in RFC 4122
 	// and commonly used for generating deterministic UUIDs from content.
 	namespace := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
-	
+
 	return uuid.NewSHA1(namespace, content).String()
 }
 
@@ -181,7 +180,7 @@ func normalizeSPDX(sbomPath string, timestamp time.Time) error {
 
 	// Generate deterministic UUID from normalized content (without timestamp and UUID)
 	delete(sbom, "documentNamespace")
-	
+
 	normalizedForHash, err := json.Marshal(sbom)
 	if err != nil {
 		return fmt.Errorf("failed to marshal SBOM for hashing: %w", err)
@@ -192,7 +191,7 @@ func normalizeSPDX(sbomPath string, timestamp time.Time) error {
 	// Replace UUID in documentNamespace using regex for robust matching
 	// UUID pattern: 8-4-4-4-12 hex digits
 	uuidPattern := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-	
+
 	matches := uuidPattern.FindAllString(originalNamespace, -1)
 	if len(matches) == 0 {
 		return fmt.Errorf("no UUID found in SPDX documentNamespace: %s. "+
@@ -203,7 +202,7 @@ func normalizeSPDX(sbomPath string, timestamp time.Time) error {
 			WithField("uuid_count", len(matches)).
 			Warn("Multiple UUIDs found in documentNamespace, replacing all with same deterministic UUID")
 	}
-	
+
 	// Replace the UUID(s) with our deterministic one
 	originalNamespace = uuidPattern.ReplaceAllString(originalNamespace, deterministicUUID)
 	sbom["documentNamespace"] = originalNamespace
@@ -227,7 +226,7 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 	}
 
 	cfg := syft.DefaultCreateSBOMConfig()
-	
+
 	// Configure parallelism - default to CPU core count for optimal performance
 	parallelism := GetSBOMParallelism(p.C.W.SBOM)
 	cfg = cfg.WithParallelism(parallelism)
@@ -240,25 +239,12 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 			return xerrors.Errorf("package should have Docker config")
 		}
 
-		// Determine if OCI export is enabled using the same logic as buildDocker
-		// Check: package config > environment variable > default
-		exportToCache := false
-		if cfg.ExportToCache != nil {
-			// Package explicitly sets exportToCache
-			exportToCache = *cfg.ExportToCache
-		} else {
-			// Check environment variable (set by SLSA or user)
-			envExport := os.Getenv(EnvvarDockerExportToCache)
-			exportToCache = (envExport == "true" || envExport == "1")
-		}
-		
-		// Override with CLI flag if set
-		if buildctx.DockerExportSet {
-			exportToCache = buildctx.DockerExportToCache
-		}
+		// Use the same precedence logic as buildDocker to determine export mode
+		// This ensures SBOM generation uses the same source (OCI vs Docker daemon) as the build
+		determineDockerExportMode(p, &cfg, buildctx)
 
 		// Check if OCI layout export is enabled
-		if exportToCache {
+		if cfg.ExportToCache != nil && *cfg.ExportToCache {
 			// OCI layout path - scan from oci-archive
 			buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from OCI layout\n"))
 
@@ -343,7 +329,7 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 	timestamp, err := GetCommitTimestamp(context.Background(), p.C.Git())
 	if err != nil {
 		return fmt.Errorf("failed to get deterministic timestamp for SBOM normalization: %w. "+
-			"Ensure git is available and the repository is not a shallow clone, or set SOURCE_DATE_EPOCH environment variable", 
+			"Ensure git is available and the repository is not a shallow clone, or set SOURCE_DATE_EPOCH environment variable",
 			err)
 	}
 
