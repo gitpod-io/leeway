@@ -269,13 +269,13 @@ CMD ["echo", "test"]`
 				WithLocalCache(localCache),
 				WithDontTest(true),
 			)
-			
+
 			// Handle expected errors (e.g., push failures without credentials)
 			if tt.expectError {
 				if err == nil {
 					t.Fatal("Expected build to fail but it succeeded")
 				}
-				
+
 				// Validate error matches expected pattern
 				if tt.expectErrorMatch != "" {
 					matched, regexErr := regexp.MatchString(tt.expectErrorMatch, err.Error())
@@ -283,15 +283,15 @@ CMD ["echo", "test"]`
 						t.Fatalf("Invalid error regex pattern: %v", regexErr)
 					}
 					if !matched {
-						t.Fatalf("Error doesn't match expected pattern.\nExpected pattern: %s\nActual error: %v", 
+						t.Fatalf("Error doesn't match expected pattern.\nExpected pattern: %s\nActual error: %v",
 							tt.expectErrorMatch, err)
 					}
-					t.Logf("Build failed as expected with error matching pattern '%s': %v", 
+					t.Logf("Build failed as expected with error matching pattern '%s': %v",
 						tt.expectErrorMatch, err)
 				} else {
 					t.Logf("Build failed as expected: %v", err)
 				}
-				
+
 				// For legacy push test, we expect it to fail at push step
 				// The detailed Docker error (e.g., "push access denied", "authorization failed")
 				// is logged but wrapped in a generic "build failed" error.
@@ -300,7 +300,7 @@ CMD ["echo", "test"]`
 				// Skip further validation for this test case
 				return
 			}
-			
+
 			if err != nil {
 				t.Fatalf("Build failed: %v", err)
 			}
@@ -328,10 +328,10 @@ CMD ["echo", "test"]`
 					// Normalize paths for comparison (remove leading ./)
 					normalizedActual := strings.TrimPrefix(actualFile, "./")
 					normalizedExpected := strings.TrimPrefix(expectedFile, "./")
-					
-					if filepath.Base(normalizedActual) == normalizedExpected || 
-					   normalizedActual == normalizedExpected ||
-					   strings.HasPrefix(normalizedActual, normalizedExpected+"/") {
+
+					if filepath.Base(normalizedActual) == normalizedExpected ||
+						normalizedActual == normalizedExpected ||
+						strings.HasPrefix(normalizedActual, normalizedExpected+"/") {
 						found = true
 						break
 					}
@@ -557,7 +557,7 @@ CMD ["cat", "/test-file.txt"]`
 
 	// Step 4: Extract image.tar from cache and load into Docker
 	t.Log("Step 4: Extracting image.tar and loading into Docker")
-	
+
 	// First, remove the image if it exists
 	exec.Command("docker", "rmi", "-f", testImage).Run()
 
@@ -585,19 +585,19 @@ CMD ["cat", "/test-file.txt"]`
 	if err := os.MkdirAll(ociDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	extractOCICmd := exec.Command("tar", "-xf", imageTarPath, "-C", ociDir)
 	if output, err := extractOCICmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to extract OCI layout: %v\nOutput: %s", err, string(output))
 	}
-	
+
 	// Try skopeo first, fall back to crane, then fail with helpful message
 	var loadCmd *exec.Cmd
 	var toolUsed string
-	
+
 	if _, err := exec.LookPath("skopeo"); err == nil {
 		// Use skopeo to load OCI layout directory
-		loadCmd = exec.Command("skopeo", "copy", 
+		loadCmd = exec.Command("skopeo", "copy",
 			fmt.Sprintf("oci:%s", ociDir),
 			fmt.Sprintf("docker-daemon:%s", testImage))
 		toolUsed = "skopeo"
@@ -611,7 +611,7 @@ CMD ["cat", "/test-file.txt"]`
 			"  apt-get install skopeo  # or\n" +
 			"  go install github.com/google/go-containerregistry/cmd/crane@latest")
 	}
-	
+
 	loadOutput, err := loadCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("Failed to load OCI image using %s: %v\nOutput: %s", toolUsed, err, string(loadOutput))
@@ -620,7 +620,7 @@ CMD ["cat", "/test-file.txt"]`
 
 	// Step 5: Verify the loaded image works
 	t.Log("Step 5: Verifying loaded image works")
-	
+
 	// Get the digest of the loaded image
 	inspectCmd := exec.Command("docker", "inspect", "--format={{index .Id}}", testImage)
 	inspectOutput, err := inspectCmd.Output()
@@ -628,7 +628,7 @@ CMD ["cat", "/test-file.txt"]`
 		t.Fatalf("Failed to inspect loaded image: %v", err)
 	}
 	loadedDigest := strings.TrimSpace(string(inspectOutput))
-	
+
 	t.Logf("Loaded image digest: %s", loadedDigest)
 	t.Logf("Original metadata digest: %s", metadata.Digest)
 
@@ -1243,7 +1243,6 @@ RUN echo "test content" > /test.txt
 	}
 }
 
-
 // TestDockerPackage_OCIExtraction_NoImage_Integration reproduces and verifies the fix for
 // the bug where container extraction fails with "No such image" when exportToCache=true.
 //
@@ -1706,7 +1705,6 @@ CMD ["echo", "test"]`
 	}
 }
 
-
 // TestDockerPackage_SBOM_EnvVar_Integration verifies SBOM generation respects
 // LEEWAY_DOCKER_EXPORT_TO_CACHE environment variable when package config doesn't
 // explicitly set exportToCache.
@@ -1956,5 +1954,235 @@ CMD ["echo", "test"]`
 	if len(foundSBOMs) == len(sbomFormats) {
 		t.Logf("✅ All %d SBOM formats generated successfully", len(sbomFormats))
 		t.Logf("✅ SBOM generation correctly respects LEEWAY_DOCKER_EXPORT_TO_CACHE environment variable")
+	}
+}
+
+// TestDockerPackage_SBOM_UserEnvOverridesPackageConfig_Integration verifies that
+// user-set environment variable overrides package config for SBOM generation.
+//
+// This tests the precedence hierarchy:
+// 1. CLI flag (highest)
+// 2. User environment variable (set before workspace loading) <-- This should override package config
+// 3. Package config (exportToCache in BUILD.yaml)
+// 4. Workspace default
+// 5. Global default (lowest)
+//
+// Bug scenario: Package has exportToCache=true, but user sets LEEWAY_DOCKER_EXPORT_TO_CACHE=false.
+// Build correctly uses Docker daemon (no OCI), but SBOM incorrectly tries to scan image.tar.
+func TestDockerPackage_SBOM_UserEnvOverridesPackageConfig_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Ensure Docker is available
+	if err := exec.Command("docker", "version").Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Create temporary workspace
+	tmpDir := t.TempDir()
+
+	// Initialize git repository
+	{
+		gitInit := exec.Command("git", "init")
+		gitInit.Dir = tmpDir
+		gitInit.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if err := gitInit.Run(); err != nil {
+			t.Fatalf("Failed to initialize git repository: %v", err)
+		}
+
+		gitConfigName := exec.Command("git", "config", "user.name", "Test User")
+		gitConfigName.Dir = tmpDir
+		gitConfigName.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if err := gitConfigName.Run(); err != nil {
+			t.Fatalf("Failed to configure git user.name: %v", err)
+		}
+
+		gitConfigEmail := exec.Command("git", "config", "user.email", "test@example.com")
+		gitConfigEmail.Dir = tmpDir
+		gitConfigEmail.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if err := gitConfigEmail.Run(); err != nil {
+			t.Fatalf("Failed to configure git user.email: %v", err)
+		}
+	}
+
+	// Create WORKSPACE.yaml with SBOM enabled
+	workspaceYAML := `defaultTarget: "app:docker"
+sbom:
+  enabled: true
+  scanVulnerabilities: false`
+	workspacePath := filepath.Join(tmpDir, "WORKSPACE.yaml")
+	if err := os.WriteFile(workspacePath, []byte(workspaceYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create component directory
+	appDir := filepath.Join(tmpDir, "app")
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a simple Dockerfile
+	dockerfile := `FROM alpine:latest
+RUN apk add --no-cache curl
+LABEL test="sbom-override-test"
+CMD ["echo", "test"]`
+
+	dockerfilePath := filepath.Join(appDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create BUILD.yaml WITH exportToCache=true
+	// This is the key: package wants OCI export, but user will override via env var
+	buildYAML := `packages:
+- name: docker
+  type: docker
+  config:
+    dockerfile: Dockerfile
+    exportToCache: true`
+
+	buildPath := filepath.Join(appDir, "BUILD.yaml")
+	if err := os.WriteFile(buildPath, []byte(buildYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create initial git commit
+	gitAdd := exec.Command("git", "add", ".")
+	gitAdd.Dir = tmpDir
+	gitAdd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	if err := gitAdd.Run(); err != nil {
+		t.Fatalf("Failed to git add: %v", err)
+	}
+
+	gitCommit := exec.Command("git", "commit", "-m", "initial")
+	gitCommit.Dir = tmpDir
+	gitCommit.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_DATE=2021-01-01T00:00:00Z",
+		"GIT_COMMITTER_DATE=2021-01-01T00:00:00Z",
+	)
+	if err := gitCommit.Run(); err != nil {
+		t.Fatalf("Failed to git commit: %v", err)
+	}
+
+	// Load workspace
+	workspace, err := FindWorkspace(tmpDir, Arguments{}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify SBOM is enabled
+	if !workspace.SBOM.Enabled {
+		t.Fatal("SBOM should be enabled in workspace")
+	}
+
+	// Get the package and verify it has exportToCache=true
+	pkg, ok := workspace.Packages["app:docker"]
+	if !ok {
+		t.Fatal("package app:docker not found")
+	}
+
+	dockerCfg, ok := pkg.Config.(DockerPkgConfig)
+	if !ok {
+		t.Fatal("package should have Docker config")
+	}
+	if dockerCfg.ExportToCache == nil || !*dockerCfg.ExportToCache {
+		t.Fatal("package config should have exportToCache=true")
+	}
+
+	t.Log("Package has exportToCache=true in config")
+
+	// Create build context with user env var override set to FALSE
+	// This simulates: user explicitly sets LEEWAY_DOCKER_EXPORT_TO_CACHE=false
+	// which should override the package config's exportToCache=true
+	cacheDir := filepath.Join(tmpDir, ".cache")
+	cache, err := local.NewFilesystemCache(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buildCtx, err := newBuildContext(buildOptions{
+		LocalCache: cache,
+		// Simulate user explicitly setting env var to false BEFORE workspace loading
+		// This is Layer 2 in the precedence hierarchy and should override Layer 3 (package config)
+		DockerExportEnvSet:   true,
+		DockerExportEnvValue: false,
+		Reporter:             NewConsoleReporter(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Log("Build context has DockerExportEnvSet=true, DockerExportEnvValue=false (user override)")
+
+	// Build the package
+	// With the fix: Build uses Docker daemon (no OCI) because user env overrides package config
+	// SBOM should also use Docker daemon
+	// Without the fix: Build uses Docker daemon, but SBOM tries to use OCI (image.tar) -> fails
+	err = pkg.build(buildCtx)
+	if err != nil {
+		t.Fatalf("Build failed: %v\n\nThis failure likely means SBOM tried to scan image.tar "+
+			"which doesn't exist because the build correctly used Docker daemon "+
+			"(user env var override). The SBOM code needs to use determineDockerExportMode().", err)
+	}
+
+	t.Log("✅ Build succeeded - SBOM correctly respected user env var override")
+
+	// Verify SBOM files were created
+	cacheLoc, exists := cache.Location(pkg)
+	if !exists {
+		t.Fatal("Package not found in cache")
+	}
+
+	sbomFormats := []string{
+		"sbom.cdx.json",
+		"sbom.spdx.json",
+		"sbom.json",
+	}
+
+	foundSBOMs := make(map[string]bool)
+
+	f, err := os.Open(cacheLoc)
+	if err != nil {
+		t.Fatalf("Failed to open cache file: %v", err)
+	}
+	defer f.Close()
+
+	gzin, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("Failed to create gzip reader: %v", err)
+	}
+	defer gzin.Close()
+
+	tarin := tar.NewReader(gzin)
+	for {
+		hdr, err := tarin.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Failed to read tar: %v", err)
+		}
+
+		filename := filepath.Base(hdr.Name)
+		for _, sbomFile := range sbomFormats {
+			if filename == sbomFile {
+				foundSBOMs[sbomFile] = true
+				t.Logf("✅ Found SBOM file: %s", sbomFile)
+			}
+		}
+	}
+
+	for _, sbomFile := range sbomFormats {
+		if !foundSBOMs[sbomFile] {
+			t.Errorf("❌ SBOM file %s not found in cache", sbomFile)
+		}
+	}
+
+	if len(foundSBOMs) == len(sbomFormats) {
+		t.Log("✅ All SBOM formats generated successfully")
+		t.Log("✅ SBOM generation correctly respects user env var override of package config")
 	}
 }
