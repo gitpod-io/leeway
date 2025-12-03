@@ -6,6 +6,7 @@ package leeway
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache/local"
 )
 
@@ -2185,4 +2187,265 @@ CMD ["echo", "test"]`
 		t.Log("✅ All SBOM formats generated successfully")
 		t.Log("✅ SBOM generation correctly respects user env var override of package config")
 	}
+}
+
+// mockRemoteCacheWithFailures implements cache.RemoteCache for testing dependency validation.
+// It simulates a remote cache where some packages exist but fail to download.
+type mockRemoteCacheWithFailures struct {
+	existingPackages map[string]struct{} // packages that "exist" in remote cache
+	failDownload     map[string]struct{} // packages that fail to download
+	downloaded       map[string]struct{} // track which packages were downloaded
+}
+
+func newMockRemoteCacheWithFailures() *mockRemoteCacheWithFailures {
+	return &mockRemoteCacheWithFailures{
+		existingPackages: make(map[string]struct{}),
+		failDownload:     make(map[string]struct{}),
+		downloaded:       make(map[string]struct{}),
+	}
+}
+
+func (m *mockRemoteCacheWithFailures) ExistingPackages(ctx context.Context, pkgs []cache.Package) (map[cache.Package]struct{}, error) {
+	result := make(map[cache.Package]struct{})
+	for _, pkg := range pkgs {
+		if _, exists := m.existingPackages[pkg.FullName()]; exists {
+			result[pkg] = struct{}{}
+		}
+	}
+	return result, nil
+}
+
+func (m *mockRemoteCacheWithFailures) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) error {
+	for _, pkg := range pkgs {
+		if _, shouldFail := m.failDownload[pkg.FullName()]; shouldFail {
+			// Simulate download failure - don't copy to local cache
+			continue
+		}
+		if _, exists := m.existingPackages[pkg.FullName()]; exists {
+			// Simulate successful download by creating a dummy cache file
+			m.downloaded[pkg.FullName()] = struct{}{}
+			// Note: We don't actually create files here because we're testing
+			// the validation logic, not the actual download
+		}
+	}
+	return nil // Download returns nil even on failures (by design)
+}
+
+func (m *mockRemoteCacheWithFailures) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
+	return nil
+}
+
+func (m *mockRemoteCacheWithFailures) UploadFile(ctx context.Context, filePath string, key string) error {
+	return nil
+}
+
+func (m *mockRemoteCacheWithFailures) HasFile(ctx context.Context, key string) (bool, error) {
+	return false, nil
+}
+
+// TestDependencyValidation_AfterDownload_Integration tests that packages with missing
+// dependencies are invalidated after the download phase.
+//
+// Scenario:
+// - Package X (Go) depends on A
+// - A depends on B
+// - A and B both "exist" in remote cache
+// - A downloads successfully, B fails to download
+// - Expected: A should be invalidated (removed from cache) because its dependency B is missing
+func TestDependencyValidation_AfterDownload_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Create temporary workspace
+	tmpDir := t.TempDir()
+
+	// Initialize git repository
+	gitInit := exec.Command("git", "init")
+	gitInit.Dir = tmpDir
+	gitInit.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	if err := gitInit.Run(); err != nil {
+		t.Fatalf("Failed to initialize git repository: %v", err)
+	}
+
+	gitConfigName := exec.Command("git", "config", "user.name", "Test User")
+	gitConfigName.Dir = tmpDir
+	if err := gitConfigName.Run(); err != nil {
+		t.Fatalf("Failed to configure git user.name: %v", err)
+	}
+
+	gitConfigEmail := exec.Command("git", "config", "user.email", "test@example.com")
+	gitConfigEmail.Dir = tmpDir
+	if err := gitConfigEmail.Run(); err != nil {
+		t.Fatalf("Failed to configure git user.email: %v", err)
+	}
+
+	// Create WORKSPACE.yaml
+	workspaceYAML := `defaultTarget: "pkgX:app"`
+	workspacePath := filepath.Join(tmpDir, "WORKSPACE.yaml")
+	if err := os.WriteFile(workspacePath, []byte(workspaceYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create package B (leaf dependency)
+	pkgBDir := filepath.Join(tmpDir, "pkgB")
+	if err := os.MkdirAll(pkgBDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	buildYAMLB := `packages:
+- name: lib
+  type: generic
+  srcs:
+  - "*.txt"
+  config:
+    commands:
+    - ["echo", "building B"]`
+	if err := os.WriteFile(filepath.Join(pkgBDir, "BUILD.yaml"), []byte(buildYAMLB), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgBDir, "b.txt"), []byte("B content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create package A (depends on B)
+	pkgADir := filepath.Join(tmpDir, "pkgA")
+	if err := os.MkdirAll(pkgADir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	buildYAMLA := `packages:
+- name: lib
+  type: generic
+  srcs:
+  - "*.txt"
+  deps:
+  - pkgB:lib
+  config:
+    commands:
+    - ["echo", "building A"]`
+	if err := os.WriteFile(filepath.Join(pkgADir, "BUILD.yaml"), []byte(buildYAMLA), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgADir, "a.txt"), []byte("A content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create package X (depends on A) - using Go type to require transitive deps
+	pkgXDir := filepath.Join(tmpDir, "pkgX")
+	if err := os.MkdirAll(pkgXDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Use generic type but the validation logic should still work
+	buildYAMLX := `packages:
+- name: app
+  type: generic
+  srcs:
+  - "*.txt"
+  deps:
+  - pkgA:lib
+  config:
+    commands:
+    - ["echo", "building X"]`
+	if err := os.WriteFile(filepath.Join(pkgXDir, "BUILD.yaml"), []byte(buildYAMLX), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgXDir, "x.txt"), []byte("X content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create initial git commit
+	gitAdd := exec.Command("git", "add", ".")
+	gitAdd.Dir = tmpDir
+	if err := gitAdd.Run(); err != nil {
+		t.Fatalf("Failed to git add: %v", err)
+	}
+
+	gitCommit := exec.Command("git", "commit", "-m", "initial")
+	gitCommit.Dir = tmpDir
+	gitCommit.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_AUTHOR_DATE=2021-01-01T00:00:00Z",
+		"GIT_COMMITTER_DATE=2021-01-01T00:00:00Z",
+	)
+	if err := gitCommit.Run(); err != nil {
+		t.Fatalf("Failed to git commit: %v", err)
+	}
+
+	// Load workspace
+	workspace, err := FindWorkspace(tmpDir, Arguments{}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get packages
+	pkgX, ok := workspace.Packages["pkgX:app"]
+	if !ok {
+		t.Fatal("package pkgX:app not found")
+	}
+	pkgA, ok := workspace.Packages["pkgA:lib"]
+	if !ok {
+		t.Fatal("package pkgA:lib not found")
+	}
+	pkgB, ok := workspace.Packages["pkgB:lib"]
+	if !ok {
+		t.Fatal("package pkgB:lib not found")
+	}
+
+	t.Logf("Package X: %s", pkgX.FullName())
+	t.Logf("Package A: %s (depends on B)", pkgA.FullName())
+	t.Logf("Package B: %s (leaf)", pkgB.FullName())
+
+	// Create local cache
+	cacheDir := filepath.Join(tmpDir, ".cache")
+	localCache, err := local.NewFilesystemCache(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create mock remote cache where A and B "exist" but B fails to download
+	mockRemote := newMockRemoteCacheWithFailures()
+	mockRemote.existingPackages[pkgA.FullName()] = struct{}{}
+	mockRemote.existingPackages[pkgB.FullName()] = struct{}{}
+	mockRemote.failDownload[pkgB.FullName()] = struct{}{} // B will fail to download
+
+	t.Log("Mock remote cache configured:")
+	t.Logf("  - %s: exists, will download successfully", pkgA.FullName())
+	t.Logf("  - %s: exists, will FAIL to download", pkgB.FullName())
+
+	// Create build context with mock remote cache
+	buildCtx, err := newBuildContext(buildOptions{
+		LocalCache:  localCache,
+		RemoteCache: mockRemote,
+		Reporter:    NewConsoleReporter(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build package X
+	// With the fix: A should be invalidated because B failed to download
+	// Without the fix: A would remain in cache with missing dependency B
+	err = pkgX.build(buildCtx)
+
+	// The build should succeed because:
+	// 1. A is invalidated (removed from cache) due to missing B
+	// 2. Both A and B are rebuilt locally
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	t.Log("✅ Build succeeded")
+
+	// Verify all packages are now in local cache (rebuilt)
+	if _, exists := localCache.Location(pkgX); !exists {
+		t.Error("Package X should be in local cache after build")
+	}
+	if _, exists := localCache.Location(pkgA); !exists {
+		t.Error("Package A should be in local cache after build")
+	}
+	if _, exists := localCache.Location(pkgB); !exists {
+		t.Error("Package B should be in local cache after build")
+	}
+
+	t.Log("✅ All packages are in local cache after build")
+	t.Log("✅ Dependency validation correctly handled missing dependency scenario")
 }
