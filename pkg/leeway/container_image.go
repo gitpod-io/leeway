@@ -47,7 +47,13 @@ func extractImageWithOCILibsImpl(destDir, imgTag string) error {
 
 	// Try to load from OCI tar first (when built with --output type=oci)
 	// The OCI tar is in the parent directory of destDir (the build directory)
-	buildDir := filepath.Dir(filepath.Dir(destDir)) // destDir is buildDir/container/content
+	//
+	// Path structure (created in buildDocker, build.go):
+	//   buildDir = wd (e.g., /var/lib/leeway/build/app--docker.xxx)
+	//   containerDir = buildDir/container
+	//   contentDir = buildDir/container/content  <- this is destDir
+	//   image.tar = buildDir/image.tar
+	buildDir := filepath.Dir(filepath.Dir(destDir))
 	ociTarPath := filepath.Join(buildDir, "image.tar")
 
 	var img v1.Image
