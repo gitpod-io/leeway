@@ -707,6 +707,31 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		}
 	}
 
+	// Validate that cached packages have all their dependencies available.
+	// This prevents build failures when a package is cached but a dependency failed to download.
+	// If a cached package has missing dependencies, remove it from cache and mark for rebuild.
+	for _, p := range allpkg {
+		status := pkgstatus[p]
+		if status != PackageDownloaded && status != PackageBuilt {
+			// Only validate packages that are in the local cache
+			continue
+		}
+
+		if !validateDependenciesAvailable(p, ctx.LocalCache, pkgstatus) {
+			log.WithField("package", p.FullName()).Warn("Cached package has missing dependencies, will rebuild")
+
+			// Remove the package from local cache
+			if path, exists := ctx.LocalCache.Location(p); exists {
+				if err := os.Remove(path); err != nil {
+					log.WithError(err).WithField("package", p.FullName()).Warn("Failed to remove package from cache")
+				}
+			}
+
+			// Mark for rebuild
+			pkgstatus[p] = PackageNotBuiltYet
+		}
+	}
+
 	ctx.Reporter.BuildStarted(pkg, pkgstatus)
 	defer func(err *error) {
 		ctx.Reporter.BuildFinished(pkg, *err)
@@ -1301,6 +1326,58 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	for _, p := range deps {
 		p.packagesToDownload(inLocalCache, inRemoteCache, toDownload)
 	}
+}
+
+// validateDependenciesAvailable checks if all required dependencies of a package are available.
+// A dependency is considered available if it's in the local cache OR will be built (PackageNotBuiltYet).
+// Returns true if all dependencies are available, false otherwise.
+//
+// This validation ensures cache consistency: a package should only remain in cache
+// if all its dependencies are also available. This prevents build failures when
+// a package is cached but one of its dependencies failed to download.
+func validateDependenciesAvailable(p *Package, localCache cache.LocalCache, pkgstatus map[*Package]PackageBuildStatus) bool {
+	var deps []*Package
+	switch p.Type {
+	case YarnPackage, GoPackage:
+		// Go and Yarn packages need all transitive dependencies
+		deps = p.GetTransitiveDependencies()
+	case GenericPackage, DockerPackage:
+		// Generic and Docker packages only need direct dependencies
+		deps = p.GetDependencies()
+	default:
+		deps = p.GetDependencies()
+	}
+
+	for _, dep := range deps {
+		if dep.Ephemeral {
+			// Ephemeral packages are always rebuilt, skip validation
+			continue
+		}
+
+		_, inCache := localCache.Location(dep)
+		status := pkgstatus[dep]
+
+		// Dependency is available if:
+		// 1. It's in the local cache (PackageBuilt or PackageDownloaded), OR
+		// 2. It will be built locally (PackageNotBuiltYet), OR
+		// 3. It will be downloaded (PackageInRemoteCache)
+		depAvailable := inCache ||
+			status == PackageNotBuiltYet ||
+			status == PackageInRemoteCache ||
+			status == PackageBuilt ||
+			status == PackageDownloaded
+
+		if !depAvailable {
+			log.WithFields(log.Fields{
+				"package":    p.FullName(),
+				"dependency": dep.FullName(),
+				"depStatus":  status,
+				"inCache":    inCache,
+			}).Debug("Dependency not available for cached package")
+			return false
+		}
+	}
+	return true
 }
 
 type PackageBuildPhase string
