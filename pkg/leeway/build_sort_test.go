@@ -216,20 +216,106 @@ func TestCalculateDependencyDepth(t *testing.T) {
 }
 
 // TestSortPackagesByDependencyDepth_Stability tests that sorting is stable
+// A stable sort preserves the relative order of elements with equal keys
 func TestSortPackagesByDependencyDepth_Stability(t *testing.T) {
-	// Create packages with same depth - order should be preserved
-	packages := []*Package{
-		{fullNameOverride: "pkg1", dependencies: []*Package{}},
-		{fullNameOverride: "pkg2", dependencies: []*Package{}},
-		{fullNameOverride: "pkg3", dependencies: []*Package{}},
+	// Create a shared leaf dependency
+	leaf := &Package{fullNameOverride: "leaf", dependencies: []*Package{}}
+
+	// Create multiple packages at depth 1 (all depend on leaf)
+	depth1Packages := []*Package{
+		{fullNameOverride: "d1-alpha", dependencies: []*Package{leaf}},
+		{fullNameOverride: "d1-beta", dependencies: []*Package{leaf}},
+		{fullNameOverride: "d1-gamma", dependencies: []*Package{leaf}},
+		{fullNameOverride: "d1-delta", dependencies: []*Package{leaf}},
 	}
 
-	sorted := sortPackagesByDependencyDepth(packages)
+	// Create multiple packages at depth 0 (no dependencies)
+	depth0Packages := []*Package{
+		{fullNameOverride: "d0-alpha", dependencies: []*Package{}},
+		{fullNameOverride: "d0-beta", dependencies: []*Package{}},
+		{fullNameOverride: "d0-gamma", dependencies: []*Package{}},
+	}
 
-	// All have depth 0, so order should be preserved
-	require.Equal(t, "pkg1", sorted[0].FullName())
-	require.Equal(t, "pkg2", sorted[1].FullName())
-	require.Equal(t, "pkg3", sorted[2].FullName())
+	// Test with different input orderings to verify stability
+	// The key insight: within each depth group, relative order must be preserved
+	testCases := []struct {
+		name  string
+		input []*Package
+	}{
+		{
+			name: "depth1 first, then depth0",
+			input: []*Package{
+				depth1Packages[0], depth1Packages[1], depth1Packages[2], depth1Packages[3],
+				depth0Packages[0], depth0Packages[1], depth0Packages[2],
+			},
+		},
+		{
+			name: "depth0 first, then depth1",
+			input: []*Package{
+				depth0Packages[0], depth0Packages[1], depth0Packages[2],
+				depth1Packages[0], depth1Packages[1], depth1Packages[2], depth1Packages[3],
+			},
+		},
+		{
+			name: "interleaved",
+			input: []*Package{
+				depth1Packages[0], depth0Packages[0], depth1Packages[1], depth0Packages[1],
+				depth1Packages[2], depth0Packages[2], depth1Packages[3],
+			},
+		},
+		{
+			name: "reverse interleaved",
+			input: []*Package{
+				depth0Packages[2], depth1Packages[3], depth0Packages[1], depth1Packages[2],
+				depth0Packages[0], depth1Packages[1], depth1Packages[0],
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Record the input order of packages at each depth
+			inputOrderDepth0 := []string{}
+			inputOrderDepth1 := []string{}
+			for _, pkg := range tc.input {
+				if len(pkg.dependencies) == 0 {
+					inputOrderDepth0 = append(inputOrderDepth0, pkg.FullName())
+				} else {
+					inputOrderDepth1 = append(inputOrderDepth1, pkg.FullName())
+				}
+			}
+
+			sorted := sortPackagesByDependencyDepth(tc.input)
+
+			// Extract the output order at each depth
+			outputOrderDepth0 := []string{}
+			outputOrderDepth1 := []string{}
+			for _, pkg := range sorted {
+				if len(pkg.dependencies) == 0 {
+					outputOrderDepth0 = append(outputOrderDepth0, pkg.FullName())
+				} else {
+					outputOrderDepth1 = append(outputOrderDepth1, pkg.FullName())
+				}
+			}
+
+			// Depth 1 packages should come before depth 0 packages
+			require.Equal(t, 7, len(sorted), "should have all 7 packages")
+
+			// First 4 should be depth 1, last 3 should be depth 0
+			for i := 0; i < 4; i++ {
+				require.Equal(t, 1, len(sorted[i].dependencies), "first 4 should be depth 1")
+			}
+			for i := 4; i < 7; i++ {
+				require.Equal(t, 0, len(sorted[i].dependencies), "last 3 should be depth 0")
+			}
+
+			// Stability check: relative order within each depth group must match input order
+			require.Equal(t, inputOrderDepth1, outputOrderDepth1,
+				"depth 1 packages should maintain relative input order (stability)")
+			require.Equal(t, inputOrderDepth0, outputOrderDepth0,
+				"depth 0 packages should maintain relative input order (stability)")
+		})
+	}
 }
 
 // TestSortPackagesByDependencyDepth_Performance tests with larger graphs
