@@ -130,7 +130,7 @@ func TestSortPackagesByDependencyDepth(t *testing.T) {
 				rootNames := []string{sorted[0].FullName(), sorted[1].FullName()}
 				require.Contains(t, rootNames, "tree1-root")
 				require.Contains(t, rootNames, "tree2-root")
-				
+
 				leafNames := []string{sorted[2].FullName(), sorted[3].FullName()}
 				require.Contains(t, leafNames, "tree1-leaf")
 				require.Contains(t, leafNames, "tree2-leaf")
@@ -254,7 +254,7 @@ func TestSortPackagesByDependencyDepth_Performance(t *testing.T) {
 	// Should complete quickly even with 100 packages
 	sorted := sortPackagesByDependencyDepth(packages)
 	require.Equal(t, 100, len(sorted))
-	
+
 	// Deepest package (pkg99) should be first
 	require.Equal(t, "pkg"+string(rune(99)), sorted[0].FullName())
 	// Shallowest (leaf, pkg0) should be last
@@ -264,7 +264,7 @@ func TestSortPackagesByDependencyDepth_Performance(t *testing.T) {
 // BenchmarkSortPackagesByDependencyDepth benchmarks the sorting algorithm
 func BenchmarkSortPackagesByDependencyDepth(b *testing.B) {
 	sizes := []int{10, 50, 100, 200}
-	
+
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("%d-packages", size), func(b *testing.B) {
 			// Create a chain of packages (worst case for depth calculation)
@@ -279,7 +279,7 @@ func BenchmarkSortPackagesByDependencyDepth(b *testing.B) {
 				}
 				packages[i] = pkg
 			}
-			
+
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_ = sortPackagesByDependencyDepth(packages)
@@ -291,7 +291,7 @@ func BenchmarkSortPackagesByDependencyDepth(b *testing.B) {
 // BenchmarkCalculateDependencyDepth benchmarks depth calculation
 func BenchmarkCalculateDependencyDepth(b *testing.B) {
 	depths := []int{5, 10, 20, 50}
-	
+
 	for _, depth := range depths {
 		b.Run(fmt.Sprintf("depth-%d", depth), func(b *testing.B) {
 			// Create a linear chain of given depth
@@ -306,7 +306,7 @@ func BenchmarkCalculateDependencyDepth(b *testing.B) {
 				}
 				pkg = newPkg
 			}
-			
+
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				cache := make(map[string]int)

@@ -2936,8 +2936,8 @@ func sortPackagesByDependencyDepth(packages []*Package) []*Package {
 	// Sort by depth (descending) - packages with more dependencies first
 	// This is a stable sort, so packages with equal depth maintain their order
 	sort.SliceStable(sorted, func(i, j int) bool {
-      return depthCache[sorted[i].FullName()] > depthCache[sorted[j].FullName()]
-  })
+		return depthCache[sorted[i].FullName()] > depthCache[sorted[j].FullName()]
+	})
 
 	// Log the sorted order for debugging
 	if len(sorted) > 0 {
@@ -2950,7 +2950,7 @@ func sortPackagesByDependencyDepth(packages []*Package) []*Package {
 			"count": len(sorted),
 			"order": sortedNames,
 		}).Debug("📦 Download order (deepest dependencies first):")
-		
+
 		// Also log each package individually for easier reading
 		for i, pkg := range sorted {
 			depth := depthCache[pkg.FullName()]
