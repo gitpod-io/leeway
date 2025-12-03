@@ -225,26 +225,26 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 		return nil
 	}
 
-	cfg := syft.DefaultCreateSBOMConfig()
+	sbomCfg := syft.DefaultCreateSBOMConfig()
 
 	// Configure parallelism - default to CPU core count for optimal performance
 	parallelism := GetSBOMParallelism(p.C.W.SBOM)
-	cfg = cfg.WithParallelism(parallelism)
+	sbomCfg = sbomCfg.WithParallelism(parallelism)
 
 	// Get the appropriate source based on package type
 	var src source.Source
 	if p.Type == DockerPackage {
-		cfg, ok := p.Config.(DockerPkgConfig)
+		dockerCfg, ok := p.Config.(DockerPkgConfig)
 		if !ok {
 			return xerrors.Errorf("package should have Docker config")
 		}
 
 		// Use the same precedence logic as buildDocker to determine export mode
 		// This ensures SBOM generation uses the same source (OCI vs Docker daemon) as the build
-		determineDockerExportMode(p, &cfg, buildctx)
+		determineDockerExportMode(p, &dockerCfg, buildctx)
 
 		// Check if OCI layout export is enabled
-		if cfg.ExportToCache != nil && *cfg.ExportToCache {
+		if dockerCfg.ExportToCache != nil && *dockerCfg.ExportToCache {
 			// OCI layout path - scan from oci-archive
 			buildctx.Reporter.PackageBuildLog(p, false, []byte("Generating SBOM from OCI layout\n"))
 
@@ -289,7 +289,7 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 	}
 
 	// Generate the SBOM
-	s, err := syft.CreateSBOM(context.Background(), src, cfg)
+	s, err := syft.CreateSBOM(context.Background(), src, sbomCfg)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to create SBOM: %s", err)
 		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
