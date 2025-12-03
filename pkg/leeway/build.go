@@ -672,9 +672,9 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	// Sort packages by dependency depth to prioritize critical path
 	// This ensures packages that block other builds are downloaded first
 	if len(pkgsToDownload) > 0 {
-		log.WithField("count", len(pkgsToDownload)).Info("🔄 Dependency-aware scheduling: sorting packages by depth before download")
+		log.WithField("count", len(pkgsToDownload)).Debug("🔄 Dependency-aware scheduling: sorting packages by depth before download")
 		pkgsToDownload = sortPackagesByDependencyDepth(pkgsToDownload)
-		log.Info("✅ Packages sorted - critical path packages will download first")
+		log.Debug("✅ Packages sorted - critical path packages will download first")
 	}
 
 	// Convert []*Package to []cache.Package
@@ -2955,7 +2955,7 @@ func sortPackagesByDependencyDepth(packages []*Package) []*Package {
 		log.WithFields(log.Fields{
 			"count": len(sorted),
 			"order": sortedNames,
-		}).Info("📦 Download order (deepest dependencies first):")
+		}).Debug("📦 Download order (deepest dependencies first):")
 		
 		// Also log each package individually for easier reading
 		for i, pkg := range sorted {
@@ -2964,7 +2964,7 @@ func sortPackagesByDependencyDepth(packages []*Package) []*Package {
 				"position": i + 1,
 				"package":  pkg.FullName(),
 				"depth":    depth,
-			}).Info("  └─")
+			}).Debug("  └─")
 		}
 	}
 
