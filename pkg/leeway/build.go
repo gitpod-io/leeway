@@ -707,6 +707,31 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		}
 	}
 
+	// Validate that cached packages have all their dependencies available.
+	// This prevents build failures when a package is cached but a dependency failed to download.
+	// If a cached package has missing dependencies, remove it from cache and mark for rebuild.
+	for _, p := range allpkg {
+		status := pkgstatus[p]
+		if status != PackageDownloaded && status != PackageBuilt {
+			// Only validate packages that are in the local cache
+			continue
+		}
+
+		if !validateDependenciesAvailable(p, ctx.LocalCache, pkgstatus) {
+			log.WithField("package", p.FullName()).Warn("Cached package has missing dependencies, will rebuild")
+
+			// Remove the package from local cache
+			if path, exists := ctx.LocalCache.Location(p); exists {
+				if err := os.Remove(path); err != nil {
+					log.WithError(err).WithField("package", p.FullName()).Warn("Failed to remove package from cache")
+				}
+			}
+
+			// Mark for rebuild
+			pkgstatus[p] = PackageNotBuiltYet
+		}
+	}
+
 	ctx.Reporter.BuildStarted(pkg, pkgstatus)
 	defer func(err *error) {
 		ctx.Reporter.BuildFinished(pkg, *err)
@@ -820,14 +845,14 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 		inNewlyBuilt := newlyBuiltMap[p.FullName()]
 		inPkgsToDownload := pkgsToDownloadMap[p.FullName()]
 		status := statusAfterDownload[p]
-		
+
 		log.WithFields(log.Fields{
 			"package":          p.FullName(),
 			"inNewlyBuilt":     inNewlyBuilt,
 			"inPkgsToDownload": inPkgsToDownload,
 			"status":           status,
 		}).Debug("Categorizing package for build summary")
-		
+
 		if inNewlyBuilt {
 			// Package was built during this build
 			builtLocally++
@@ -1301,6 +1326,58 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	for _, p := range deps {
 		p.packagesToDownload(inLocalCache, inRemoteCache, toDownload)
 	}
+}
+
+// validateDependenciesAvailable checks if all required dependencies of a package are available.
+// A dependency is considered available if it's in the local cache OR will be built (PackageNotBuiltYet).
+// Returns true if all dependencies are available, false otherwise.
+//
+// This validation ensures cache consistency: a package should only remain in cache
+// if all its dependencies are also available. This prevents build failures when
+// a package is cached but one of its dependencies failed to download.
+func validateDependenciesAvailable(p *Package, localCache cache.LocalCache, pkgstatus map[*Package]PackageBuildStatus) bool {
+	var deps []*Package
+	switch p.Type {
+	case YarnPackage, GoPackage:
+		// Go and Yarn packages need all transitive dependencies
+		deps = p.GetTransitiveDependencies()
+	case GenericPackage, DockerPackage:
+		// Generic and Docker packages only need direct dependencies
+		deps = p.GetDependencies()
+	default:
+		deps = p.GetDependencies()
+	}
+
+	for _, dep := range deps {
+		if dep.Ephemeral {
+			// Ephemeral packages are always rebuilt, skip validation
+			continue
+		}
+
+		_, inCache := localCache.Location(dep)
+		status := pkgstatus[dep]
+
+		// Dependency is available if:
+		// 1. It's in the local cache (PackageBuilt or PackageDownloaded), OR
+		// 2. It will be built locally (PackageNotBuiltYet), OR
+		// 3. It will be downloaded (PackageInRemoteCache)
+		depAvailable := inCache ||
+			status == PackageNotBuiltYet ||
+			status == PackageInRemoteCache ||
+			status == PackageBuilt ||
+			status == PackageDownloaded
+
+		if !depAvailable {
+			log.WithFields(log.Fields{
+				"package":    p.FullName(),
+				"dependency": dep.FullName(),
+				"depStatus":  status,
+				"inCache":    inCache,
+			}).Debug("Dependency not available for cached package")
+			return false
+		}
+	}
+	return true
 }
 
 type PackageBuildPhase string
@@ -2032,7 +2109,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// Normal build (load to daemon for pushing)
 		buildcmd = []string{"docker", "build", "--pull", "-t", version}
 	}
-	
+
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
 	}
@@ -2286,12 +2363,12 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			if err != nil {
 				return fmt.Errorf("failed to get deterministic mtime: %w", err)
 			}
-			
+
 			// Create metadata
 			if err := createDockerExportMetadata(buildDir, version, cfg, mtime); err != nil {
 				return err
 			}
-			
+
 			// Set up subjects function with buildDir for OCI layout extraction
 			res.Subjects = createOCILayoutSubjectsFunction(version, cfg, buildDir)
 			return nil
@@ -2559,19 +2636,19 @@ func (p *Package) getDeterministicMtime() (int64, error) {
 			}
 			return timestamp, nil
 		}
-		
+
 		// Check if we're in a test environment
 		if isTestEnvironment() {
 			// Test fixtures don't have git - use epoch for determinism
 			return 0, nil
 		}
-		
+
 		// Production build without git is an error - prevents cache pollution
-		return 0, fmt.Errorf("no git commit available for deterministic mtime. "+
-			"Ensure repository is properly cloned with git history, or set SOURCE_DATE_EPOCH environment variable. "+
+		return 0, fmt.Errorf("no git commit available for deterministic mtime. " +
+			"Ensure repository is properly cloned with git history, or set SOURCE_DATE_EPOCH environment variable. " +
 			"Building from source tarballs without git metadata will cause cache inconsistencies")
 	}
-	
+
 	timestamp, err := GetCommitTimestamp(context.Background(), p.C.Git())
 	if err != nil {
 		return 0, fmt.Errorf("failed to get deterministic timestamp for tar mtime: %w. "+
@@ -2588,12 +2665,12 @@ func isTestEnvironment() bool {
 	if strings.HasSuffix(os.Args[0], ".test") {
 		return true
 	}
-	
+
 	// Check for explicit test mode environment variable
 	if os.Getenv("LEEWAY_TEST_MODE") == "true" {
 		return true
 	}
-	
+
 	return false
 }
 
@@ -2740,18 +2817,18 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 
 	env := append(os.Environ(), p.Environment...)
 	env = append(env, fmt.Sprintf("%s=%s", EnvvarWorkspaceRoot, p.C.W.Origin))
-	
+
 	// Export SOURCE_DATE_EPOCH for reproducible builds
 	// BuildKit (Docker >= v23.0) automatically uses this for deterministic image timestamps
 	mtime, err := p.getDeterministicMtime()
 	if err == nil {
 		env = append(env, fmt.Sprintf("SOURCE_DATE_EPOCH=%d", mtime))
 	}
-	
+
 	// Enable BuildKit to ensure SOURCE_DATE_EPOCH is used for Docker builds
 	// BuildKit is default since Docker v23.0, but we set it explicitly for older versions
 	env = append(env, "DOCKER_BUILDKIT=1")
-	
+
 	for _, cmd := range commands {
 		if len(cmd) == 0 {
 			continue // Skip empty commands
@@ -2858,7 +2935,7 @@ func checkImageExists(imageName string) (bool, error) {
 // checkOCILayoutExists checks if an OCI layout image.tar exists and is valid
 func checkOCILayoutExists(buildDir string) (bool, error) {
 	imageTarPath := filepath.Join(buildDir, "image.tar")
-	
+
 	// Check if image.tar exists
 	info, err := os.Stat(imageTarPath)
 	if err != nil {
@@ -2867,16 +2944,16 @@ func checkOCILayoutExists(buildDir string) (bool, error) {
 		}
 		return false, xerrors.Errorf("failed to stat image.tar: %w", err)
 	}
-	
+
 	// Check if it's a regular file and not empty
 	if !info.Mode().IsRegular() {
 		return false, xerrors.Errorf("image.tar is not a regular file")
 	}
-	
+
 	if info.Size() == 0 {
 		return false, xerrors.Errorf("image.tar is empty")
 	}
-	
+
 	return true, nil
 }
 
