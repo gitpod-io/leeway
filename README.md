@@ -165,6 +165,8 @@ config:
     test: ["yarn", "test"]
 ```
 
+> **Security note**: Leeway uses `--frozen-lockfile` by default to ensure reproducible builds and prevent dependency confusion attacks. As per [OWASP recommendations](https://cheatsheetseries.owasp.org/cheatsheets/NPM_Security_Cheat_Sheet.html#3-minimize-attack-surfaces-by-ignoring-run-scripts), consider adding `ignore-scripts=true` to your `.npmrc` to further minimize the attack surface from malicious postinstall scripts.
+
 ### Docker packages
 ```YAML
 config:
