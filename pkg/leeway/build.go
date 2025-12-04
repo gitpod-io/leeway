@@ -347,6 +347,84 @@ func computeSHA256(filePath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// extractNpmPackageNames extracts npm package names from a yarn tarball.
+// It handles both YarnLibrary tarballs (package/package.json) and YarnApp tarballs (node_modules/*/package.json).
+// Returns a map of npm package name -> true for all packages found.
+func extractNpmPackageNames(tarballPath string) (map[string]bool, error) {
+	file, err := os.Open(tarballPath)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot open tarball: %w", err)
+	}
+	defer file.Close()
+
+	gzr, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot create gzip reader: %w", err)
+	}
+	defer gzr.Close()
+
+	result := make(map[string]bool)
+	tr := tar.NewReader(gzr)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, xerrors.Errorf("cannot read tarball: %w", err)
+		}
+
+		// YarnLibrary: package/package.json
+		// YarnApp: node_modules/<pkg>/package.json (but not nested node_modules)
+		isLibraryPkgJSON := header.Name == "package/package.json"
+		isAppPkgJSON := strings.HasPrefix(header.Name, "node_modules/") ||
+			strings.HasPrefix(header.Name, "./node_modules/")
+
+		if isAppPkgJSON {
+			// Check it's a direct child of node_modules, not nested
+			// e.g., node_modules/foo/package.json but not node_modules/foo/node_modules/bar/package.json
+			name := strings.TrimPrefix(header.Name, "./")
+			parts := strings.Split(name, "/")
+			// Should be: node_modules, <pkg-name>, package.json (3 parts)
+			// Or for scoped: node_modules, @scope, pkg-name, package.json (4 parts)
+			if len(parts) < 3 {
+				continue
+			}
+			if parts[len(parts)-1] != "package.json" {
+				continue
+			}
+			// Check no nested node_modules
+			nodeModulesCount := 0
+			for _, p := range parts {
+				if p == "node_modules" {
+					nodeModulesCount++
+				}
+			}
+			if nodeModulesCount != 1 {
+				continue
+			}
+			isAppPkgJSON = true
+		} else {
+			isAppPkgJSON = false
+		}
+
+		if isLibraryPkgJSON || isAppPkgJSON {
+			var pkgJSON struct {
+				Name string `json:"name"`
+			}
+			if err := json.NewDecoder(tr).Decode(&pkgJSON); err != nil {
+				log.WithField("file", header.Name).WithError(err).Debug("cannot parse package.json in tarball")
+				continue
+			}
+			if pkgJSON.Name != "" && pkgJSON.Name != "local" {
+				result[pkgJSON.Name] = true
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // verifyAllArtifactChecksums verifies all tracked cache artifacts before signing handoff
 func verifyAllArtifactChecksums(buildctx *buildContext) error {
 	if buildctx.artifactChecksums == nil {
@@ -1414,6 +1492,9 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 	}
 
 	pkgYarnLock := "pkg-yarn.lock"
+	// Collect yarn dependencies to patch link: dependencies in package.json
+	// Maps npm package name -> built tarball path
+	yarnDepsForLinkPatching := make(map[string]string)
 	for _, deppkg := range p.GetTransitiveDependencies() {
 		if deppkg.Ephemeral {
 			continue
@@ -1456,6 +1537,18 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 				untarCmd,
 			}...)
 		}
+
+		// For any yarn package dependency, extract npm package names for link: patching
+		if deppkg.Type == YarnPackage {
+			npmNames, err := extractNpmPackageNames(builtpkg)
+			if err != nil {
+				log.WithField("package", deppkg.FullName()).WithError(err).Debug("cannot extract npm package names from yarn dependency")
+			} else {
+				for npmName := range npmNames {
+					yarnDepsForLinkPatching[npmName] = builtpkg
+				}
+			}
+		}
 	}
 
 	pkgJSONFilename := filepath.Join(wd, "package.json")
@@ -1469,6 +1562,135 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		return nil, xerrors.Errorf("cannot patch package.json of yarn package: %w", err)
 	}
 	var modifiedPackageJSON bool
+
+	// Patch link: dependencies to point to built yarn packages
+	// This is necessary because link: paths are relative to the original source location,
+	// but yarn install runs in an isolated build directory where those paths don't exist.
+	// For YarnApp packages, we extract node_modules/<pkg>/ to _link_deps/<pkg>/
+	// For YarnLibrary packages, we use the tarball directly (yarn pack format)
+	// We also need to patch yarn.lock to match the new package.json references.
+	type linkPatch struct {
+		npmName    string
+		oldRef     string // e.g., "link:../shared"
+		newRef     string // e.g., "file:./_link_deps/gitpod-shared"
+		builtPath  string
+		isYarnPack bool
+		extractCmd string // command to extract YarnApp package (empty for YarnLibrary)
+	}
+	var linkPatches []linkPatch
+
+	if len(yarnDepsForLinkPatching) > 0 {
+		for _, depField := range []string{"dependencies", "devDependencies"} {
+			deps, ok := packageJSON[depField].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			for npmName, builtPath := range yarnDepsForLinkPatching {
+				if depValue, exists := deps[npmName]; exists {
+					if depStr, ok := depValue.(string); ok && strings.HasPrefix(depStr, "link:") {
+						// Check if this is a YarnLibrary (yarn pack) or YarnApp (node_modules) tarball
+						isYarnPack := false
+						if f, err := os.Open(builtPath); err == nil {
+							if gzr, err := gzip.NewReader(f); err == nil {
+								tr := tar.NewReader(gzr)
+								for {
+									header, err := tr.Next()
+									if err != nil {
+										break
+									}
+									if header.Name == "package/package.json" {
+										isYarnPack = true
+										break
+									}
+								}
+								gzr.Close()
+							}
+							f.Close()
+						}
+
+						var newRef string
+						var extractCmd string
+						// Extract dependency to _link_deps/<pkg>/ directory
+						// We need to strip the tarball's internal directory structure:
+						// - YarnLibrary tarballs (from yarn pack) have: package/<files>
+						// - YarnApp tarballs have: ./node_modules/<pkg-name>/<files>
+						linkDepDir := filepath.Join("_link_deps", npmName)
+						if isYarnPack {
+							// YarnLibrary: extract package/* to _link_deps/<pkg>/
+							// --strip-components=1 removes "package/" prefix
+							extractCmd = fmt.Sprintf("mkdir -p %s && tar -xzf %s -C %s --strip-components=1 package/", linkDepDir, builtPath, linkDepDir)
+						} else {
+							// YarnApp: extract ./node_modules/<pkg>/* to _link_deps/<pkg>/
+							// --strip-components=3 removes "./node_modules/<pkg>/" prefix
+							extractCmd = fmt.Sprintf("mkdir -p %s && tar -xzf %s -C %s --strip-components=3 ./node_modules/%s/", linkDepDir, builtPath, linkDepDir, npmName)
+						}
+						newRef = fmt.Sprintf("file:./%s", linkDepDir)
+
+						linkPatches = append(linkPatches, linkPatch{
+							npmName:    npmName,
+							oldRef:     depStr,
+							newRef:     newRef,
+							builtPath:  builtPath,
+							isYarnPack: isYarnPack,
+							extractCmd: extractCmd,
+						})
+
+						deps[npmName] = newRef
+						modifiedPackageJSON = true
+						log.WithField("package", p.FullName()).WithField("dependency", npmName).WithField("isYarnPack", isYarnPack).Debug("patched link: dependency in package.json")
+					}
+				}
+			}
+		}
+	}
+
+	// Add extraction commands for YarnApp link dependencies
+	for _, patch := range linkPatches {
+		if patch.extractCmd != "" {
+			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"sh", "-c", patch.extractCmd})
+		}
+	}
+
+	// Patch yarn.lock to replace link: references with file: references
+	// This is necessary because --frozen-lockfile requires package.json and yarn.lock to match
+	if len(linkPatches) > 0 {
+		yarnLockPath := filepath.Join(wd, "yarn.lock")
+		yarnLockContent, err := os.ReadFile(yarnLockPath)
+		if err == nil {
+			yarnLockStr := string(yarnLockContent)
+			modified := false
+			for _, patch := range linkPatches {
+				// yarn.lock format: "package-name@link:../path":
+				// Note: yarn.lock may normalize paths differently than package.json
+				// e.g., package.json has "link:./../shared" but yarn.lock has "link:../shared"
+				oldPattern := fmt.Sprintf(`"%s@%s"`, patch.npmName, patch.oldRef)
+				newPattern := fmt.Sprintf(`"%s@%s"`, patch.npmName, patch.newRef)
+
+				// Try exact match first
+				if strings.Contains(yarnLockStr, oldPattern) {
+					yarnLockStr = strings.ReplaceAll(yarnLockStr, oldPattern, newPattern)
+					modified = true
+					log.WithField("package", p.FullName()).WithField("dependency", patch.npmName).Debug("patched link: dependency in yarn.lock")
+				} else if strings.HasPrefix(patch.oldRef, "link:") {
+					// Try normalized path: remove leading "./" from the path
+					// e.g., "link:./../shared" -> "link:../shared"
+					normalizedOldRef := strings.Replace(patch.oldRef, "link:./", "link:", 1)
+					normalizedOldPattern := fmt.Sprintf(`"%s@%s"`, patch.npmName, normalizedOldRef)
+					if strings.Contains(yarnLockStr, normalizedOldPattern) {
+						yarnLockStr = strings.ReplaceAll(yarnLockStr, normalizedOldPattern, newPattern)
+						modified = true
+						log.WithField("package", p.FullName()).WithField("dependency", patch.npmName).Debug("patched link: dependency in yarn.lock")
+					}
+				}
+			}
+			if modified {
+				if err := os.WriteFile(yarnLockPath, []byte(yarnLockStr), 0644); err != nil {
+					return nil, xerrors.Errorf("cannot write patched yarn.lock: %w", err)
+				}
+			}
+		}
+	}
+
 	if cfg.Packaging == YarnLibrary {
 		// We can't modify the `yarn pack` generated tar file without runnign the risk of yarn blocking when attempting to unpack it again. Thus, we must include the pkgYarnLock in the npm
 		// package we're building. To this end, we modify the package.json of the source package.
