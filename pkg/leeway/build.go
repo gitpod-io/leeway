@@ -820,14 +820,14 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 		inNewlyBuilt := newlyBuiltMap[p.FullName()]
 		inPkgsToDownload := pkgsToDownloadMap[p.FullName()]
 		status := statusAfterDownload[p]
-		
+
 		log.WithFields(log.Fields{
 			"package":          p.FullName(),
 			"inNewlyBuilt":     inNewlyBuilt,
 			"inPkgsToDownload": inPkgsToDownload,
 			"status":           status,
 		}).Debug("Categorizing package for build summary")
-		
+
 		if inNewlyBuilt {
 			// Package was built during this build
 			builtLocally++
@@ -1532,7 +1532,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 	}
 	yarnCache := filepath.Join(buildctx.BuildDir(), fmt.Sprintf("yarn-cache-%s", buildctx.buildID))
 	if len(cfg.Commands.Install) == 0 {
-		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], []string{"yarn", "install", "--mutex", yarnMutex, "--cache-folder", yarnCache})
+		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], []string{"yarn", "install", "--frozen-lockfile", "--mutex", yarnMutex, "--cache-folder", yarnCache})
 	} else {
 		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], cfg.Commands.Install)
 	}
@@ -2032,7 +2032,7 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// Normal build (load to daemon for pushing)
 		buildcmd = []string{"docker", "build", "--pull", "-t", version}
 	}
-	
+
 	for arg, val := range cfg.BuildArgs {
 		buildcmd = append(buildcmd, "--build-arg", fmt.Sprintf("%s=%s", arg, val))
 	}
@@ -2286,12 +2286,12 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 			if err != nil {
 				return fmt.Errorf("failed to get deterministic mtime: %w", err)
 			}
-			
+
 			// Create metadata
 			if err := createDockerExportMetadata(buildDir, version, cfg, mtime); err != nil {
 				return err
 			}
-			
+
 			// Set up subjects function with buildDir for OCI layout extraction
 			res.Subjects = createOCILayoutSubjectsFunction(version, cfg, buildDir)
 			return nil
@@ -2559,19 +2559,19 @@ func (p *Package) getDeterministicMtime() (int64, error) {
 			}
 			return timestamp, nil
 		}
-		
+
 		// Check if we're in a test environment
 		if isTestEnvironment() {
 			// Test fixtures don't have git - use epoch for determinism
 			return 0, nil
 		}
-		
+
 		// Production build without git is an error - prevents cache pollution
-		return 0, fmt.Errorf("no git commit available for deterministic mtime. "+
-			"Ensure repository is properly cloned with git history, or set SOURCE_DATE_EPOCH environment variable. "+
+		return 0, fmt.Errorf("no git commit available for deterministic mtime. " +
+			"Ensure repository is properly cloned with git history, or set SOURCE_DATE_EPOCH environment variable. " +
 			"Building from source tarballs without git metadata will cause cache inconsistencies")
 	}
-	
+
 	timestamp, err := GetCommitTimestamp(context.Background(), p.C.Git())
 	if err != nil {
 		return 0, fmt.Errorf("failed to get deterministic timestamp for tar mtime: %w. "+
@@ -2588,12 +2588,12 @@ func isTestEnvironment() bool {
 	if strings.HasSuffix(os.Args[0], ".test") {
 		return true
 	}
-	
+
 	// Check for explicit test mode environment variable
 	if os.Getenv("LEEWAY_TEST_MODE") == "true" {
 		return true
 	}
-	
+
 	return false
 }
 
@@ -2740,18 +2740,18 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 
 	env := append(os.Environ(), p.Environment...)
 	env = append(env, fmt.Sprintf("%s=%s", EnvvarWorkspaceRoot, p.C.W.Origin))
-	
+
 	// Export SOURCE_DATE_EPOCH for reproducible builds
 	// BuildKit (Docker >= v23.0) automatically uses this for deterministic image timestamps
 	mtime, err := p.getDeterministicMtime()
 	if err == nil {
 		env = append(env, fmt.Sprintf("SOURCE_DATE_EPOCH=%d", mtime))
 	}
-	
+
 	// Enable BuildKit to ensure SOURCE_DATE_EPOCH is used for Docker builds
 	// BuildKit is default since Docker v23.0, but we set it explicitly for older versions
 	env = append(env, "DOCKER_BUILDKIT=1")
-	
+
 	for _, cmd := range commands {
 		if len(cmd) == 0 {
 			continue // Skip empty commands
@@ -2858,7 +2858,7 @@ func checkImageExists(imageName string) (bool, error) {
 // checkOCILayoutExists checks if an OCI layout image.tar exists and is valid
 func checkOCILayoutExists(buildDir string) (bool, error) {
 	imageTarPath := filepath.Join(buildDir, "image.tar")
-	
+
 	// Check if image.tar exists
 	info, err := os.Stat(imageTarPath)
 	if err != nil {
@@ -2867,16 +2867,16 @@ func checkOCILayoutExists(buildDir string) (bool, error) {
 		}
 		return false, xerrors.Errorf("failed to stat image.tar: %w", err)
 	}
-	
+
 	// Check if it's a regular file and not empty
 	if !info.Mode().IsRegular() {
 		return false, xerrors.Errorf("image.tar is not a regular file")
 	}
-	
+
 	if info.Size() == 0 {
 		return false, xerrors.Errorf("image.tar is empty")
 	}
-	
+
 	return true, nil
 }
 
