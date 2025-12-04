@@ -1357,7 +1357,7 @@ cp $DIR/installer-package.json package.json
 $DIR/get_yarn_lock.sh > yarn.lock
 
 mkdir -p _temp_yarn_cache
-yarn install --frozenlockfile --prod --cache-folder _temp_yarn_cache
+yarn install --frozen-lockfile --prod --cache-folder _temp_yarn_cache
 rm -r yarn.lock _temp_yarn_cache
 `
 
