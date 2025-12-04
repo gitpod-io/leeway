@@ -1016,7 +1016,7 @@ cp $DIR/installer-package.json package.json
 $DIR/get_yarn_lock.sh > yarn.lock
 
 mkdir -p _temp_yarn_cache
-yarn install --frozenlockfile --prod --cache-folder _temp_yarn_cache
+yarn install --frozen-lockfile --prod --cache-folder _temp_yarn_cache
 rm -r yarn.lock _temp_yarn_cache
 `
 
@@ -1192,7 +1192,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 	}
 	yarnCache := filepath.Join(buildctx.BuildDir(), fmt.Sprintf("yarn-cache-%s", buildctx.buildID))
 	if len(cfg.Commands.Install) == 0 {
-		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], []string{"yarn", "install", "--mutex", yarnMutex, "--cache-folder", yarnCache})
+		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], []string{"yarn", "install", "--frozen-lockfile", "--mutex", yarnMutex, "--cache-folder", yarnCache})
 	} else {
 		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], cfg.Commands.Install)
 	}
