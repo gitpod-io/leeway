@@ -272,11 +272,15 @@ func TestYarnAppExtraction_ScopedPackage(t *testing.T) {
 				t.Fatalf("failed to create tarball: %v", err)
 			}
 
-			// This is what the CURRENT production code does - always uses strip=3
-			// For scoped packages, this is WRONG and should be strip=4
-			const currentProductionStripComponents = 3
+			// Calculate strip components based on package type:
+			// - Non-scoped packages (e.g., "utils"): 3 components (., node_modules, utils)
+			// - Scoped packages (e.g., "@test/utils"): 4 components (., node_modules, @test, utils)
+			stripComponents := 3
+			if strings.HasPrefix(tt.npmName, "@") {
+				stripComponents = 4
+			}
 
-			// Extract to _link_deps/<npmName>/ using the current production logic
+			// Extract to _link_deps/<npmName>/ using the production logic
 			extractDir := filepath.Join(tmpDir, "_link_deps", tt.npmName)
 			if err := os.MkdirAll(extractDir, 0755); err != nil {
 				t.Fatal(err)
@@ -284,7 +288,7 @@ func TestYarnAppExtraction_ScopedPackage(t *testing.T) {
 
 			tarballFilter := fmt.Sprintf("./node_modules/%s/", tt.npmName)
 			extractCmd := exec.Command("tar", "-xzf", tarballPath, "-C", extractDir,
-				fmt.Sprintf("--strip-components=%d", currentProductionStripComponents), tarballFilter)
+				fmt.Sprintf("--strip-components=%d", stripComponents), tarballFilter)
 			if err := extractCmd.Run(); err != nil {
 				t.Fatalf("extraction failed: %v", err)
 			}

@@ -1698,8 +1698,14 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 							extractCmd = fmt.Sprintf("mkdir -p %s && tar -xzf %s -C %s --strip-components=1 package/", linkDepDir, builtPath, linkDepDir)
 						} else {
 							// YarnApp: extract ./node_modules/<pkg>/* to _link_deps/<pkg>/
-							// --strip-components=3 removes "./node_modules/<pkg>/" prefix
-							extractCmd = fmt.Sprintf("mkdir -p %s && tar -xzf %s -C %s --strip-components=3 ./node_modules/%s/", linkDepDir, builtPath, linkDepDir, npmName)
+							// --strip-components removes "./node_modules/<pkg>/" prefix
+							// For non-scoped packages (e.g., "utils"): 3 components (., node_modules, utils)
+							// For scoped packages (e.g., "@test/utils"): 4 components (., node_modules, @test, utils)
+							stripComponents := 3
+							if strings.HasPrefix(npmName, "@") {
+								stripComponents = 4
+							}
+							extractCmd = fmt.Sprintf("mkdir -p %s && tar -xzf %s -C %s --strip-components=%d ./node_modules/%s/", linkDepDir, builtPath, linkDepDir, stripComponents, npmName)
 						}
 						newRef = fmt.Sprintf("file:./%s", linkDepDir)
 
