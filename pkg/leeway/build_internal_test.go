@@ -3,8 +3,11 @@ package leeway
 import (
 	"archive/tar"
 	"compress/gzip"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -207,5 +210,92 @@ func TestExtractNpmPackageNames_InvalidGzip(t *testing.T) {
 	_, err := extractNpmPackageNames(tmpFile)
 	if err == nil {
 		t.Error("extractNpmPackageNames() expected error for non-gzipped file, got nil")
+	}
+}
+
+func TestYarnAppExtraction_ScopedPackage(t *testing.T) {
+	// This test verifies that scoped packages are correctly extracted from YarnApp tarballs.
+	// YarnApp tarballs have structure: ./node_modules/@scope/pkg-name/...
+	// For scoped packages, we need --strip-components=4 (not 3) to correctly extract.
+	//
+	// Path components for scoped package:
+	// ./node_modules/@scope/pkg-name/package.json
+	// ^  ^            ^      ^        ^
+	// 1  2            3      4        file
+	//
+	// Path components for non-scoped package:
+	// ./node_modules/pkg-name/package.json
+	// ^  ^            ^        ^
+	// 1  2            3        file
+
+	tests := []struct {
+		name    string
+		npmName string
+	}{
+		{
+			name:    "non-scoped package",
+			npmName: "my-pkg",
+		},
+		{
+			name:    "scoped package",
+			npmName: "@test/utils",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			// Create tarball with the package structure (simulating YarnApp output)
+			tarballDir := filepath.Join(tmpDir, "tarball-content")
+			var pkgDir string
+			if strings.HasPrefix(tt.npmName, "@") {
+				parts := strings.SplitN(tt.npmName, "/", 2)
+				pkgDir = filepath.Join(tarballDir, "node_modules", parts[0], parts[1])
+			} else {
+				pkgDir = filepath.Join(tarballDir, "node_modules", tt.npmName)
+			}
+			if err := os.MkdirAll(pkgDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+
+			// Create package.json
+			pkgJSON := fmt.Sprintf(`{"name":"%s","version":"1.0.0"}`, tt.npmName)
+			if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(pkgJSON), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			// Create tarball
+			tarballPath := filepath.Join(tmpDir, "test.tar.gz")
+			tarCmd := exec.Command("tar", "-czf", tarballPath, "-C", tarballDir, ".")
+			if err := tarCmd.Run(); err != nil {
+				t.Fatalf("failed to create tarball: %v", err)
+			}
+
+			// This is what the CURRENT production code does - always uses strip=3
+			// For scoped packages, this is WRONG and should be strip=4
+			const currentProductionStripComponents = 3
+
+			// Extract to _link_deps/<npmName>/ using the current production logic
+			extractDir := filepath.Join(tmpDir, "_link_deps", tt.npmName)
+			if err := os.MkdirAll(extractDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+
+			tarballFilter := fmt.Sprintf("./node_modules/%s/", tt.npmName)
+			extractCmd := exec.Command("tar", "-xzf", tarballPath, "-C", extractDir,
+				fmt.Sprintf("--strip-components=%d", currentProductionStripComponents), tarballFilter)
+			if err := extractCmd.Run(); err != nil {
+				t.Fatalf("extraction failed: %v", err)
+			}
+
+			// Check if package.json is at the correct location
+			correctPath := filepath.Join(extractDir, "package.json")
+			if _, err := os.Stat(correctPath); err != nil {
+				// List what was actually extracted for debugging
+				files, _ := filepath.Glob(filepath.Join(extractDir, "*"))
+				t.Errorf("package.json should be at %s but wasn't found. Extracted files: %v", correctPath, files)
+			}
+		})
 	}
 }
