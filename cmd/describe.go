@@ -109,7 +109,7 @@ func absPackageName(workspace leeway.Workspace, name string) string {
 			log.Fatal(err)
 		}
 
-		// This uses seperate trims and is not part of origin to support BUILD files in the workspace root.
+		// This uses separate trims and is not part of origin to support BUILD files in the workspace root.
 		// In that case there's no "/" left over at the origin.
 		cn := strings.TrimPrefix(wd, workspace.Origin)
 		cn = strings.TrimPrefix(cn, "/")
@@ -123,7 +123,7 @@ func absPackageName(workspace leeway.Workspace, name string) string {
 			log.Fatal(err)
 		}
 
-		// This uses seperate trims and is not part of origin to support BUILD files in the workspace root.
+		// This uses separate trims and is not part of origin to support BUILD files in the workspace root.
 		// In that case there's no "/" left over at the origin.
 		cn := strings.TrimPrefix(wd, workspace.Origin)
 		cn = strings.TrimPrefix(cn, "/")

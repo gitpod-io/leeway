@@ -91,7 +91,7 @@ func LinkGoWorkspace(workspace *leeway.Workspace) error {
 	return nil
 }
 
-// LinkGoModules produces the neccesary "replace"ments in all of the package's
+// LinkGoModules produces the necessary "replace"ments in all of the package's
 // go.mod files, s.t. the packages link in the workspace/work with Go's tooling in-situ.
 func LinkGoModules(workspace *leeway.Workspace, target *leeway.Package) error {
 	mods, err := collectReplacements(workspace)

@@ -402,7 +402,7 @@ You can list all variants in a workspace using `leeway collect variants`.
 
 ## Environment Manifest
 Leeway does not control the environment in which it builds the packages, but assumes that all required tools are available already (e.g. `go` or `yarn`).
-This however can lead to subtle failure modes where a package built in one enviroment ends up being used in another, because no matter of the environment they were built in, they get the same version.
+This however can lead to subtle failure modes where a package built in one environment ends up being used in another, because no matter of the environment they were built in, they get the same version.
 
 To prevent such issues, leeway computes an _environment manifest_ which contains the versions of the tools used, as well as some platform information.
 The entries in that manifest depend on the package types used by that workspace, e.g. if only `Go` packages exist in the workspace, only `go version`, [GOOS and GOARCH](https://golang.org/pkg/runtime/#pkg-constants) will be part of the manifest.
