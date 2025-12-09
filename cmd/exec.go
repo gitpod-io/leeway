@@ -224,7 +224,7 @@ Example use:
 
 		err = executeCommandInLocations(args, locs, cache, parallelism, rawOutput)
 		if err != nil {
-			log.WithError(err).Fatal("cannot execut command")
+			log.WithError(err).Fatal("cannot execute command")
 		}
 	},
 }
