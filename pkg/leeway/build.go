@@ -1250,7 +1250,7 @@ func createBuildDir(buildctx *buildContext, p *Package) (string, error) {
 	// which is more cache-friendly. Allows e.g. Go build/test caching to work,
 	// as well as golangci-lint caching.
 	//
-	// Note: This directoy is only used if it doesn't already exist, otherwise
+	// Note: This directory is only used if it doesn't already exist, otherwise
 	// we'll fall back to the version as suffix.
 	// It is possible that the directory exists because the package is already
 	// being built with a different version (e.g. different args).
@@ -1597,7 +1597,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			}
 		}
 		if isTSLibrary {
-			// make previously built package availabe through yarn lock
+			// make previously built package available through yarn lock
 			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"sh", "-c", fmt.Sprintf("tar Ozfx %s package/%s | sed '/resolved /c\\  resolved \"file://%s\"' >> yarn.lock", builtpkg, pkgYarnLock, builtpkg)})
 		} else {
 			untarCmd, err := BuildUnTarCommand(

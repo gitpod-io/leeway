@@ -385,7 +385,7 @@ func loadWorkspace(ctx context.Context, path string, args Arguments, variant str
 		}
 	}
 
-	// with all packages loaded we can compute the env manifest, becuase now we know which package types are actually
+	// with all packages loaded we can compute the env manifest, because now we know which package types are actually
 	// used, hence know the default env manifest entries.
 	workspace.EnvironmentManifest, err = buildEnvironmentManifest(workspace.EnvironmentManifest, packageTypesUsed)
 	if err != nil {
