@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	register(PackageCheck("copy-from-pacakge", "attempts to find broken package paths in COPY and ADD statements", leeway.DockerPackage, checkDockerCopyFromPackage))
+	register(PackageCheck("copy-from-package", "attempts to find broken package paths in COPY and ADD statements", leeway.DockerPackage, checkDockerCopyFromPackage))
 }
 
 var (
