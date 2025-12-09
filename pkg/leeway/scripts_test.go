@@ -54,7 +54,7 @@ func TestScriptArgs(t *testing.T) {
 		},
 		// The argument should be passed to the script correctly - verified by checking stdout
 		{
-			Name:              "resovled args",
+			Name:              "resolved args",
 			T:                 t,
 			Args:              []string{"run", "scripts:echo", "-Dmsg=foobar"},
 			NoNestedWorkspace: true,
@@ -148,7 +148,7 @@ func TestPATHEnvironment(t *testing.T) {
 	tests := []*testutil.CommandFixtureTest{
 		// The PATH should contain the package that the script depends on
 		{
-			Name:              "resovled args",
+			Name:              "resolved args",
 			T:                 t,
 			Args:              []string{"run", "scripts:path"},
 			NoNestedWorkspace: true,
