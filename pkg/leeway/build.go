@@ -1435,13 +1435,14 @@ func validateDependenciesAvailable(p *Package, localCache cache.LocalCache, pkgs
 		_, inCache := localCache.Location(dep)
 		status := pkgstatus[dep]
 
-		// Dependency is available if:
-		// 1. It's in the local cache (PackageBuilt or PackageDownloaded), OR
-		// 2. It will be built locally (PackageNotBuiltYet), OR
-		// 3. It will be downloaded (PackageInRemoteCache)
+		// Dependency is available if it's actually in the local cache.
+		//
+		// We explicitly do NOT consider PackageNotBuiltYet or PackageInRemoteCache
+		// as "available" here. This function validates cached packages, and cached
+		// packages skip buildDependencies() in build(). If we considered
+		// PackageNotBuiltYet as available, the dependency would never be built,
+		// causing "package X is not built" errors during the prep phase.
 		depAvailable := inCache ||
-			status == PackageNotBuiltYet ||
-			status == PackageInRemoteCache ||
 			status == PackageBuilt ||
 			status == PackageDownloaded
 

@@ -75,7 +75,7 @@ func TestValidateDependenciesAvailable(t *testing.T) {
 			expectedResult: true,
 		},
 		{
-			name: "package with dependency marked for build",
+			name: "package with dependency marked for build - not in cache",
 			setupPackages: func() (*Package, map[*Package]PackageBuildStatus, *mockLocalCache) {
 				depA := newTestPackage("test:dep-a", GenericPackage)
 				pkg := newTestPackage("test:pkg", GenericPackage)
@@ -83,17 +83,19 @@ func TestValidateDependenciesAvailable(t *testing.T) {
 
 				pkgstatus := map[*Package]PackageBuildStatus{
 					pkg:  PackageDownloaded,
-					depA: PackageNotBuiltYet, // Will be built
+					depA: PackageNotBuiltYet, // Will be built - but not yet in cache
 				}
 				cache := newMockLocalCache()
 				cache.addPackage("test:pkg", "/cache/test-pkg.tar.gz")
-				// depA is NOT in cache but will be built
+				// depA is NOT in cache
+				// PackageNotBuiltYet is NOT sufficient for cached packages because
+				// cached packages skip buildDependencies() and won't trigger the build
 				return pkg, pkgstatus, cache
 			},
-			expectedResult: true,
+			expectedResult: false,
 		},
 		{
-			name: "package with dependency in remote cache",
+			name: "package with dependency in remote cache - not yet downloaded",
 			setupPackages: func() (*Package, map[*Package]PackageBuildStatus, *mockLocalCache) {
 				depA := newTestPackage("test:dep-a", GenericPackage)
 				pkg := newTestPackage("test:pkg", GenericPackage)
@@ -101,10 +103,31 @@ func TestValidateDependenciesAvailable(t *testing.T) {
 
 				pkgstatus := map[*Package]PackageBuildStatus{
 					pkg:  PackageDownloaded,
-					depA: PackageInRemoteCache, // Will be downloaded
+					depA: PackageInRemoteCache, // Will be downloaded - but not yet in cache
 				}
 				cache := newMockLocalCache()
 				cache.addPackage("test:pkg", "/cache/test-pkg.tar.gz")
+				// depA is NOT in local cache yet
+				// PackageInRemoteCache is NOT sufficient for cached packages because
+				// cached packages skip buildDependencies() and won't trigger the download
+				return pkg, pkgstatus, cache
+			},
+			expectedResult: false,
+		},
+		{
+			name: "package with dependency downloaded and in cache",
+			setupPackages: func() (*Package, map[*Package]PackageBuildStatus, *mockLocalCache) {
+				depA := newTestPackage("test:dep-a", GenericPackage)
+				pkg := newTestPackage("test:pkg", GenericPackage)
+				pkg.dependencies = []*Package{depA}
+
+				pkgstatus := map[*Package]PackageBuildStatus{
+					pkg:  PackageDownloaded,
+					depA: PackageDownloaded, // Downloaded and in cache
+				}
+				cache := newMockLocalCache()
+				cache.addPackage("test:pkg", "/cache/test-pkg.tar.gz")
+				cache.addPackage("test:dep-a", "/cache/test-dep-a.tar.gz") // Actually in cache
 				return pkg, pkgstatus, cache
 			},
 			expectedResult: true,
