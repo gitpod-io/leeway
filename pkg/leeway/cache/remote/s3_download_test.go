@@ -181,11 +181,11 @@ func TestS3CacheDownload(t *testing.T) {
 				semaphore:           make(chan struct{}, maxConcurrentOperations),
 			}
 
-			err := s3Cache.Download(context.Background(), localCache, tt.packages)
+			results := s3Cache.Download(context.Background(), localCache, tt.packages)
 
-			// We always return nil from Download now to continue with local builds
-			if err != nil {
-				t.Errorf("expected no error but got %v", err)
+			// Check that we got results for all packages
+			if len(results) != len(tt.packages) {
+				t.Errorf("expected %d results, got %d", len(tt.packages), len(results))
 			}
 
 			// Check if expected files were downloaded

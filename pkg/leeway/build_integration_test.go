@@ -2215,20 +2215,26 @@ func (m *mockRemoteCacheWithFailures) ExistingPackages(ctx context.Context, pkgs
 	return result, nil
 }
 
-func (m *mockRemoteCacheWithFailures) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) error {
+func (m *mockRemoteCacheWithFailures) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) map[string]cache.DownloadResult {
+	results := make(map[string]cache.DownloadResult)
 	for _, pkg := range pkgs {
 		if _, shouldFail := m.failDownload[pkg.FullName()]; shouldFail {
-			// Simulate download failure - don't copy to local cache
+			// Simulate download failure
+			results[pkg.FullName()] = cache.DownloadResult{
+				Status: cache.DownloadStatusFailed,
+				Err:    fmt.Errorf("simulated download failure"),
+			}
 			continue
 		}
 		if _, exists := m.existingPackages[pkg.FullName()]; exists {
 			// Simulate successful download by creating a dummy cache file
 			m.downloaded[pkg.FullName()] = struct{}{}
-			// Note: We don't actually create files here because we're testing
-			// the validation logic, not the actual download
+			results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusSuccess}
+		} else {
+			results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusNotFound}
 		}
 	}
-	return nil // Download returns nil even on failures (by design)
+	return results
 }
 
 func (m *mockRemoteCacheWithFailures) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {

@@ -86,9 +86,17 @@ func TestDownload(t *testing.T) {
 		pkgs = append(pkgs, packages[i])
 	}
 
-	err := noCache.Download(context.Background(), localCache, pkgs)
-	if err != nil {
-		t.Errorf("Download() error = %v", err)
+	results := noCache.Download(context.Background(), localCache, pkgs)
+	// NoRemoteCache should return NotFound for all packages
+	for _, pkg := range pkgs {
+		result, ok := results[pkg.FullName()]
+		if !ok {
+			t.Errorf("Download() missing result for package %s", pkg.FullName())
+			continue
+		}
+		if result.Status != cache.DownloadStatusNotFound {
+			t.Errorf("Download() status = %v, want %v", result.Status, cache.DownloadStatusNotFound)
+		}
 	}
 }
 

@@ -41,14 +41,42 @@ type LocalCache interface {
 	Location(pkg Package) (path string, exists bool)
 }
 
+// DownloadStatus indicates the outcome of a package download attempt
+type DownloadStatus int
+
+const (
+	// DownloadStatusSuccess indicates the package was downloaded successfully
+	DownloadStatusSuccess DownloadStatus = iota
+	// DownloadStatusNotFound indicates the package does not exist in remote cache
+	DownloadStatusNotFound
+	// DownloadStatusFailed indicates a transient failure (network, timeout, etc.)
+	DownloadStatusFailed
+	// DownloadStatusVerificationFailed indicates SLSA verification failed
+	DownloadStatusVerificationFailed
+	// DownloadStatusSkipped indicates the package was already in local cache
+	DownloadStatusSkipped
+)
+
+// DownloadResult contains the outcome of a single package download attempt.
+// This enables callers to make informed decisions about retry strategies
+// and avoid unnecessary rebuilds when transient failures occur.
+type DownloadResult struct {
+	// Status indicates the outcome of the download attempt
+	Status DownloadStatus
+	// Err contains the error if Status is Failed or VerificationFailed
+	Err error
+}
+
 // RemoteCache can download and upload build artifacts into a local cache
 type RemoteCache interface {
 	// ExistingPackages returns existing cached build artifacts in the remote cache
 	ExistingPackages(ctx context.Context, pkgs []Package) (map[Package]struct{}, error)
 
-	// Download makes a best-effort attempt at downloading previously cached build artifacts
-	// A cache miss does not constitute an error
-	Download(ctx context.Context, dst LocalCache, pkgs []Package) error
+	// Download makes a best-effort attempt at downloading previously cached build artifacts.
+	// Returns a map of package full names to their download results, enabling callers to
+	// distinguish between "not found" (rebuild required) and "failed" (retry may help).
+	// A cache miss does not constitute an error.
+	Download(ctx context.Context, dst LocalCache, pkgs []Package) map[string]DownloadResult
 
 	// Upload makes a best effort to upload the build artifacts to a remote cache
 	Upload(ctx context.Context, src LocalCache, pkgs []Package) error

@@ -406,8 +406,8 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 			tmpDir := t.TempDir()
 			localCache, _ := local.NewFilesystemCache(tmpDir)
 
-			err := s3Cache.Download(context.Background(), localCache, packages)
-			require.NoError(t, err)
+			results := s3Cache.Download(context.Background(), localCache, packages)
+			require.Equal(t, len(packages), len(results), "should return results for all packages")
 
 			duration := time.Since(start)
 
