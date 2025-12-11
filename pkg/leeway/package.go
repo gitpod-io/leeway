@@ -268,6 +268,9 @@ func (p *Package) GetTransitiveDependencies() []*Package {
 	// Collect keys and sort them for deterministic iteration order.
 	// Map iteration in Go is non-deterministic, which would cause
 	// non-reproducible builds (different go.work content, different checksums).
+	// Note: sort.Strings uses bytewise comparison which is deterministic for
+	// ASCII strings. Package names are ASCII (component:package format), so
+	// this is safe. Unicode normalization is not a concern here.
 	keys := make([]string, 0, len(idx)-1)
 	for k := range idx {
 		if k != p.FullName() {
