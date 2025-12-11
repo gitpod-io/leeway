@@ -762,27 +762,52 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToDownloadCache[i] = p
 	}
 
-	// Errors are logged but don't fail the build
-	err = ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, pkgsToDownloadCache)
-	if err != nil {
-		// Download errors are already logged by the cache implementation
-		// We continue with local builds for packages that failed to download
-		log.WithError(err).Debug("Remote cache download completed with some errors")
-	}
+	// Download packages and get detailed results for each
+	downloadResults := ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, pkgsToDownloadCache)
 
-	// Update status based on actual outcome - check what's actually in local cache now
+	// Update status based on download results - enables smarter decisions about retries vs rebuilds
+	var failedCount, notFoundCount, successCount int
 	for _, p := range pkgsToDownload {
-		if _, nowInCache := ctx.LocalCache.Location(p); nowInCache {
-			// Successfully downloaded and verified
+		result, hasResult := downloadResults[p.FullName()]
+		_, inCache := ctx.LocalCache.Location(p)
+
+		if inCache {
+			// Successfully downloaded (or was already in cache)
 			pkgstatus[p] = PackageDownloaded
+			successCount++
+		} else if hasResult {
+			switch result.Status {
+			case cache.DownloadStatusNotFound:
+				// Package doesn't exist in remote cache - must build locally
+				pkgstatus[p] = PackageNotBuiltYet
+				notFoundCount++
+			case cache.DownloadStatusVerificationFailed:
+				// SLSA verification failed - must build locally with proper attestation
+				pkgstatus[p] = PackageVerificationFailed
+				log.WithField("package", p.FullName()).Warn("SLSA verification failed, will rebuild locally")
+			case cache.DownloadStatusFailed:
+				// Transient failure - mark for rebuild but log for visibility
+				pkgstatus[p] = PackageDownloadFailed
+				failedCount++
+				log.WithFields(log.Fields{
+					"package": p.FullName(),
+					"error":   result.Err,
+				}).Debug("Download failed (transient), will rebuild locally")
+			default:
+				pkgstatus[p] = PackageNotBuiltYet
+			}
 		} else {
-			// Download failed or verification failed: we will need to build locally
-			// TODO: Distinguish between download failures and verification failures.
-			// Currently can't tell because Download() returns nil on errors (by design for graceful fallback).
-			// To fix: Change RemoteCache.Download() to return map[string]DownloadResult with typed status,
-			// then use PackageDownloadFailed vs PackageVerificationFailed appropriately.
+			// No result - shouldn't happen but handle gracefully
 			pkgstatus[p] = PackageNotBuiltYet
 		}
+	}
+
+	if failedCount > 0 || notFoundCount > 0 {
+		log.WithFields(log.Fields{
+			"success":  successCount,
+			"notFound": notFoundCount,
+			"failed":   failedCount,
+		}).Debug("Download phase completed")
 	}
 
 	// Validate that cached packages have all their dependencies available.

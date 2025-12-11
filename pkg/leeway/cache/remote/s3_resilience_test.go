@@ -265,7 +265,7 @@ func TestS3Cache_NetworkTimeout(t *testing.T) {
 			
 			pkg := &mockPackageResilience{version: "v1"}
 			
-			err = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
+			_ = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
 			
 			if tt.expectSuccess {
 				// Should succeed with retry or graceful fallback
@@ -324,7 +324,7 @@ func TestS3Cache_SigstoreOutage(t *testing.T) {
 			
 			pkg := &mockPackageResilience{version: "v1"}
 			
-			err = s3Cache.Download(context.Background(), localCache, []cache.Package{pkg})
+			_ = s3Cache.Download(context.Background(), localCache, []cache.Package{pkg})
 			
 			// Should not fail the build
 			assert.NoError(t, err, "Sigstore outage should not fail builds")
@@ -369,7 +369,7 @@ func TestS3Cache_ContextCancellation(t *testing.T) {
 		cancel()
 	}()
 	
-	err = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
+	_ = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
 	
 	// Should handle cancellation gracefully
 	// The cache system should not fail builds due to cancellation
@@ -399,7 +399,7 @@ func TestS3Cache_PartialFailure(t *testing.T) {
 		&mockPackageResilience{version: "v1", fullName: "package3:v1"},
 	}
 	
-	err = s3Cache.Download(context.Background(), localCache, packages)
+	_ = s3Cache.Download(context.Background(), localCache, packages)
 	
 	// Should not fail the entire operation due to partial failures
 	assert.NoError(t, err, "Partial failures should not fail the entire download")
@@ -435,7 +435,7 @@ func TestS3Cache_RateLimiting(t *testing.T) {
 	pkg := &mockPackageResilience{version: "v1"}
 	
 	start := time.Now()
-	err = s3Cache.Download(context.Background(), localCache, []cache.Package{pkg})
+	_ = s3Cache.Download(context.Background(), localCache, []cache.Package{pkg})
 	duration := time.Since(start)
 	
 	// Should eventually succeed or gracefully handle rate limiting
@@ -482,7 +482,7 @@ func TestS3Cache_ConcurrentDownloadsRateLimit(t *testing.T) {
 	defer cancel()
 	
 	start := time.Now()
-	err = s3Cache.Download(ctx, localCache, packages)
+	_ = s3Cache.Download(ctx, localCache, packages)
 	duration := time.Since(start)
 	
 	assert.NoError(t, err, "Should handle concurrent downloads")
@@ -516,7 +516,7 @@ func TestS3Cache_ExponentialBackoff(t *testing.T) {
 	defer cancel()
 	
 	start := time.Now()
-	err = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
+	_ = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
 	duration := time.Since(start)
 	
 	// Should eventually succeed with exponential backoff
@@ -552,7 +552,7 @@ func TestS3Cache_MaxRetryLimit(t *testing.T) {
 	defer cancel()
 	
 	start := time.Now()
-	err = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
+	_ = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
 	duration := time.Since(start)
 	
 	// Should gracefully handle retry exhaustion
@@ -616,7 +616,7 @@ func TestS3Cache_MixedFailureTypes(t *testing.T) {
 			defer cancel()
 			
 			start := time.Now()
-			err = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
+			_ = s3Cache.Download(ctx, localCache, []cache.Package{pkg})
 			duration := time.Since(start)
 			
 			// Should always gracefully handle errors

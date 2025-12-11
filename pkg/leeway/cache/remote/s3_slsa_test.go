@@ -279,11 +279,11 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 
 			// Execute download
 			ctx := context.Background()
-			err = s3Cache.Download(ctx, localCache, tt.packages)
+			results := s3Cache.Download(ctx, localCache, tt.packages)
 
-			// Verify no errors (cache failures should not fail builds)
-			if err != nil {
-				t.Errorf("Download() returned error: %v", err)
+			// Verify we got results for all packages
+			if len(results) != len(tt.packages) {
+				t.Errorf("Download() returned %d results, expected %d", len(results), len(tt.packages))
 			}
 
 			// Check if file was downloaded when expected
@@ -350,9 +350,9 @@ func TestS3Cache_BackwardCompatibility(t *testing.T) {
 		&mockPackage{version: "v1"},
 	}
 
-	err = s3Cache.Download(context.Background(), localCache, packages)
-	if err != nil {
-		t.Errorf("Download() returned error: %v", err)
+	results := s3Cache.Download(context.Background(), localCache, packages)
+	if len(results) != len(packages) {
+		t.Errorf("Download() returned %d results, expected %d", len(results), len(packages))
 	}
 
 	// Should download successfully without any SLSA-related calls

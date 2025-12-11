@@ -19,9 +19,14 @@ func (NoRemoteCache) ExistingPackages(ctx context.Context, pkgs []cache.Package)
 	return map[cache.Package]struct{}{}, nil
 }
 
-// Download makes a best-effort attempt at downloading previously cached build artifacts
-func (NoRemoteCache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) error {
-	return nil
+// Download makes a best-effort attempt at downloading previously cached build artifacts.
+// NoRemoteCache always returns NotFound for all packages since there is no remote cache.
+func (NoRemoteCache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) map[string]cache.DownloadResult {
+	results := make(map[string]cache.DownloadResult)
+	for _, pkg := range pkgs {
+		results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusNotFound}
+	}
+	return results
 }
 
 // Upload makes a best effort to upload the build artifacts to a remote cache

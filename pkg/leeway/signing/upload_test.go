@@ -51,8 +51,12 @@ func (m *mockRemoteCacheUpload) Upload(ctx context.Context, src cache.LocalCache
 	return nil
 }
 
-func (m *mockRemoteCacheUpload) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) error {
-	return nil
+func (m *mockRemoteCacheUpload) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) map[string]cache.DownloadResult {
+	results := make(map[string]cache.DownloadResult)
+	for _, pkg := range pkgs {
+		results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusNotFound}
+	}
+	return results
 }
 
 func (m *mockRemoteCacheUpload) ExistingPackages(ctx context.Context, pkgs []cache.Package) (map[cache.Package]struct{}, error) {

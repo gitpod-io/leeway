@@ -190,9 +190,9 @@ func GetPackagePath(pkg *leeway.Package, localCache cache.LocalCache) (packagePa
 				log.Infof("Package %s found in remote cache, downloading...", pkg.FullName())
 
 				// Download the package from the remote cache
-				err := remoteCache.Download(context.Background(), localCache, pkgsToCheck)
-				if err != nil {
-					log.WithError(err).Fatalf("Failed to download package %s from remote cache", pkg.FullName())
+				results := remoteCache.Download(context.Background(), localCache, pkgsToCheck)
+				if result, ok := results[pkg.FullName()]; ok && result.Status == cache.DownloadStatusFailed {
+					log.WithError(result.Err).Fatalf("Failed to download package %s from remote cache", pkg.FullName())
 				}
 
 				// Check if the download was successful

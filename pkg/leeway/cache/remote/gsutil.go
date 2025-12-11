@@ -90,9 +90,12 @@ func (rs *GSUtilCache) ExistingPackages(ctx context.Context, pkgs []cache.Packag
 	return existingPackages, nil
 }
 
-// Download makes a best-effort attempt at downloading previously cached build artifacts
-func (rs *GSUtilCache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) error {
+// Download makes a best-effort attempt at downloading previously cached build artifacts.
+// Returns detailed results for each package to enable smarter retry decisions.
+func (rs *GSUtilCache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) map[string]cache.DownloadResult {
+	results := make(map[string]cache.DownloadResult)
 	fmt.Printf("☁️  downloading %d cached build artifacts\n", len(pkgs))
+
 	var (
 		files []string
 		dest  string
@@ -108,17 +111,21 @@ func (rs *GSUtilCache) Download(ctx context.Context, dst cache.LocalCache, pkgs 
 	for _, pkg := range pkgs {
 		fn, exists := dst.Location(pkg)
 		if exists {
+			results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusSkipped}
 			continue
 		}
 		version, err := pkg.Version()
 		if err != nil {
 			log.WithError(err).WithField("package", pkg.FullName()).Warn("Failed to get version for package, skipping")
+			results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusFailed, Err: err}
 			continue
 		}
 		if dest == "" {
 			dest = filepath.Dir(fn)
 		} else if dest != filepath.Dir(fn) {
-			return fmt.Errorf("gsutil only supports one target folder, not %s and %s", dest, filepath.Dir(fn))
+			err := fmt.Errorf("gsutil only supports one target folder, not %s and %s", dest, filepath.Dir(fn))
+			results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusFailed, Err: err}
+			continue
 		}
 
 		pair := urlPair{
@@ -129,7 +136,7 @@ func (rs *GSUtilCache) Download(ctx context.Context, dst cache.LocalCache, pkgs 
 		urls = append(urls, pair.gzURL, pair.tarURL)
 	}
 	if len(urls) == 0 {
-		return nil
+		return results
 	}
 
 	args := append([]string{"stat"}, urls...)
@@ -142,21 +149,49 @@ func (rs *GSUtilCache) Download(ctx context.Context, dst cache.LocalCache, pkgs 
 	err := cmd.Run()
 	if err != nil && (!strings.Contains(stderrBuffer.String(), "No URLs matched")) {
 		log.Debugf("gsutil stat returned non-zero exit code: [%v], stderr: [%v]", err, stderrBuffer.String())
-		return fmt.Errorf("failed to check if files exist in remote cache: %w", err)
+		// Mark all pending packages as failed
+		for pkg := range packageToURLMap {
+			if _, exists := results[pkg.FullName()]; !exists {
+				results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusFailed, Err: err}
+			}
+		}
+		return results
 	}
 
 	existingURLs := parseGSUtilStatOutput(strings.NewReader(stdoutBuffer.String()))
-	for _, urls := range packageToURLMap {
+	packagesToDownload := make(map[cache.Package]bool)
+	for pkg, urls := range packageToURLMap {
 		if _, exists := existingURLs[urls.gzURL]; exists {
 			files = append(files, urls.gzURL)
+			packagesToDownload[pkg] = true
 			continue
 		}
 		if _, exists := existingURLs[urls.tarURL]; exists {
 			files = append(files, urls.tarURL)
+			packagesToDownload[pkg] = true
+			continue
+		}
+		// Package not found in remote cache
+		results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusNotFound}
+	}
+
+	if len(files) > 0 {
+		transferErr := gsutilTransfer(dest, files)
+		for pkg := range packagesToDownload {
+			if transferErr != nil {
+				results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusFailed, Err: transferErr}
+			} else {
+				// Verify the file was actually downloaded
+				if _, exists := dst.Location(pkg); exists {
+					results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusSuccess}
+				} else {
+					results[pkg.FullName()] = cache.DownloadResult{Status: cache.DownloadStatusFailed, Err: fmt.Errorf("file not found after transfer")}
+				}
+			}
 		}
 	}
 
-	return gsutilTransfer(dest, files)
+	return results
 }
 
 // Upload makes a best effort to upload the build artifacts to a remote cache
@@ -195,7 +230,7 @@ func (rs *GSUtilCache) UploadFile(ctx context.Context, filePath string, key stri
 // HasFile checks if a file exists in the remote cache with the given key
 func (rs *GSUtilCache) HasFile(ctx context.Context, key string) (bool, error) {
 	target := fmt.Sprintf("gs://%s/%s", rs.BucketName, key)
-	
+
 	cmd := exec.CommandContext(ctx, "gsutil", "stat", target)
 	if err := cmd.Run(); err != nil {
 		// gsutil stat returns non-zero exit code if file doesn't exist
@@ -209,7 +244,7 @@ func (rs *GSUtilCache) HasFile(ctx context.Context, key string) (bool, error) {
 		}
 		return false, fmt.Errorf("failed to check if file exists at %s: %w", target, err)
 	}
-	
+
 	return true, nil
 }
 
