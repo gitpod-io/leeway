@@ -389,73 +389,73 @@ func withRetry(maxRetries int, operation func() error) error {
 	return fmt.Errorf("operation failed after %d retries: %w", maxRetries, err)
 }
 
-// Download implements RemoteCache
-func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) error {
-	var multiErr []error
+// Download implements RemoteCache.
+// Returns detailed results for each package, enabling callers to distinguish between
+// transient failures (retry may help) and permanent failures (rebuild required).
+func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) map[string]cache.DownloadResult {
+	results := make(map[string]cache.DownloadResult)
+	var mu sync.Mutex
 
 	// Use higher worker count for downloads to maximize throughput
-	// TODO: Implement dependency-aware scheduling to prioritize critical path packages
-	err := s.processPackages(ctx, pkgs, s.downloadWorkerCount, func(ctx context.Context, p cache.Package) error {
-		version, err := p.Version()
-		if err != nil {
-			log.WithError(err).WithField("package", p.FullName()).Warn("Failed to get version for package, skipping")
-			return nil // Skip but don't fail everything
-		}
+	_ = s.processPackages(ctx, pkgs, s.downloadWorkerCount, func(ctx context.Context, p cache.Package) error {
+		result := s.downloadPackage(ctx, dst, p)
 
-		localPath, exists := dst.Location(p)
-		if exists {
-			log.WithField("package", p.FullName()).Debug("Package already exists in local cache, skipping download")
-			return nil
-		}
+		mu.Lock()
+		results[p.FullName()] = result
+		mu.Unlock()
 
-		if localPath == "" {
-			log.WithField("package", p.FullName()).Warn("Failed to get local path for package, skipping download")
-			return nil // Skip but don't fail everything
-		}
-
-		// Ensure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
-			log.WithError(err).WithFields(log.Fields{
-				"package": p.FullName(),
-				"dir":     filepath.Dir(localPath),
-			}).Warn("Failed to create directory for package, skipping download")
-			return nil
-		}
-
-		// Branch based on SLSA verification configuration
-		if s.slsaVerifier != nil {
-			return s.downloadWithSLSAVerification(ctx, p, version, localPath)
-		} else {
-			return s.downloadOriginal(ctx, p, version, localPath)
-		}
+		return nil // Never fail the batch - results are tracked individually
 	})
 
+	return results
+}
+
+// downloadPackage downloads a single package and returns detailed status
+func (s *S3Cache) downloadPackage(ctx context.Context, dst cache.LocalCache, p cache.Package) cache.DownloadResult {
+	version, err := p.Version()
 	if err != nil {
-		log.WithError(err).Warn("Errors occurred during download from remote cache, continuing with local builds")
-		multiErr = append(multiErr, err)
+		log.WithError(err).WithField("package", p.FullName()).Warn("Failed to get version for package, skipping")
+		return cache.DownloadResult{Status: cache.DownloadStatusFailed, Err: err}
 	}
 
-	// Even if there were errors with some packages, don't fail the entire build
-	// Just log warnings and continue with local builds for those packages
-	if len(multiErr) > 0 {
-		log.WithField("errors", len(multiErr)).Warn("Some packages could not be downloaded, falling back to local builds")
-		// Return nil instead of the error to allow the build to continue with local builds
-		return nil
+	localPath, exists := dst.Location(p)
+	if exists {
+		log.WithField("package", p.FullName()).Debug("Package already exists in local cache, skipping download")
+		return cache.DownloadResult{Status: cache.DownloadStatusSkipped}
 	}
 
-	return nil
+	if localPath == "" {
+		err := fmt.Errorf("failed to get local path for package")
+		log.WithField("package", p.FullName()).Warn("Failed to get local path for package, skipping download")
+		return cache.DownloadResult{Status: cache.DownloadStatusFailed, Err: err}
+	}
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"package": p.FullName(),
+			"dir":     filepath.Dir(localPath),
+		}).Warn("Failed to create directory for package, skipping download")
+		return cache.DownloadResult{Status: cache.DownloadStatusFailed, Err: err}
+	}
+
+	// Branch based on SLSA verification configuration
+	if s.slsaVerifier != nil {
+		return s.downloadWithSLSAVerificationResult(ctx, p, version, localPath)
+	}
+	return s.downloadOriginalResult(ctx, p, version, localPath)
 }
 
 // downloadOriginal preserves the original download behavior when SLSA verification is disabled
-func (s *S3Cache) downloadOriginal(ctx context.Context, p cache.Package, version, localPath string) error {
+// downloadOriginalResult downloads without SLSA verification and returns detailed status
+func (s *S3Cache) downloadOriginalResult(ctx context.Context, p cache.Package, version, localPath string) cache.DownloadResult {
 	// Try downloading .tar.gz first with retry
 	gzKey := fmt.Sprintf("%s.tar.gz", version)
+	gzNotFound := false
 	gzErr := withRetry(3, func() error {
-		// Wait for rate limiter permission
 		if err := s.waitForRateLimit(ctx); err != nil {
 			return err
 		}
-
 		timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 		_, err := s.storage.GetObject(timeoutCtx, gzKey, localPath)
@@ -468,11 +468,12 @@ func (s *S3Cache) downloadOriginal(ctx context.Context, p cache.Package, version
 			"key":     gzKey,
 			"path":    localPath,
 		}).Debug("Successfully downloaded package from remote cache (.tar.gz)")
-		return nil
+		return cache.DownloadResult{Status: cache.DownloadStatusSuccess}
 	}
 
 	// Check if this is a "not found" error
 	if strings.Contains(gzErr.Error(), "NotFound") || strings.Contains(gzErr.Error(), "404") {
+		gzNotFound = true
 		log.WithFields(log.Fields{
 			"package": p.FullName(),
 			"key":     gzKey,
@@ -488,41 +489,41 @@ func (s *S3Cache) downloadOriginal(ctx context.Context, p cache.Package, version
 	// Try .tar if .tar.gz fails, also with retry
 	tarKey := fmt.Sprintf("%s.tar", version)
 	tarErr := withRetry(3, func() error {
-		// Wait for rate limiter permission
 		if err := s.waitForRateLimit(ctx); err != nil {
 			return err
 		}
-
 		timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 		_, err := s.storage.GetObject(timeoutCtx, tarKey, localPath)
 		return err
 	})
 
-	if tarErr != nil {
-		// Check if this is a "not found" error
-		if strings.Contains(tarErr.Error(), "NotFound") || strings.Contains(tarErr.Error(), "404") {
-			log.WithFields(log.Fields{
-				"package": p.FullName(),
-				"key":     tarKey,
-			}).Debug("Package not found in remote cache (.tar), will build locally")
-			return nil // Not an error, just not found
-		}
-
+	if tarErr == nil {
 		log.WithFields(log.Fields{
 			"package": p.FullName(),
 			"key":     tarKey,
-			"error":   tarErr,
-		}).Debug("Failed to download package from remote cache, will build locally")
-		return nil // Continue with local build
+			"path":    localPath,
+		}).Debug("Successfully downloaded package from remote cache (.tar)")
+		return cache.DownloadResult{Status: cache.DownloadStatusSuccess}
 	}
 
+	// Determine if this was a "not found" or a transient failure
+	tarNotFound := strings.Contains(tarErr.Error(), "NotFound") || strings.Contains(tarErr.Error(), "404")
+
+	if gzNotFound && tarNotFound {
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+		}).Debug("Package not found in remote cache, will build locally")
+		return cache.DownloadResult{Status: cache.DownloadStatusNotFound}
+	}
+
+	// At least one attempt failed with a non-404 error - this is a transient failure
 	log.WithFields(log.Fields{
 		"package": p.FullName(),
-		"key":     tarKey,
-		"path":    localPath,
-	}).Debug("Successfully downloaded package from remote cache (.tar)")
-	return nil
+		"gzErr":   gzErr,
+		"tarErr":  tarErr,
+	}).Debug("Failed to download package from remote cache (transient failure)")
+	return cache.DownloadResult{Status: cache.DownloadStatusFailed, Err: tarErr}
 }
 
 // downloadWithSLSAVerification downloads and verifies artifacts using SLSA attestations.
@@ -702,6 +703,27 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 	// This behavior is critical when RequireAttestation=true and no attestations are found.
 	// The cache system is designed to gracefully degrade to local builds rather than fail.
 	return nil
+}
+
+// downloadWithSLSAVerificationResult wraps downloadWithSLSAVerification to return detailed status
+func (s *S3Cache) downloadWithSLSAVerificationResult(ctx context.Context, p cache.Package, version, localPath string) cache.DownloadResult {
+	err := s.downloadWithSLSAVerification(ctx, p, version, localPath)
+	if err == nil {
+		// Check if file was actually downloaded
+		if _, statErr := os.Stat(localPath); statErr == nil {
+			return cache.DownloadResult{Status: cache.DownloadStatusSuccess}
+		}
+		// No error but no file - means not found
+		return cache.DownloadResult{Status: cache.DownloadStatusNotFound}
+	}
+
+	// Check if it's a verification failure
+	if _, ok := err.(VerificationFailedError); ok {
+		return cache.DownloadResult{Status: cache.DownloadStatusVerificationFailed, Err: err}
+	}
+
+	// Other errors are transient failures
+	return cache.DownloadResult{Status: cache.DownloadStatusFailed, Err: err}
 }
 
 // checkBothExist checks if both artifact and attestation exist in parallel
@@ -1327,7 +1349,7 @@ func fileExists(filename string) bool {
 // and are needed for dependency provenance collection during local builds.
 func (s *S3Cache) uploadProvenanceBundle(ctx context.Context, packageName, artifactKey, localPath string) {
 	provenancePath := localPath + ".provenance.jsonl"
-	
+
 	// Check if provenance file exists
 	if !fileExists(provenancePath) {
 		log.WithFields(log.Fields{

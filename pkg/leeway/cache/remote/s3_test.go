@@ -340,16 +340,25 @@ func TestS3Cache_Download(t *testing.T) {
 				semaphore:           make(chan struct{}, maxConcurrentOperations),
 			}
 
-			err := s3Cache.Download(ctx, tt.localCache, tt.packages)
+			results := s3Cache.Download(ctx, tt.localCache, tt.packages)
 			if tt.expectError {
-				if err == nil {
+				// Check if any result has a failure status
+				hasFailure := false
+				for _, result := range results {
+					if result.Status == cache.DownloadStatusFailed || result.Status == cache.DownloadStatusVerificationFailed {
+						hasFailure = true
+						break
+					}
+				}
+				if !hasFailure {
 					t.Error("expected error but got none")
 				}
 				return
 			}
 
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+			// Check that we got results for all packages
+			if len(results) != len(tt.packages) {
+				t.Errorf("expected %d results, got %d", len(tt.packages), len(results))
 				return
 			}
 
