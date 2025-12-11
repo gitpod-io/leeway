@@ -248,6 +248,8 @@ func (p *Package) GetDependencies() []*Package {
 }
 
 // GetTransitiveDependencies returns all transitive dependencies of a package.
+// The returned slice is sorted by FullName() to ensure deterministic ordering,
+// which is required for reproducible builds (e.g., go.work file generation).
 func (p *Package) GetTransitiveDependencies() []*Package {
 	idx := make(map[string]*Package)
 	queue := []*Package{p}
@@ -263,15 +265,20 @@ func (p *Package) GetTransitiveDependencies() []*Package {
 		queue = append(queue, dep.dependencies...)
 	}
 
-	res := make([]*Package, len(idx)-1)
-	i := 0
-	for _, k := range idx {
-		// don't include the package itself in the list of transitive dependencies
-		if k == p {
-			continue
+	// Collect keys and sort them for deterministic iteration order.
+	// Map iteration in Go is non-deterministic, which would cause
+	// non-reproducible builds (different go.work content, different checksums).
+	keys := make([]string, 0, len(idx)-1)
+	for k := range idx {
+		if k != p.FullName() {
+			keys = append(keys, k)
 		}
-		res[i] = k
-		i++
+	}
+	sort.Strings(keys)
+
+	res := make([]*Package, len(keys))
+	for i, k := range keys {
+		res[i] = idx[k]
 	}
 	return res
 }
