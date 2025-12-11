@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,16 +30,26 @@ const (
 	// defaultS3PartSize is the default part size for S3 multipart operations
 	defaultS3PartSize = 5 * 1024 * 1024
 	// defaultWorkerCount is the default number of concurrent workers for general operations
+	// (existence checks, uploads). Can be overridden via LEEWAY_S3_WORKER_COUNT.
 	defaultWorkerCount = 10
 	// defaultDownloadWorkerCount is the number of concurrent workers for download operations
-	// Higher than default to maximize download throughput
+	// Higher than default to maximize download throughput.
+	// Can be overridden via LEEWAY_S3_DOWNLOAD_WORKERS environment variable.
 	defaultDownloadWorkerCount = 30
 	// defaultRateLimit is the default rate limit for S3 API calls (requests per second)
+	// Can be overridden via LEEWAY_S3_RATE_LIMIT environment variable.
 	defaultRateLimit = 100
 	// defaultBurstLimit is the default burst limit for S3 API calls
+	// Can be overridden via LEEWAY_S3_BURST_LIMIT environment variable.
 	defaultBurstLimit = 200
 	// maxConcurrentOperations is the maximum number of concurrent goroutines for parallel operations
 	maxConcurrentOperations = 50
+
+	// Environment variable names for S3 cache tuning
+	envvarS3WorkerCount     = "LEEWAY_S3_WORKER_COUNT"
+	envvarS3DownloadWorkers = "LEEWAY_S3_DOWNLOAD_WORKERS"
+	envvarS3RateLimit       = "LEEWAY_S3_RATE_LIMIT"
+	envvarS3BurstLimit      = "LEEWAY_S3_BURST_LIMIT"
 )
 
 // downloadResult represents the result of a download operation with proper error attribution
@@ -77,6 +88,16 @@ type S3Cache struct {
 	semaphore           chan struct{} // Semaphore for limiting concurrent operations
 }
 
+// getEnvInt reads an integer from an environment variable, returning the default if not set or invalid
+func getEnvInt(envvar string, defaultVal int) int {
+	if v := os.Getenv(envvar); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return defaultVal
+}
+
 // NewS3Cache creates a new S3 cache implementation
 func NewS3Cache(cfg *cache.RemoteConfig) (*S3Cache, error) {
 	if cfg.BucketName == "" {
@@ -104,8 +125,24 @@ func NewS3Cache(cfg *cache.RemoteConfig) (*S3Cache, error) {
 		}).Debug("SLSA verification enabled for cache")
 	}
 
-	// Initialize rate limiter with default limits
-	rateLimiter := rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit)
+	// Read tuning parameters from environment variables (with defaults)
+	workerCount := getEnvInt(envvarS3WorkerCount, defaultWorkerCount)
+	downloadWorkers := getEnvInt(envvarS3DownloadWorkers, defaultDownloadWorkerCount)
+	rateLimit := getEnvInt(envvarS3RateLimit, defaultRateLimit)
+	burstLimit := getEnvInt(envvarS3BurstLimit, defaultBurstLimit)
+
+	// Log if non-default values are used
+	if workerCount != defaultWorkerCount || downloadWorkers != defaultDownloadWorkerCount || rateLimit != defaultRateLimit || burstLimit != defaultBurstLimit {
+		log.WithFields(log.Fields{
+			"workerCount":     workerCount,
+			"downloadWorkers": downloadWorkers,
+			"rateLimit":       rateLimit,
+			"burstLimit":      burstLimit,
+		}).Debug("S3 cache using custom tuning parameters")
+	}
+
+	// Initialize rate limiter
+	rateLimiter := rate.NewLimiter(rate.Limit(rateLimit), burstLimit)
 
 	// Initialize semaphore for goroutine limiting
 	semaphore := make(chan struct{}, maxConcurrentOperations)
@@ -113,8 +150,8 @@ func NewS3Cache(cfg *cache.RemoteConfig) (*S3Cache, error) {
 	return &S3Cache{
 		storage:             storage,
 		cfg:                 cfg,
-		workerCount:         defaultWorkerCount,
-		downloadWorkerCount: defaultDownloadWorkerCount,
+		workerCount:         workerCount,
+		downloadWorkerCount: downloadWorkers,
 		slsaVerifier:        slsaVerifier,
 		rateLimiter:         rateLimiter,
 		semaphore:           semaphore,
