@@ -2995,3 +2995,144 @@ console.log('Test passed:', result);`
 	t.Logf("Cache artifact created at: %s", cachePath)
 	t.Log("✅ Yarn scoped package link: dependency integration test passed")
 }
+
+// TestGetTransitiveDependenciesIsDeterministic verifies that GetTransitiveDependencies
+// returns dependencies in a deterministic order across multiple calls.
+//
+// This is critical for reproducible builds because the order affects:
+// - go.work file content (go work use commands are executed in dependency order)
+// - tar archive content (files may be processed in dependency order)
+// - Checksum computation (different order = different checksum)
+//
+// The bug: GetTransitiveDependencies iterates over a map, which has non-deterministic
+// iteration order in Go. This causes the same package to produce different checksums
+// when built on different machines or at different times.
+func TestGetTransitiveDependenciesIsDeterministic(t *testing.T) {
+	// Create a package with multiple dependencies to increase chance of detecting non-determinism
+	// With map iteration, the order varies based on map's internal hash table state
+
+	depA := &Package{fullNameOverride: "test:depA", dependencies: []*Package{}}
+	depB := &Package{fullNameOverride: "test:depB", dependencies: []*Package{}}
+	depC := &Package{fullNameOverride: "test:depC", dependencies: []*Package{}}
+	depD := &Package{fullNameOverride: "test:depD", dependencies: []*Package{}}
+	depE := &Package{fullNameOverride: "test:depE", dependencies: []*Package{}}
+
+	// Main package depends on all of them
+	mainPkg := &Package{
+		fullNameOverride: "test:main",
+		dependencies:     []*Package{depA, depB, depC, depD, depE},
+	}
+
+	// Call GetTransitiveDependencies multiple times and verify order is consistent
+	// Run many iterations because map order non-determinism may not manifest every time
+	var firstOrder []string
+	for i := 0; i < 100; i++ {
+		deps := mainPkg.GetTransitiveDependencies()
+
+		var order []string
+		for _, d := range deps {
+			order = append(order, d.FullName())
+		}
+
+		if i == 0 {
+			firstOrder = order
+			t.Logf("First order: %v", firstOrder)
+		} else {
+			// Compare with first order
+			if len(order) != len(firstOrder) {
+				t.Fatalf("iteration %d: got %d deps, want %d", i, len(order), len(firstOrder))
+			}
+			for j := range order {
+				if order[j] != firstOrder[j] {
+					t.Errorf("iteration %d: non-deterministic order detected!\n  first:   %v\n  current: %v", i, firstOrder, order)
+					return // Stop on first failure to avoid spam
+				}
+			}
+		}
+	}
+}
+
+// TestGetTransitiveDependenciesDeepGraphIsDeterministic tests with a deeper dependency graph
+// to increase the likelihood of detecting non-determinism in the BFS traversal.
+func TestGetTransitiveDependenciesDeepGraphIsDeterministic(t *testing.T) {
+	// Create a diamond dependency pattern:
+	//       main
+	//      /    \
+	//     A      B
+	//      \    /
+	//        C
+	//        |
+	//        D
+
+	depD := &Package{fullNameOverride: "test:depD", dependencies: []*Package{}}
+	depC := &Package{fullNameOverride: "test:depC", dependencies: []*Package{depD}}
+	depA := &Package{fullNameOverride: "test:depA", dependencies: []*Package{depC}}
+	depB := &Package{fullNameOverride: "test:depB", dependencies: []*Package{depC}}
+
+	mainPkg := &Package{
+		fullNameOverride: "test:main",
+		dependencies:     []*Package{depA, depB},
+	}
+
+	var firstOrder []string
+	for i := 0; i < 100; i++ {
+		deps := mainPkg.GetTransitiveDependencies()
+
+		var order []string
+		for _, d := range deps {
+			order = append(order, d.FullName())
+		}
+
+		if i == 0 {
+			firstOrder = order
+			t.Logf("First order: %v", firstOrder)
+		} else {
+			for j := range order {
+				if order[j] != firstOrder[j] {
+					t.Errorf("iteration %d: non-deterministic order detected!\n  first:   %v\n  current: %v", i, firstOrder, order)
+					return
+				}
+			}
+		}
+	}
+}
+
+// TestGetTransitiveDependenciesManyDepsIsDeterministic uses many dependencies
+// to maximize the chance of detecting map iteration non-determinism.
+func TestGetTransitiveDependenciesManyDepsIsDeterministic(t *testing.T) {
+	// Create 20 dependencies - more deps = higher chance of detecting non-determinism
+	var deps []*Package
+	for i := 0; i < 20; i++ {
+		deps = append(deps, &Package{
+			fullNameOverride: "test:dep" + string(rune('A'+i)),
+			dependencies:     []*Package{},
+		})
+	}
+
+	mainPkg := &Package{
+		fullNameOverride: "test:main",
+		dependencies:     deps,
+	}
+
+	var firstOrder []string
+	for i := 0; i < 100; i++ {
+		result := mainPkg.GetTransitiveDependencies()
+
+		var order []string
+		for _, d := range result {
+			order = append(order, d.FullName())
+		}
+
+		if i == 0 {
+			firstOrder = order
+			t.Logf("First order (%d deps): %v", len(firstOrder), firstOrder)
+		} else {
+			for j := range order {
+				if order[j] != firstOrder[j] {
+					t.Errorf("iteration %d: non-deterministic order detected!\n  first:   %v\n  current: %v", i, firstOrder, order)
+					return
+				}
+			}
+		}
+	}
+}
