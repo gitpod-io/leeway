@@ -2287,7 +2287,7 @@ func TestDependencyValidation_AfterDownload_Integration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create package B (leaf dependency)
+	// Create package B (leaf dependency) - generic package
 	pkgBDir := filepath.Join(tmpDir, "pkgB")
 	if err := os.MkdirAll(pkgBDir, 0755); err != nil {
 		t.Fatal(err)
@@ -2307,48 +2307,82 @@ func TestDependencyValidation_AfterDownload_Integration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create package A (depends on B)
+	// Create package A (depends on B) - Go package to test transitive dependency validation
+	// Go packages use GetTransitiveDependencies() in validateDependenciesAvailable()
 	pkgADir := filepath.Join(tmpDir, "pkgA")
 	if err := os.MkdirAll(pkgADir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	buildYAMLA := `packages:
 - name: lib
-  type: generic
+  type: go
   srcs:
-  - "*.txt"
+  - "*.go"
+  - go.mod
   deps:
   - pkgB:lib
   config:
-    commands:
-    - ["echo", "building A"]`
+    packaging: library
+    dontLint: true
+    dontTest: true`
 	if err := os.WriteFile(filepath.Join(pkgADir, "BUILD.yaml"), []byte(buildYAMLA), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(pkgADir, "a.txt"), []byte("A content"), 0644); err != nil {
+	// Create go.mod for the package
+	goModA := `module example.com/pkgA
+
+go 1.21
+`
+	if err := os.WriteFile(filepath.Join(pkgADir, "go.mod"), []byte(goModA), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Create a minimal Go file for the package
+	goFileA := `package pkgA
+
+func Hello() string {
+	return "Hello from A"
+}
+`
+	if err := os.WriteFile(filepath.Join(pkgADir, "a.go"), []byte(goFileA), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create package X (depends on A) - using Go type to require transitive deps
+	// Create package X (depends on A) - Go package to test transitive dependency validation
 	pkgXDir := filepath.Join(tmpDir, "pkgX")
 	if err := os.MkdirAll(pkgXDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	// Use generic type but the validation logic should still work
 	buildYAMLX := `packages:
 - name: app
-  type: generic
+  type: go
   srcs:
-  - "*.txt"
+  - "*.go"
+  - go.mod
   deps:
   - pkgA:lib
   config:
-    commands:
-    - ["echo", "building X"]`
+    packaging: app
+    dontLint: true
+    dontTest: true`
 	if err := os.WriteFile(filepath.Join(pkgXDir, "BUILD.yaml"), []byte(buildYAMLX), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(pkgXDir, "x.txt"), []byte("X content"), 0644); err != nil {
+	// Create go.mod for the package
+	goModX := `module example.com/pkgX
+
+go 1.21
+`
+	if err := os.WriteFile(filepath.Join(pkgXDir, "go.mod"), []byte(goModX), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Create a minimal Go file for the package
+	goFileX := `package main
+
+func main() {
+	println("Hello from X")
+}
+`
+	if err := os.WriteFile(filepath.Join(pkgXDir, "main.go"), []byte(goFileX), 0644); err != nil {
 		t.Fatal(err)
 	}
 
