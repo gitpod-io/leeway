@@ -2,6 +2,7 @@ package leeway
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -162,6 +163,59 @@ func TestBuildTarCommand_MtimeWithOtherOptions(t *testing.T) {
 		if !strings.Contains(cmdStr, elem) {
 			t.Errorf("BuildTarCommand() missing expected element: %s\nFull command: %s", elem, cmdStr)
 		}
+	}
+}
+
+func TestBuildTarCommand_SortFlag(t *testing.T) {
+	// Test that --sort=name flag is included for deterministic tar archives.
+	// Without this flag, file order in the archive depends on filesystem
+	// directory listing order, which can vary between systems/runs.
+	cmd := BuildTarCommand(
+		WithOutputFile("test.tar.gz"),
+		WithMtime(1234567890),
+	)
+
+	cmdStr := strings.Join(cmd, " ")
+
+	// On Linux, we expect --sort=name for deterministic output
+	if runtime.GOOS == "linux" {
+		if !strings.Contains(cmdStr, "--sort=name") {
+			t.Errorf("BuildTarCommand() missing --sort=name flag for deterministic archives\nFull command: %s", cmdStr)
+		}
+	}
+}
+
+func TestBuildTarCommand_SortFlagPosition(t *testing.T) {
+	// Test that --sort=name flag appears before -cf flag (with other flags)
+	if runtime.GOOS != "linux" {
+		t.Skip("--sort flag is Linux-specific")
+	}
+
+	cmd := BuildTarCommand(
+		WithOutputFile("test.tar.gz"),
+		WithMtime(1234567890),
+	)
+
+	sortIdx := -1
+	cfIdx := -1
+
+	for i, arg := range cmd {
+		if arg == "--sort=name" {
+			sortIdx = i
+		}
+		if arg == "-cf" {
+			cfIdx = i
+		}
+	}
+
+	if sortIdx == -1 {
+		t.Error("BuildTarCommand() missing --sort=name flag")
+	}
+	if cfIdx == -1 {
+		t.Error("BuildTarCommand() missing -cf flag")
+	}
+	if sortIdx >= cfIdx {
+		t.Errorf("BuildTarCommand() --sort=name flag at index %d should appear before -cf at index %d", sortIdx, cfIdx)
 	}
 }
 
