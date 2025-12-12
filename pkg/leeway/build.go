@@ -2124,7 +2124,8 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	if len(cfg.BuildCommand) > 0 {
 		buildCmd = cfg.BuildCommand
 	} else if cfg.Packaging == GoApp {
-		buildCmd = []string{goCommand, "build"}
+		// Use -trimpath for reproducible builds: removes absolute file paths from the binary
+		buildCmd = []string{goCommand, "build", "-trimpath"}
 		buildCmd = append(buildCmd, cfg.BuildFlags...)
 		buildCmd = append(buildCmd, ".")
 	}
