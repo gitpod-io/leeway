@@ -193,6 +193,10 @@ func BuildTarCommand(options ...func(*TarOptions)) []string {
 	// Add Linux-specific optimizations
 	if runtime.GOOS == "linux" {
 		cmd = append(cmd, "--sparse")
+		// Sort files by name for deterministic archive order.
+		// Without this, file order depends on filesystem directory listing,
+		// which can vary between systems/runs, causing different checksums.
+		cmd = append(cmd, "--sort=name")
 	}
 
 	// Add deterministic mtime if specified
