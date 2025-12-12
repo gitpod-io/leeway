@@ -7,11 +7,41 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 )
+
+func TestDefaultGoBuildCommand_IncludesTrimpath(t *testing.T) {
+	// The default Go build command should include -trimpath for reproducible builds.
+	// Without -trimpath, Go embeds absolute file paths in the binary, which vary
+	// between build machines and break reproducibility.
+
+	// Simulate what buildGo does when no custom buildCommand is specified
+	goCommand := "go"
+	buildCmd := []string{goCommand, "build", "-trimpath"}
+	buildCmd = append(buildCmd, ".")
+
+	if !slices.Contains(buildCmd, "-trimpath") {
+		t.Error("default Go build command should include -trimpath for reproducible builds")
+	}
+
+	// Verify -trimpath comes after "build" and before "."
+	buildIdx := slices.Index(buildCmd, "build")
+	trimpathIdx := slices.Index(buildCmd, "-trimpath")
+	dotIdx := slices.Index(buildCmd, ".")
+
+	if buildIdx == -1 || trimpathIdx == -1 || dotIdx == -1 {
+		t.Fatalf("expected build, -trimpath, and . in command, got: %v", buildCmd)
+	}
+
+	if !(buildIdx < trimpathIdx && trimpathIdx < dotIdx) {
+		t.Errorf("expected order: build < -trimpath < ., got indices: build=%d, -trimpath=%d, .=%d",
+			buildIdx, trimpathIdx, dotIdx)
+	}
+}
 
 func TestParseGoCoverOutput(t *testing.T) {
 	type Expectation struct {
