@@ -1215,13 +1215,6 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		}
 	}
 
-	// Generate SBOM if enabled (before packaging)
-	if p.C.W.SBOM.Enabled {
-		if err := writeSBOM(buildctx, p, builddir); err != nil {
-			return err
-		}
-	}
-
 	// Handle test coverage if available (before packaging - needs _deps)
 	if bld.TestCoverage != nil {
 		coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
@@ -1252,6 +1245,14 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	// Handle provenance subjects (after packaging - artifact now exists)
 	if p.C.W.Provenance.Enabled {
 		if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
+			return err
+		}
+	}
+
+	// Generate SBOM if enabled (after packaging - written alongside artifact)
+	// SBOM files are stored outside the tar.gz to maintain artifact determinism.
+	if p.C.W.SBOM.Enabled {
+		if err := writeSBOMToCache(buildctx, p, builddir); err != nil {
 			return err
 		}
 	}
@@ -1813,12 +1814,8 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		}
 		packageJSONFiles = append(packageJSONFiles, pkgYarnLock)
 		// Note: provenance bundle is written alongside the artifact as <artifact>.provenance.jsonl
-		// (outside tar.gz) to maintain artifact determinism
-		if p.C.W.SBOM.Enabled {
-			packageJSONFiles = append(packageJSONFiles, sbomBaseFilename+sbomCycloneDXFileExtension)
-			packageJSONFiles = append(packageJSONFiles, sbomBaseFilename+sbomSPDXFileExtension)
-			packageJSONFiles = append(packageJSONFiles, sbomBaseFilename+sbomSyftFileExtension)
-		}
+		// (outside tar.gz) to maintain artifact determinism.
+		// Note: SBOM files are also written alongside the artifact (outside tar.gz) for determinism.
 		packageJSON["files"] = packageJSONFiles
 
 		modifiedPackageJSON = true
@@ -1912,7 +1909,7 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		pkgCommands = append(pkgCommands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://./%s > _mirror/content_yarn.lock", dst)},
 			{"sh", "-c", "cat yarn.lock >> _mirror/content_yarn.lock"},
-			{"sh", "-c", fmt.Sprintf("find . -name '%s*.json' -exec cp {} ./_mirror/ \\;", sbomBaseFilename)},
+			// Note: SBOM files are written alongside the artifact (outside tar.gz) for determinism
 			{"yarn", "pack", "--filename", dst},
 			BuildTarCommand(
 				WithOutputFile(result),
@@ -2483,12 +2480,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		// Add a diagnostic command to generate a manifest of what we're packaging
 		pkgcmds = append(pkgcmds, []string{"sh", "-c", fmt.Sprintf("find %s -type f | sort > %s/files-manifest.txt", containerDir, containerDir)})
 
+		// Note: SBOM files are written alongside the artifact (outside tar.gz) for determinism
 		sourcePaths := []string{"."}
-		if p.C.W.SBOM.Enabled {
-			sourcePaths = append(sourcePaths, fmt.Sprintf("../%s", sbomBaseFilename+sbomCycloneDXFileExtension))
-			sourcePaths = append(sourcePaths, fmt.Sprintf("../%s", sbomBaseFilename+sbomSPDXFileExtension))
-			sourcePaths = append(sourcePaths, fmt.Sprintf("../%s", sbomBaseFilename+sbomSyftFileExtension))
-		}
 
 		// Create final tar with container files and metadata
 		pkgcmds = append(pkgcmds, BuildTarCommand(
@@ -2531,13 +2524,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		pkgCommands = append(pkgCommands, []string{"sh", "-c", fmt.Sprintf("echo %s | base64 -d > %s", encodedMetadata, dockerMetadataFile)})
 
 		// Prepare for packaging
+		// Note: SBOM files are written alongside the artifact (outside tar.gz) for determinism
 		sourcePaths := []string{fmt.Sprintf("./%s", dockerImageNamesFiles), fmt.Sprintf("./%s", dockerMetadataFile)}
-
-		if p.C.W.SBOM.Enabled {
-			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomBaseFilename+sbomCycloneDXFileExtension))
-			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomBaseFilename+sbomSPDXFileExtension))
-			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomBaseFilename+sbomSyftFileExtension))
-		}
 
 		archiveCmd := BuildTarCommand(
 			WithOutputFile(result),
@@ -2583,17 +2571,10 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		}
 
 		// Package everything into final tar.gz
+		// Note: SBOM files are written alongside the artifact (outside tar.gz) for determinism
 		sourcePaths := []string{"./image.tar", fmt.Sprintf("./%s", dockerImageNamesFiles), "./docker-export-metadata.json"}
 		if len(cfg.Metadata) > 0 {
 			sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", dockerMetadataFile))
-		}
-
-		if p.C.W.SBOM.Enabled {
-			sourcePaths = append(sourcePaths,
-				fmt.Sprintf("./%s", sbomBaseFilename+sbomCycloneDXFileExtension),
-				fmt.Sprintf("./%s", sbomBaseFilename+sbomSPDXFileExtension),
-				fmt.Sprintf("./%s", sbomBaseFilename+sbomSyftFileExtension),
-			)
 		}
 
 		archiveCmd := BuildTarCommand(
@@ -2970,31 +2951,14 @@ func (p *Package) buildGeneric(buildctx *buildContext, wd, result string) (res *
 		}
 
 		// Use buildTarCommand directly which will handle compression internally
+		// Note: SBOM files are written alongside the artifact (outside tar.gz) for determinism
 		var tarCmd []string
-		if p.C.W.SBOM.Enabled {
-			var sourcePaths []string
-
-			if p.C.W.SBOM.Enabled {
-				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomBaseFilename+sbomCycloneDXFileExtension))
-				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomBaseFilename+sbomSPDXFileExtension))
-				sourcePaths = append(sourcePaths, fmt.Sprintf("./%s", sbomBaseFilename+sbomSyftFileExtension))
-			}
-
+		if len(commands) > 0 {
 			tarCmd = BuildTarCommand(
 				WithOutputFile(result),
-				WithSourcePaths(sourcePaths...),
 				WithCompression(!buildctx.DontCompress),
 				WithMtime(mtime),
 			)
-			return &packageBuild{
-				Commands: map[PackageBuildPhase][][]string{
-					PackageBuildPhaseBuild:   commands,
-					PackageBuildPhasePackage: {tarCmd},
-				},
-			}, nil
-		}
-
-		if len(commands) > 0 {
 			return &packageBuild{
 				Commands: map[PackageBuildPhase][][]string{
 					PackageBuildPhaseBuild:   commands,
