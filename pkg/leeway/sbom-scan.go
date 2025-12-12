@@ -129,6 +129,20 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 
 		if err != nil {
 			if err == ErrNoSBOMFile {
+				// For downloaded packages, missing SBOM is expected for older cache artifacts
+				// that were built before SBOM support was added (v0.16.0+).
+				// Skip gracefully instead of failing the build.
+				//
+				// NOTE: To ensure full vulnerability scanning coverage, rebuild packages
+				// with a leeway version that supports SBOM generation, or clear the remote
+				// cache to force rebuilds.
+				if status == PackageDownloaded {
+					buildctx.Reporter.PackageBuildLog(p, false, []byte(fmt.Sprintf(
+						"Skipping vulnerability scan for package %s: SBOM not found in cached artifact (built before SBOM support)\n",
+						p.FullName())))
+					continue
+				}
+				// For locally built packages, missing SBOM is an error
 				errMsg := fmt.Sprintf("SBOM file not found in package archive for package %s", p.FullName())
 				buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
 				return xerrors.Errorf(errMsg)
