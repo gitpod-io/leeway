@@ -840,6 +840,20 @@ func (p *Package) resolveBuiltinVariables() error {
 		}
 	}
 
+	// Resolve builtin variables in PackageInternal (prep, env, etc.)
+	pifc, err := yaml.Marshal(p.PackageInternal)
+	if err != nil {
+		return err
+	}
+	pifc = replaceBuildArguments(pifc, builtinArgs)
+	var pi PackageInternal
+	err = yaml.Unmarshal(pifc, &pi)
+	if err != nil {
+		return err
+	}
+	p.PackageInternal = pi
+
+	// Resolve builtin variables in Config
 	type configOnlyHelper struct {
 		Config PackageConfig `yaml:"config"`
 	}
