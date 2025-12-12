@@ -505,6 +505,13 @@ func (s *S3Cache) downloadOriginalResult(ctx context.Context, p cache.Package, v
 			"key":     gzKey,
 			"path":    localPath,
 		}).Debug("Successfully downloaded package from remote cache (.tar.gz)")
+
+		// Download provenance bundle if it exists (best effort, non-blocking)
+		s.downloadProvenanceBundle(ctx, p.FullName(), gzKey, localPath)
+
+		// Download SBOM files if they exist (best effort, non-blocking)
+		s.downloadSBOMFiles(ctx, p.FullName(), gzKey, localPath)
+
 		return cache.DownloadResult{Status: cache.DownloadStatusSuccess}
 	}
 
@@ -541,6 +548,13 @@ func (s *S3Cache) downloadOriginalResult(ctx context.Context, p cache.Package, v
 			"key":     tarKey,
 			"path":    localPath,
 		}).Debug("Successfully downloaded package from remote cache (.tar)")
+
+		// Download provenance bundle if it exists (best effort, non-blocking)
+		s.downloadProvenanceBundle(ctx, p.FullName(), tarKey, localPath)
+
+		// Download SBOM files if they exist (best effort, non-blocking)
+		s.downloadSBOMFiles(ctx, p.FullName(), tarKey, localPath)
+
 		return cache.DownloadResult{Status: cache.DownloadStatusSuccess}
 	}
 
@@ -700,6 +714,9 @@ func (s *S3Cache) downloadWithSLSAVerification(ctx context.Context, p cache.Pack
 
 		// Step 6: Download provenance bundle if it exists (best effort, non-blocking)
 		s.downloadProvenanceBundle(ctx, p.FullName(), artifactKey, localPath)
+
+		// Step 7: Download SBOM files if they exist (best effort, non-blocking)
+		s.downloadSBOMFiles(ctx, p.FullName(), artifactKey, localPath)
 
 		// Clean up temporary attestation file
 		s.cleanupTempFiles(tmpAttestationPath)
@@ -1115,6 +1132,9 @@ func (s *S3Cache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache
 		// Upload provenance bundle if it exists (non-blocking)
 		s.uploadProvenanceBundle(ctx, p.FullName(), key, localPath)
 
+		// Upload SBOM files if they exist (non-blocking)
+		s.uploadSBOMFiles(ctx, p.FullName(), key, localPath)
+
 		return nil
 	})
 
@@ -1424,6 +1444,142 @@ func (s *S3Cache) uploadProvenanceBundle(ctx context.Context, packageName, artif
 		"package": packageName,
 		"key":     provenanceKey,
 	}).Debug("Successfully uploaded provenance bundle to remote cache")
+}
+
+// SBOM file extensions - must match pkg/leeway/sbom.go constants
+const (
+	sbomBaseFilename           = "sbom"
+	sbomCycloneDXFileExtension = ".cdx.json"
+	sbomSPDXFileExtension      = ".spdx.json"
+	sbomSyftFileExtension      = ".json"
+)
+
+// uploadSBOMFiles uploads SBOM files to S3 with retry logic.
+// This is a non-blocking operation - failures are logged but don't fail the build.
+// SBOM files are stored alongside artifacts as <artifact>.sbom.<ext>
+func (s *S3Cache) uploadSBOMFiles(ctx context.Context, packageName, artifactKey, localPath string) {
+	sbomExtensions := []string{
+		"." + sbomBaseFilename + sbomCycloneDXFileExtension,
+		"." + sbomBaseFilename + sbomSPDXFileExtension,
+		"." + sbomBaseFilename + sbomSyftFileExtension,
+	}
+
+	for _, ext := range sbomExtensions {
+		sbomPath := localPath + ext
+		sbomKey := artifactKey + ext
+
+		// Check if SBOM file exists
+		if !fileExists(sbomPath) {
+			log.WithFields(log.Fields{
+				"package": packageName,
+				"path":    sbomPath,
+			}).Debug("SBOM file not found locally, skipping upload")
+			continue
+		}
+
+		// Wait for rate limiter permission
+		if err := s.waitForRateLimit(ctx); err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"package": packageName,
+				"key":     sbomKey,
+			}).Warn("Rate limiter error during SBOM upload, skipping")
+			continue
+		}
+
+		// Upload with timeout
+		uploadCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		if err := s.storage.UploadObject(uploadCtx, sbomKey, sbomPath); err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"package": packageName,
+				"key":     sbomKey,
+				"path":    sbomPath,
+			}).Warn("Failed to upload SBOM file to remote cache")
+			cancel()
+			continue
+		}
+		cancel()
+
+		log.WithFields(log.Fields{
+			"package": packageName,
+			"key":     sbomKey,
+		}).Debug("Successfully uploaded SBOM file to remote cache")
+	}
+}
+
+// downloadSBOMFiles downloads SBOM files from S3.
+// This is a best-effort operation - missing SBOMs are expected for older artifacts.
+// SBOM files are stored alongside artifacts as <artifact>.sbom.<ext>
+func (s *S3Cache) downloadSBOMFiles(ctx context.Context, packageName, artifactKey, localPath string) {
+	sbomExtensions := []string{
+		"." + sbomBaseFilename + sbomCycloneDXFileExtension,
+		"." + sbomBaseFilename + sbomSPDXFileExtension,
+		"." + sbomBaseFilename + sbomSyftFileExtension,
+	}
+
+	for _, ext := range sbomExtensions {
+		sbomPath := localPath + ext
+		sbomKey := artifactKey + ext
+		tmpSBOMPath := sbomPath + ".tmp"
+
+		// Wait for rate limiter permission
+		if err := s.waitForRateLimit(ctx); err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"package": packageName,
+				"key":     sbomKey,
+			}).Debug("Rate limiter error during SBOM download, skipping")
+			continue
+		}
+
+		// Download with timeout
+		downloadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		bytesDownloaded, err := s.storage.GetObject(downloadCtx, sbomKey, tmpSBOMPath)
+		cancel()
+
+		if err != nil {
+			// SBOM not found - expected for older artifacts
+			log.WithFields(log.Fields{
+				"package": packageName,
+				"key":     sbomKey,
+			}).Debug("SBOM file not found in remote cache (expected for older artifacts)")
+			s.cleanupTempFiles(tmpSBOMPath)
+			continue
+		}
+
+		// Verify the downloaded file exists and has content
+		if !fileExists(tmpSBOMPath) {
+			log.WithFields(log.Fields{
+				"package": packageName,
+				"key":     sbomKey,
+			}).Warn("SBOM download reported success but file not found")
+			s.cleanupTempFiles(tmpSBOMPath)
+			continue
+		}
+
+		if bytesDownloaded == 0 {
+			log.WithFields(log.Fields{
+				"package": packageName,
+				"key":     sbomKey,
+			}).Warn("SBOM downloaded but file is empty")
+			s.cleanupTempFiles(tmpSBOMPath)
+			continue
+		}
+
+		// Atomically move to final location
+		if err := s.atomicMove(tmpSBOMPath, sbomPath); err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"package": packageName,
+				"key":     sbomKey,
+			}).Warn("Failed to move SBOM file to final location")
+			s.cleanupTempFiles(tmpSBOMPath)
+			continue
+		}
+
+		log.WithFields(log.Fields{
+			"package": packageName,
+			"key":     sbomKey,
+			"bytes":   bytesDownloaded,
+		}).Debug("Successfully downloaded SBOM file")
+	}
 }
 
 // downloadProvenanceBundle downloads a provenance bundle from S3 with verification.

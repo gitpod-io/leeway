@@ -1625,81 +1625,50 @@ CMD ["echo", "test"]`
 				t.Fatal("Package not found in cache")
 			}
 
-			// Extract and verify SBOM files from cache
-			sbomFormats := []string{
-				"sbom.cdx.json",  // CycloneDX
-				"sbom.spdx.json", // SPDX
-				"sbom.json",      // Syft (native format)
+			// Verify separate SBOM files exist alongside the artifact (new format)
+			sbomExtensions := []struct {
+				ext    string
+				format string
+			}{
+				{".sbom.cdx.json", "CycloneDX"},
+				{".sbom.spdx.json", "SPDX"},
+				{".sbom.json", "Syft"},
 			}
 
-			foundSBOMs := make(map[string]bool)
-
-			// Open the cache tar.gz
-			f, err := os.Open(cacheLoc)
-			if err != nil {
-				t.Fatalf("Failed to open cache file: %v", err)
-			}
-			defer f.Close()
-
-			gzin, err := gzip.NewReader(f)
-			if err != nil {
-				t.Fatalf("Failed to create gzip reader: %v", err)
-			}
-			defer gzin.Close()
-
-			tarin := tar.NewReader(gzin)
-			for {
-				hdr, err := tarin.Next()
-				if errors.Is(err, io.EOF) {
-					break
-				}
+			foundSBOMs := 0
+			for _, sbom := range sbomExtensions {
+				sbomPath := cacheLoc + sbom.ext
+				sbomContent, err := os.ReadFile(sbomPath)
 				if err != nil {
-					t.Fatalf("Failed to read tar: %v", err)
+					t.Errorf("❌ SBOM file %s not found: %v", sbomPath, err)
+					continue
 				}
 
-				filename := filepath.Base(hdr.Name)
-				for _, sbomFile := range sbomFormats {
-					if filename == sbomFile {
-						foundSBOMs[sbomFile] = true
-						t.Logf("✅ Found SBOM file: %s (size: %d bytes)", sbomFile, hdr.Size)
+				t.Logf("✅ Found separate SBOM file: %s (size: %d bytes)", sbom.ext, len(sbomContent))
 
-						// Read and validate SBOM content
-						sbomContent := make([]byte, hdr.Size)
-						if _, err := io.ReadFull(tarin, sbomContent); err != nil {
-							t.Fatalf("Failed to read SBOM content: %v", err)
-						}
+				// Validate it's valid JSON
+				var sbomData map[string]interface{}
+				if err := json.Unmarshal(sbomContent, &sbomData); err != nil {
+					t.Fatalf("SBOM file %s is not valid JSON: %v", sbom.ext, err)
+				}
 
-						// Validate it's valid JSON
-						var sbomData map[string]interface{}
-						if err := json.Unmarshal(sbomContent, &sbomData); err != nil {
-							t.Fatalf("SBOM file %s is not valid JSON: %v", sbomFile, err)
-						}
-
-						// Check for expected content based on format
-						if strings.Contains(sbomFile, "cdx") {
-							if _, ok := sbomData["bomFormat"]; !ok {
-								t.Errorf("CycloneDX SBOM missing bomFormat field")
-							}
-						} else if strings.Contains(sbomFile, "spdx") {
-							if _, ok := sbomData["spdxVersion"]; !ok {
-								t.Errorf("SPDX SBOM missing spdxVersion field")
-							}
-						}
-
-						t.Logf("✅ SBOM file %s is valid JSON with expected structure", sbomFile)
+				// Check for expected content based on format
+				if strings.Contains(sbom.ext, "cdx") {
+					if _, ok := sbomData["bomFormat"]; !ok {
+						t.Errorf("CycloneDX SBOM missing bomFormat field")
+					}
+				} else if strings.Contains(sbom.ext, "spdx") {
+					if _, ok := sbomData["spdxVersion"]; !ok {
+						t.Errorf("SPDX SBOM missing spdxVersion field")
 					}
 				}
+
+				t.Logf("✅ SBOM file %s is valid JSON with expected structure", sbom.ext)
+				foundSBOMs++
 			}
 
-			// Verify all SBOM formats were generated
-			for _, sbomFile := range sbomFormats {
-				if !foundSBOMs[sbomFile] {
-					t.Errorf("❌ SBOM file %s not found in cache", sbomFile)
-				}
-			}
-
-			if len(foundSBOMs) == len(sbomFormats) {
-				t.Logf("✅ All %d SBOM formats generated successfully", len(sbomFormats))
+			if foundSBOMs == len(sbomExtensions) {
+				t.Logf("✅ All %d SBOM formats generated as separate files", len(sbomExtensions))
 			}
 
 			t.Logf("✅ SBOM generation works correctly with exportToCache=%v", tt.exportToCache)
@@ -1891,70 +1860,39 @@ CMD ["echo", "test"]`
 	// Note: We don't check for image.tar existence because it may be cleaned up after build
 	// The log output "Generating SBOM from OCI layout" confirms the correct path was used
 
-	// Extract and verify SBOM files from cache
-	sbomFormats := []string{
-		"sbom.cdx.json",  // CycloneDX
-		"sbom.spdx.json", // SPDX
-		"sbom.json",      // Syft (native format)
+	// Verify separate SBOM files exist alongside the artifact (new format)
+	sbomExtensions := []struct {
+		ext    string
+		format string
+	}{
+		{".sbom.cdx.json", "CycloneDX"},
+		{".sbom.spdx.json", "SPDX"},
+		{".sbom.json", "Syft"},
 	}
 
-	foundSBOMs := make(map[string]bool)
-
-	// Open the cache tar.gz
-	f, err := os.Open(cacheLoc)
-	if err != nil {
-		t.Fatalf("Failed to open cache file: %v", err)
-	}
-	defer f.Close()
-
-	gzin, err := gzip.NewReader(f)
-	if err != nil {
-		t.Fatalf("Failed to create gzip reader: %v", err)
-	}
-	defer gzin.Close()
-
-	tarin := tar.NewReader(gzin)
-	for {
-		hdr, err := tarin.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
+	foundSBOMs := 0
+	for _, sbom := range sbomExtensions {
+		sbomPath := cacheLoc + sbom.ext
+		sbomContent, err := os.ReadFile(sbomPath)
 		if err != nil {
-			t.Fatalf("Failed to read tar: %v", err)
+			t.Errorf("❌ SBOM file %s not found: %v", sbomPath, err)
+			continue
 		}
 
-		filename := filepath.Base(hdr.Name)
-		for _, sbomFile := range sbomFormats {
-			if filename == sbomFile {
-				foundSBOMs[sbomFile] = true
-				t.Logf("✅ Found SBOM file: %s (size: %d bytes)", sbomFile, hdr.Size)
+		t.Logf("✅ Found separate SBOM file: %s (size: %d bytes)", sbom.ext, len(sbomContent))
 
-				// Read and validate SBOM content
-				sbomContent := make([]byte, hdr.Size)
-				if _, err := io.ReadFull(tarin, sbomContent); err != nil {
-					t.Fatalf("Failed to read SBOM content: %v", err)
-				}
-
-				// Validate it's valid JSON
-				var sbomData map[string]interface{}
-				if err := json.Unmarshal(sbomContent, &sbomData); err != nil {
-					t.Fatalf("SBOM file %s is not valid JSON: %v", sbomFile, err)
-				}
-
-				t.Logf("✅ SBOM file %s is valid JSON", sbomFile)
-			}
+		// Validate it's valid JSON
+		var sbomData map[string]interface{}
+		if err := json.Unmarshal(sbomContent, &sbomData); err != nil {
+			t.Fatalf("SBOM file %s is not valid JSON: %v", sbom.ext, err)
 		}
+
+		t.Logf("✅ SBOM file %s is valid JSON", sbom.ext)
+		foundSBOMs++
 	}
 
-	// Verify all SBOM formats were generated
-	for _, sbomFile := range sbomFormats {
-		if !foundSBOMs[sbomFile] {
-			t.Errorf("❌ SBOM file %s not found in cache", sbomFile)
-		}
-	}
-
-	if len(foundSBOMs) == len(sbomFormats) {
-		t.Logf("✅ All %d SBOM formats generated successfully", len(sbomFormats))
+	if foundSBOMs == len(sbomExtensions) {
+		t.Logf("✅ All %d SBOM formats generated as separate files", len(sbomExtensions))
 		t.Logf("✅ SBOM generation correctly respects LEEWAY_DOCKER_EXPORT_TO_CACHE environment variable")
 	}
 }
@@ -2138,53 +2076,36 @@ CMD ["echo", "test"]`
 		t.Fatal("Package not found in cache")
 	}
 
-	sbomFormats := []string{
-		"sbom.cdx.json",
-		"sbom.spdx.json",
-		"sbom.json",
+	// Verify separate SBOM files exist alongside the artifact (new format)
+	sbomExtensions := []struct {
+		ext    string
+		format string
+	}{
+		{".sbom.cdx.json", "CycloneDX"},
+		{".sbom.spdx.json", "SPDX"},
+		{".sbom.json", "Syft"},
 	}
 
-	foundSBOMs := make(map[string]bool)
-
-	f, err := os.Open(cacheLoc)
-	if err != nil {
-		t.Fatalf("Failed to open cache file: %v", err)
-	}
-	defer f.Close()
-
-	gzin, err := gzip.NewReader(f)
-	if err != nil {
-		t.Fatalf("Failed to create gzip reader: %v", err)
-	}
-	defer gzin.Close()
-
-	tarin := tar.NewReader(gzin)
-	for {
-		hdr, err := tarin.Next()
-		if errors.Is(err, io.EOF) {
-			break
+	foundSBOMs := 0
+	for _, sbom := range sbomExtensions {
+		sbomPath := cacheLoc + sbom.ext
+		if _, err := os.Stat(sbomPath); err == nil {
+			foundSBOMs++
+			t.Logf("✅ Found SBOM file: %s", sbom.ext)
 		}
-		if err != nil {
-			t.Fatalf("Failed to read tar: %v", err)
-		}
+	}
 
-		filename := filepath.Base(hdr.Name)
-		for _, sbomFile := range sbomFormats {
-			if filename == sbomFile {
-				foundSBOMs[sbomFile] = true
-				t.Logf("✅ Found SBOM file: %s", sbomFile)
+	if foundSBOMs != len(sbomExtensions) {
+		for _, sbom := range sbomExtensions {
+			sbomPath := cacheLoc + sbom.ext
+			if _, err := os.Stat(sbomPath); err != nil {
+				t.Errorf("❌ SBOM file %s not found", sbomPath)
 			}
 		}
 	}
 
-	for _, sbomFile := range sbomFormats {
-		if !foundSBOMs[sbomFile] {
-			t.Errorf("❌ SBOM file %s not found in cache", sbomFile)
-		}
-	}
-
-	if len(foundSBOMs) == len(sbomFormats) {
-		t.Log("✅ All SBOM formats generated successfully")
+	if foundSBOMs == len(sbomExtensions) {
+		t.Log("✅ All SBOM formats generated as separate files")
 		t.Log("✅ SBOM generation correctly respects user env var override of package config")
 	}
 }

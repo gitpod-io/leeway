@@ -220,9 +220,29 @@ func normalizeSPDX(sbomPath string, timestamp time.Time) error {
 // This function is called during the build process to create SBOMs that are included in
 // the package's build artifacts. It supports different source types based on the package type
 // (Docker images vs. filesystem) and generates SBOMs in CycloneDX, SPDX, and Syft formats.
-func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) {
+// writeSBOMToCache writes SBOM files alongside the artifact in the cache.
+// SBOM files are stored outside the tar.gz to maintain artifact determinism.
+// The SBOM files are named: <artifact>.sbom.cdx.json, <artifact>.sbom.spdx.json, <artifact>.sbom.json
+func writeSBOMToCache(buildctx *buildContext, p *Package, builddir string) (err error) {
 	if !p.C.W.SBOM.Enabled {
 		return nil
+	}
+
+	// Get the artifact path in cache
+	artifactPath, exists := buildctx.LocalCache.Location(p)
+	if artifactPath == "" {
+		return fmt.Errorf("cannot determine cache location for %s", p.FullName())
+	}
+
+	if !exists {
+		log.WithField("package", p.FullName()).WithField("path", artifactPath).Warn("Writing SBOM before artifact exists")
+	}
+
+	// Ensure we use the .tar.gz extension
+	if strings.HasSuffix(artifactPath, ".tar") && !strings.HasSuffix(artifactPath, ".tar.gz") {
+		artifactPath = artifactPath + ".gz"
+	} else if !strings.HasSuffix(artifactPath, ".tar.gz") && !strings.HasSuffix(artifactPath, ".tar") {
+		artifactPath = artifactPath + ".tar.gz"
 	}
 
 	sbomCfg := syft.DefaultCreateSBOMConfig()
@@ -314,7 +334,15 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 		}
 		data := buf.Bytes()
 
-		fn := filepath.Join(builddir, filename)
+		// Write SBOM alongside artifact: <artifact>.sbom.<ext>
+		fn := artifactPath + "." + filename
+
+		// Ensure directory exists
+		dir := filepath.Dir(fn)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("cannot create SBOM directory for %s: %w", p.FullName(), err)
+		}
+
 		err = os.WriteFile(fn, data, 0644)
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to write SBOM to file %s: %s", fn, err)
@@ -334,14 +362,14 @@ func writeSBOM(buildctx *buildContext, p *Package, builddir string) (err error) 
 	}
 
 	// Normalize CycloneDX
-	cycloneDXPath := filepath.Join(builddir, sbomBaseFilename+sbomCycloneDXFileExtension)
+	cycloneDXPath := artifactPath + "." + sbomBaseFilename + sbomCycloneDXFileExtension
 	if err := normalizeCycloneDX(cycloneDXPath, timestamp); err != nil {
 		buildctx.Reporter.PackageBuildLog(p, true,
 			[]byte(fmt.Sprintf("Warning: failed to normalize CycloneDX SBOM: %v\n", err)))
 	}
 
 	// Normalize SPDX
-	spdxPath := filepath.Join(builddir, sbomBaseFilename+sbomSPDXFileExtension)
+	spdxPath := artifactPath + "." + sbomBaseFilename + sbomSPDXFileExtension
 	if err := normalizeSPDX(spdxPath, timestamp); err != nil {
 		buildctx.Reporter.PackageBuildLog(p, true,
 			[]byte(fmt.Sprintf("Warning: failed to normalize SPDX SBOM: %v\n", err)))
@@ -427,9 +455,11 @@ func GetSBOMFileExtension(format string) string {
 // ErrNoSBOMFile is returned when no SBOM file is found in a cached archive
 var ErrNoSBOMFile = fmt.Errorf("no SBOM file found")
 
-// AccessSBOMInCachedArchive extracts an SBOM file from a cached build artifact.
+// AccessSBOMInCachedArchive reads an SBOM file for a cached build artifact.
+// It first checks for separate SBOM files alongside the artifact (new format),
+// then falls back to extracting from the tar.gz archive (legacy format).
 // It supports different SBOM formats (cyclonedx, spdx, syft) and applies the provided
-// handler function to the extracted SBOM content. If no SBOM file is found, it returns
+// handler function to the SBOM content. If no SBOM file is found, it returns
 // ErrNoSBOMFile. This function is used by the sbom export and scan commands.
 func AccessSBOMInCachedArchive(fn string, format string, handler func(sbomFile io.Reader) error) (err error) {
 	defer func() {
@@ -442,6 +472,31 @@ func AccessSBOMInCachedArchive(fn string, format string, handler func(sbomFile i
 	if !formatValid {
 		return fmt.Errorf("Unsupported format: %s. Supported formats are: %s", format, strings.Join(validFormats, ", "))
 	}
+
+	// Try reading from separate SBOM file first (new format)
+	sbomExt := "." + sbomBaseFilename + GetSBOMFileExtension(format)
+	sbomPath := fn + sbomExt
+
+	if _, statErr := os.Stat(sbomPath); statErr == nil {
+		// Separate SBOM file exists - read from it
+		sbomFile, openErr := os.Open(sbomPath)
+		if openErr != nil {
+			return openErr
+		}
+		defer func() {
+			if closeErr := sbomFile.Close(); closeErr != nil {
+				log.WithError(closeErr).Warn("failed to close SBOM file")
+			}
+		}()
+		return handler(sbomFile)
+	}
+
+	// Fall back to extracting from tar.gz archive (legacy format)
+	return accessSBOMInTarArchive(fn, format, handler)
+}
+
+// accessSBOMInTarArchive extracts an SBOM file from inside a tar.gz archive (legacy format).
+func accessSBOMInTarArchive(fn string, format string, handler func(sbomFile io.Reader) error) error {
 	sbomFilename := sbomBaseFilename + GetSBOMFileExtension(format)
 
 	f, err := os.Open(fn)
@@ -489,7 +544,7 @@ func AccessSBOMInCachedArchive(fn string, format string, handler func(sbomFile i
 		break
 	}
 	if err != nil {
-		return
+		return err
 	}
 
 	if !sbomFound {
