@@ -108,12 +108,15 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 		}
 
 		if attestationExists {
-			// Both artifact and attestation exist, skip both uploads
+			// Both artifact and attestation exist, but still check SBOM files
 			log.WithFields(log.Fields{
 				"artifact":     artifactPath,
 				"artifact_key": artifactKey,
 				"att_key":      attestationKey,
-			}).Info("Skipping attestation upload (artifact and attestation already exist)")
+			}).Info("Skipping artifact and attestation upload (already exist)")
+
+			// Still upload SBOM files if missing
+			u.uploadSBOMFiles(ctx, artifactPath, artifactKey)
 			return nil
 		}
 
@@ -133,6 +136,9 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 			"artifact_key": artifactKey,
 			"att_key":      attestationKey,
 		}).Info("Successfully uploaded attestation")
+
+		// Also upload SBOM files if missing
+		u.uploadSBOMFiles(ctx, artifactPath, artifactKey)
 		return nil
 	}
 
