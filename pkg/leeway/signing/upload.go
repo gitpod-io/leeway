@@ -176,12 +176,7 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 // uploadSBOMFiles uploads SBOM sidecar files alongside the artifact.
 // This is a non-blocking operation - failures are logged but don't fail the upload.
 func (u *ArtifactUploader) uploadSBOMFiles(ctx context.Context, artifactPath, artifactKey string) {
-	// SBOM file extensions - must match pkg/leeway/sbom.go constants
-	sbomExtensions := []string{
-		".sbom.cdx.json",  // CycloneDX format
-		".sbom.spdx.json", // SPDX format
-		".sbom.json",      // Syft native format
-	}
+	sbomExtensions := cache.SBOMSidecarExtensions()
 
 	for _, ext := range sbomExtensions {
 		sbomPath := artifactPath + ext
