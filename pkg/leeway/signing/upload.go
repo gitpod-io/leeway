@@ -108,12 +108,15 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 		}
 
 		if attestationExists {
-			// Both artifact and attestation exist, skip both uploads
+			// Both artifact and attestation exist, but still check SBOM files
 			log.WithFields(log.Fields{
 				"artifact":     artifactPath,
 				"artifact_key": artifactKey,
 				"att_key":      attestationKey,
-			}).Info("Skipping attestation upload (artifact and attestation already exist)")
+			}).Info("Skipping artifact and attestation upload (already exist)")
+
+			// Still upload SBOM files if missing
+			u.uploadSBOMFiles(ctx, artifactPath, artifactKey)
 			return nil
 		}
 
@@ -133,6 +136,9 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 			"artifact_key": artifactKey,
 			"att_key":      attestationKey,
 		}).Info("Successfully uploaded attestation")
+
+		// Also upload SBOM files if missing
+		u.uploadSBOMFiles(ctx, artifactPath, artifactKey)
 		return nil
 	}
 
@@ -161,5 +167,54 @@ func (u *ArtifactUploader) UploadArtifactWithAttestation(ctx context.Context, ar
 		"att_key":      attestationKey,
 	}).Info("Successfully uploaded attestation file")
 
+	// Upload SBOM files if they exist (non-blocking - failures are logged but don't fail the upload)
+	u.uploadSBOMFiles(ctx, artifactPath, artifactKey)
+
 	return nil
+}
+
+// uploadSBOMFiles uploads SBOM sidecar files alongside the artifact.
+// This is a non-blocking operation - failures are logged but don't fail the upload.
+func (u *ArtifactUploader) uploadSBOMFiles(ctx context.Context, artifactPath, artifactKey string) {
+	sbomExtensions := cache.SBOMSidecarExtensions()
+
+	for _, ext := range sbomExtensions {
+		sbomPath := artifactPath + ext
+		sbomKey := artifactKey + ext
+
+		// Check if SBOM file exists locally
+		if _, err := os.Stat(sbomPath); os.IsNotExist(err) {
+			log.WithFields(log.Fields{
+				"path": sbomPath,
+			}).Debug("SBOM file not found locally, skipping upload")
+			continue
+		}
+
+		// Check if SBOM already exists in remote cache
+		exists, err := u.remoteCache.HasFile(ctx, sbomKey)
+		if err != nil {
+			log.WithError(err).WithField("key", sbomKey).Warn("Failed to check if SBOM exists, will attempt upload")
+			exists = false
+		}
+
+		if exists {
+			log.WithFields(log.Fields{
+				"key": sbomKey,
+			}).Debug("SBOM file already exists in remote cache, skipping upload")
+			continue
+		}
+
+		// Upload SBOM file
+		if err := u.remoteCache.UploadFile(ctx, sbomPath, sbomKey); err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"key":  sbomKey,
+				"path": sbomPath,
+			}).Warn("Failed to upload SBOM file to remote cache")
+			continue
+		}
+
+		log.WithFields(log.Fields{
+			"key": sbomKey,
+		}).Info("Successfully uploaded SBOM file to remote cache")
+	}
 }

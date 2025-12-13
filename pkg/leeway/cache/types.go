@@ -1,5 +1,12 @@
 // Package cache provides local and remote caching capabilities for build artifacts.
 //
+// SBOM Sidecar Files:
+// SBOM (Software Bill of Materials) files are stored alongside artifacts as sidecar files.
+// The naming convention is: <artifact>.<extension> where extension is one of:
+//   - .sbom.cdx.json  (CycloneDX format)
+//   - .sbom.spdx.json (SPDX format)
+//   - .sbom.json      (Syft native format)
+//
 // SLSA Verification Behavior:
 // The cache system supports SLSA (Supply-chain Levels for Software Artifacts) verification
 // for enhanced security. The behavior is controlled by the SLSAConfig.RequireAttestation field:
@@ -26,6 +33,31 @@ package cache
 import (
 	"context"
 )
+
+// SBOM file format constants
+const (
+	// SBOMBaseFilename is the base filename for SBOM files (e.g., "sbom" in "artifact.sbom.cdx.json")
+	SBOMBaseFilename = "sbom"
+
+	// SBOMCycloneDXFileExtension is the extension of the CycloneDX SBOM file
+	SBOMCycloneDXFileExtension = ".cdx.json"
+
+	// SBOMSPDXFileExtension is the extension of the SPDX SBOM file
+	SBOMSPDXFileExtension = ".spdx.json"
+
+	// SBOMSyftFileExtension is the extension of the Syft SBOM file
+	SBOMSyftFileExtension = ".json"
+)
+
+// SBOMSidecarExtensions returns all SBOM sidecar file extensions.
+// These are the extensions used for SBOM files stored alongside artifacts.
+func SBOMSidecarExtensions() []string {
+	return []string{
+		"." + SBOMBaseFilename + SBOMCycloneDXFileExtension, // .sbom.cdx.json
+		"." + SBOMBaseFilename + SBOMSPDXFileExtension,      // .sbom.spdx.json
+		"." + SBOMBaseFilename + SBOMSyftFileExtension,      // .sbom.json
+	}
+}
 
 // Package represents a build package that can be cached
 type Package interface {

@@ -1446,23 +1446,11 @@ func (s *S3Cache) uploadProvenanceBundle(ctx context.Context, packageName, artif
 	}).Debug("Successfully uploaded provenance bundle to remote cache")
 }
 
-// SBOM file extensions - must match pkg/leeway/sbom.go constants
-const (
-	sbomBaseFilename           = "sbom"
-	sbomCycloneDXFileExtension = ".cdx.json"
-	sbomSPDXFileExtension      = ".spdx.json"
-	sbomSyftFileExtension      = ".json"
-)
-
 // uploadSBOMFiles uploads SBOM files to S3 with retry logic.
 // This is a non-blocking operation - failures are logged but don't fail the build.
 // SBOM files are stored alongside artifacts as <artifact>.sbom.<ext>
 func (s *S3Cache) uploadSBOMFiles(ctx context.Context, packageName, artifactKey, localPath string) {
-	sbomExtensions := []string{
-		"." + sbomBaseFilename + sbomCycloneDXFileExtension,
-		"." + sbomBaseFilename + sbomSPDXFileExtension,
-		"." + sbomBaseFilename + sbomSyftFileExtension,
-	}
+	sbomExtensions := cache.SBOMSidecarExtensions()
 
 	for _, ext := range sbomExtensions {
 		sbomPath := localPath + ext
@@ -1510,11 +1498,7 @@ func (s *S3Cache) uploadSBOMFiles(ctx context.Context, packageName, artifactKey,
 // This is a best-effort operation - missing SBOMs are expected for older artifacts.
 // SBOM files are stored alongside artifacts as <artifact>.sbom.<ext>
 func (s *S3Cache) downloadSBOMFiles(ctx context.Context, packageName, artifactKey, localPath string) {
-	sbomExtensions := []string{
-		"." + sbomBaseFilename + sbomCycloneDXFileExtension,
-		"." + sbomBaseFilename + sbomSPDXFileExtension,
-		"." + sbomBaseFilename + sbomSyftFileExtension,
-	}
+	sbomExtensions := cache.SBOMSidecarExtensions()
 
 	for _, ext := range sbomExtensions {
 		sbomPath := localPath + ext
