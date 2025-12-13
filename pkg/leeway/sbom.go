@@ -25,6 +25,7 @@ import (
 	"github.com/anchore/syft/syft/format/syftjson"
 	"github.com/anchore/syft/syft/sbom"
 	"github.com/anchore/syft/syft/source"
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/xerrors"
@@ -39,18 +40,6 @@ const (
 
 	// EnvvarVulnReportsDir names the environment variable we take the vulnerability reports directory location from
 	EnvvarVulnReportsDir = "LEEWAY_VULN_REPORTS_DIR"
-
-	// SBOM file format constants
-	sbomBaseFilename = "sbom"
-
-	// sbomCycloneDXFileExtension is the extension of the CycloneDX SBOM file we store in the archived build artifacts
-	sbomCycloneDXFileExtension = ".cdx.json"
-
-	// sbomSPDXFileExtension is the extension of the SPDX SBOM file we store in the archived build artifacts
-	sbomSPDXFileExtension = ".spdx.json"
-
-	// sbomSyftFileExtension is the extension of the Syft SBOM file we store in the archived build artifacts
-	sbomSyftFileExtension = ".json"
 )
 
 // WorkspaceSBOM configures SBOM generation for a workspace
@@ -362,14 +351,14 @@ func writeSBOMToCache(buildctx *buildContext, p *Package, builddir string) (err 
 	}
 
 	// Normalize CycloneDX
-	cycloneDXPath := artifactPath + "." + sbomBaseFilename + sbomCycloneDXFileExtension
+	cycloneDXPath := artifactPath + "." + cache.SBOMBaseFilename + cache.SBOMCycloneDXFileExtension
 	if err := normalizeCycloneDX(cycloneDXPath, timestamp); err != nil {
 		buildctx.Reporter.PackageBuildLog(p, true,
 			[]byte(fmt.Sprintf("Warning: failed to normalize CycloneDX SBOM: %v\n", err)))
 	}
 
 	// Normalize SPDX
-	spdxPath := artifactPath + "." + sbomBaseFilename + sbomSPDXFileExtension
+	spdxPath := artifactPath + "." + cache.SBOMBaseFilename + cache.SBOMSPDXFileExtension
 	if err := normalizeSPDX(spdxPath, timestamp); err != nil {
 		buildctx.Reporter.PackageBuildLog(p, true,
 			[]byte(fmt.Sprintf("Warning: failed to normalize SPDX SBOM: %v\n", err)))
@@ -392,21 +381,21 @@ func getSBOMEncoder(format string) (encoder sbom.FormatEncoder, filename string,
 		if err != nil {
 			return nil, "", xerrors.Errorf("failed to create CycloneDX encoder: %w", err)
 		}
-		fileExtension = sbomCycloneDXFileExtension
+		fileExtension = cache.SBOMCycloneDXFileExtension
 	case "spdx":
 		encoder, err = spdxjson.NewFormatEncoderWithConfig(spdxjson.DefaultEncoderConfig())
 		if err != nil {
 			return nil, "", xerrors.Errorf("failed to create SPDX encoder: %w", err)
 		}
-		fileExtension = sbomSPDXFileExtension
+		fileExtension = cache.SBOMSPDXFileExtension
 	case "syft":
 		encoder = syftjson.NewFormatEncoder()
-		fileExtension = sbomSyftFileExtension
+		fileExtension = cache.SBOMSyftFileExtension
 	default:
 		return nil, "", xerrors.Errorf("unsupported SBOM format: %s", format)
 	}
 
-	return encoder, sbomBaseFilename + fileExtension, nil
+	return encoder, cache.SBOMBaseFilename + fileExtension, nil
 }
 
 // writeFileHandler returns a handler function for AccessSBOMInCachedArchive that writes to a file.
@@ -442,11 +431,11 @@ func ValidateSBOMFormat(format string) (bool, []string) {
 func GetSBOMFileExtension(format string) string {
 	switch format {
 	case "cyclonedx":
-		return sbomCycloneDXFileExtension
+		return cache.SBOMCycloneDXFileExtension
 	case "spdx":
-		return sbomSPDXFileExtension
+		return cache.SBOMSPDXFileExtension
 	case "syft":
-		return sbomSyftFileExtension
+		return cache.SBOMSyftFileExtension
 	default:
 		return ".json"
 	}
@@ -474,7 +463,7 @@ func AccessSBOMInCachedArchive(fn string, format string, handler func(sbomFile i
 	}
 
 	// Try reading from separate SBOM file first (new format)
-	sbomExt := "." + sbomBaseFilename + GetSBOMFileExtension(format)
+	sbomExt := "." + cache.SBOMBaseFilename + GetSBOMFileExtension(format)
 	sbomPath := fn + sbomExt
 
 	if _, statErr := os.Stat(sbomPath); statErr == nil {
@@ -497,7 +486,7 @@ func AccessSBOMInCachedArchive(fn string, format string, handler func(sbomFile i
 
 // accessSBOMInTarArchive extracts an SBOM file from inside a tar.gz archive (legacy format).
 func accessSBOMInTarArchive(fn string, format string, handler func(sbomFile io.Reader) error) error {
-	sbomFilename := sbomBaseFilename + GetSBOMFileExtension(format)
+	sbomFilename := cache.SBOMBaseFilename + GetSBOMFileExtension(format)
 
 	f, err := os.Open(fn)
 	if err != nil {
