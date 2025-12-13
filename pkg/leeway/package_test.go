@@ -172,6 +172,57 @@ func TestResolveBuiltinVariables(t *testing.T) {
 	}
 }
 
+func TestResolveBuiltinVariablesInPackageInternal(t *testing.T) {
+	tests := []struct {
+		Name         string
+		Prep         [][]string
+		Env          []string
+		ExpectedPrep [][]string
+		ExpectedEnv  []string
+	}{
+		{
+			Name:         "prep with __pkg_version",
+			Prep:         [][]string{{"/bin/bash", "prepare.sh", "${__pkg_version}"}},
+			ExpectedPrep: [][]string{{"/bin/bash", "prepare.sh", "this-version"}},
+		},
+		{
+			Name:        "env with __pkg_version",
+			Env:         []string{"VERSION=${__pkg_version}"},
+			ExpectedEnv: []string{"VERSION=this-version"},
+		},
+		{
+			Name:         "prep and env with __pkg_version",
+			Prep:         [][]string{{"echo", "${__pkg_version}"}},
+			Env:          []string{"BUILD_VERSION=${__pkg_version}"},
+			ExpectedPrep: [][]string{{"echo", "this-version"}},
+			ExpectedEnv:  []string{"BUILD_VERSION=this-version"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.Name, func(t *testing.T) {
+			pkg := NewTestPackage("pkg")
+			pkg.Type = GenericPackage
+			pkg.Config = GenericPkgConfig{Commands: [][]string{{"echo", "hello"}}}
+			pkg.PreparationCommands = test.Prep
+			pkg.Environment = test.Env
+
+			err := pkg.resolveBuiltinVariables()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if test.ExpectedPrep != nil && !reflect.DeepEqual(pkg.PreparationCommands, test.ExpectedPrep) {
+				t.Errorf("PreparationCommands mismatch. expected: %v, actual: %v", test.ExpectedPrep, pkg.PreparationCommands)
+			}
+
+			if test.ExpectedEnv != nil && !reflect.DeepEqual(pkg.Environment, test.ExpectedEnv) {
+				t.Errorf("Environment mismatch. expected: %v, actual: %v", test.ExpectedEnv, pkg.Environment)
+			}
+		})
+	}
+}
+
 func TestFindCycles(t *testing.T) {
 	tests := []struct {
 		Name  string
