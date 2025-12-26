@@ -78,12 +78,12 @@ func TestS3Cache_ExistingPackages(t *testing.T) {
 	defer cancel()
 
 	tests := []struct {
-		name             string
-		packages         []cache.Package
-		mockHeadObject   func(key string) (*s3.HeadObjectOutput, error)
-		mockListObjects  func(prefix string) (*s3.ListObjectsV2Output, error)
-		expectedResults  map[string]struct{}
-		expectError      bool
+		name            string
+		packages        []cache.Package
+		mockHeadObject  func(key string) (*s3.HeadObjectOutput, error)
+		mockListObjects func(prefix string) (*s3.ListObjectsV2Output, error)
+		expectedResults map[string]struct{}
+		expectError     bool
 	}{
 		{
 			name: "finds tar.gz package",

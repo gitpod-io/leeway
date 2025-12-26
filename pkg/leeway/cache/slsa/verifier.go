@@ -50,12 +50,12 @@ func NewVerifier(sourceURI string, trustedRoots []string) *Verifier {
 // Sigstore Bundle format and uses embedded transparency log entries for verification.
 func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestationPath string) error {
 	startTime := time.Now()
-	
+
 	log.WithFields(log.Fields{
 		"artifact":    artifactPath,
 		"attestation": attestationPath,
 	}).Debug("Starting SLSA verification")
-	
+
 	// Step 1: Load the Sigstore Bundle
 	// This parses the attestation file as a Sigstore Bundle v0.3 format
 	b, err := bundle.LoadJSONFromPath(attestationPath)
@@ -177,7 +177,7 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 			Reason: fmt.Sprintf("failed to reset artifact file pointer: %v", err),
 		}
 	}
-	
+
 	h := sha256.New()
 	if _, err := io.Copy(h, artifactFile); err != nil {
 		return VerificationFailedError{
@@ -197,7 +197,7 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 	// ✅ Certificate chain is valid
 	// ✅ Transparency log entry is valid
 	// ✅ Hash matches
-	
+
 	duration := time.Since(startTime)
 	log.WithFields(log.Fields{
 		"artifact":       artifactPath,
@@ -205,7 +205,7 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 		"actualHash":     actualHash,
 		"verificationMs": duration.Milliseconds(),
 	}).Info("SLSA verification successful")
-	
+
 	return nil
 }
 

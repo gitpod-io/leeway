@@ -329,10 +329,10 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 			gitOrigin:         "github.com/gitpod-io/leeway",
 			existingEnvVars:   map[string]string{},
 			expectedEnvVars: map[string]string{
-				leeway.EnvvarSLSACacheVerification:    "true",
+				leeway.EnvvarSLSACacheVerification:   "true",
 				leeway.EnvvarEnableInFlightChecksums: "true",
 				leeway.EnvvarDockerExportToCache:     "true",
-				leeway.EnvvarSLSASourceURI:            "github.com/gitpod-io/leeway",
+				leeway.EnvvarSLSASourceURI:           "github.com/gitpod-io/leeway",
 			},
 		},
 		{
@@ -341,10 +341,10 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 			provenanceSLSA:    false,
 			existingEnvVars:   map[string]string{},
 			expectedEnvVars: map[string]string{
-				leeway.EnvvarSLSACacheVerification:    "",
+				leeway.EnvvarSLSACacheVerification:   "",
 				leeway.EnvvarEnableInFlightChecksums: "",
 				leeway.EnvvarDockerExportToCache:     "",
-				leeway.EnvvarSLSASourceURI:            "",
+				leeway.EnvvarSLSASourceURI:           "",
 			},
 		},
 		{
@@ -353,10 +353,10 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 			provenanceSLSA:    true,
 			existingEnvVars:   map[string]string{},
 			expectedEnvVars: map[string]string{
-				leeway.EnvvarSLSACacheVerification:    "",
+				leeway.EnvvarSLSACacheVerification:   "",
 				leeway.EnvvarEnableInFlightChecksums: "",
 				leeway.EnvvarDockerExportToCache:     "",
-				leeway.EnvvarSLSASourceURI:            "",
+				leeway.EnvvarSLSASourceURI:           "",
 			},
 		},
 		{
@@ -365,14 +365,14 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 			provenanceSLSA:    true,
 			gitOrigin:         "github.com/gitpod-io/leeway",
 			existingEnvVars: map[string]string{
-				leeway.EnvvarSLSACacheVerification:    "false",
+				leeway.EnvvarSLSACacheVerification:   "false",
 				leeway.EnvvarEnableInFlightChecksums: "false",
 			},
 			expectedEnvVars: map[string]string{
-				leeway.EnvvarSLSACacheVerification:    "false", // Not overridden
+				leeway.EnvvarSLSACacheVerification:   "false", // Not overridden
 				leeway.EnvvarEnableInFlightChecksums: "false", // Not overridden
 				leeway.EnvvarDockerExportToCache:     "true",  // Set (wasn't present)
-				leeway.EnvvarSLSASourceURI:            "github.com/gitpod-io/leeway",
+				leeway.EnvvarSLSASourceURI:           "github.com/gitpod-io/leeway",
 			},
 		},
 		{
@@ -382,10 +382,10 @@ func TestWorkspace_ApplySLSADefaults(t *testing.T) {
 			gitOrigin:         "",
 			existingEnvVars:   map[string]string{},
 			expectedEnvVars: map[string]string{
-				leeway.EnvvarSLSACacheVerification:    "true",
+				leeway.EnvvarSLSACacheVerification:   "true",
 				leeway.EnvvarEnableInFlightChecksums: "true",
 				leeway.EnvvarDockerExportToCache:     "true",
-				leeway.EnvvarSLSASourceURI:            "", // Not set without Git origin
+				leeway.EnvvarSLSASourceURI:           "", // Not set without Git origin
 			},
 		},
 	}

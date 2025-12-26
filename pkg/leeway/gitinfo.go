@@ -210,7 +210,7 @@ func GetCommitTimestamp(ctx context.Context, gitInfo *GitInfo) (time.Time, error
 	// Execute git command with context support for cancellation
 	cmd := exec.CommandContext(ctx, "git", "show", "-s", "--format=%ct", gitInfo.Commit)
 	cmd.Dir = gitInfo.WorkingCopyLoc
-	
+
 	output, err := cmd.Output()
 	if err != nil {
 		return time.Time{}, &GitError{

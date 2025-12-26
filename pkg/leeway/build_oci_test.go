@@ -194,7 +194,7 @@ func TestCheckOCILayoutExists(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
-			
+
 			if err := tt.setup(tmpDir); err != nil {
 				t.Fatalf("setup failed: %v", err)
 			}

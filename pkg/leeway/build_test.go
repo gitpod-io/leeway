@@ -193,15 +193,15 @@ func TestBuildDockerDeps(t *testing.T) {
 
 func TestDockerExport_PrecedenceHierarchy(t *testing.T) {
 	tests := []struct {
-		name                   string
-		packageConfig          *bool // nil = not set, &true = true, &false = false
-		workspaceEnvSet        bool  // Simulates workspace auto-set
-		userEnvSet             bool  // Simulates user explicit set
-		userEnvValue           bool
-		cliSet                 bool
-		cliValue               bool
-		expectedFinal          bool
-		expectedSource         string
+		name            string
+		packageConfig   *bool // nil = not set, &true = true, &false = false
+		workspaceEnvSet bool  // Simulates workspace auto-set
+		userEnvSet      bool  // Simulates user explicit set
+		userEnvValue    bool
+		cliSet          bool
+		cliValue        bool
+		expectedFinal   bool
+		expectedSource  string
 	}{
 		{
 			name:            "No config, no overrides - global default",
@@ -232,19 +232,19 @@ func TestDockerExport_PrecedenceHierarchy(t *testing.T) {
 			expectedSource:  "package_config",
 		},
 		{
-			name:          "User env false - overrides package true",
-			packageConfig: boolPtr(true),
-			userEnvSet:    true,
-			userEnvValue:  false,
-			expectedFinal: false,
+			name:           "User env false - overrides package true",
+			packageConfig:  boolPtr(true),
+			userEnvSet:     true,
+			userEnvValue:   false,
+			expectedFinal:  false,
 			expectedSource: "user_env_var",
 		},
 		{
-			name:          "User env true - overrides package false",
-			packageConfig: boolPtr(false),
-			userEnvSet:    true,
-			userEnvValue:  true,
-			expectedFinal: true,
+			name:           "User env true - overrides package false",
+			packageConfig:  boolPtr(false),
+			userEnvSet:     true,
+			userEnvValue:   true,
+			expectedFinal:  true,
 			expectedSource: "user_env_var",
 		},
 		{
@@ -469,7 +469,6 @@ func TestBuildDocker_ExportToCache(t *testing.T) {
 	}
 }
 
-
 func TestDockerPackage_BuildContextOverride(t *testing.T) {
 	tests := []struct {
 		name                   string
@@ -641,4 +640,3 @@ func TestDockerPostProcessing(t *testing.T) {
 		test.Run()
 	}
 }
-
