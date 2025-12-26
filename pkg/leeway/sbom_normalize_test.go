@@ -53,7 +53,7 @@ func TestGenerateDeterministicUUID(t *testing.T) {
 			if len(uuid1) != 36 {
 				t.Errorf("expected UUID length 36, got %d", len(uuid1))
 			}
-			
+
 			// Verify UUID format matches pattern: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 			uuidPattern := `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
 			matched, err := regexp.MatchString(uuidPattern, uuid1)
@@ -142,7 +142,7 @@ func TestGetCommitTimestamp_GitCommit(t *testing.T) {
 		Commit:         "HEAD",
 		WorkingCopyLoc: wd,
 	}
-	
+
 	timestamp, err := GetCommitTimestamp(ctx, gitInfo)
 	if err != nil {
 		t.Skipf("skipping test: not in a git repository or git not available: %v", err)
@@ -178,7 +178,7 @@ func TestGetCommitTimestamp_ContextCancellation(t *testing.T) {
 		Commit:         "HEAD",
 		WorkingCopyLoc: wd,
 	}
-	
+
 	_, err := GetCommitTimestamp(ctx, gitInfo)
 	if err == nil {
 		t.Error("expected error with cancelled context, got nil")
@@ -576,7 +576,7 @@ func TestNormalizeSPDX_FileErrors(t *testing.T) {
 
 // contains is a helper function to check if a string contains a substring
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || 
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
 }
 

@@ -10,10 +10,10 @@ import (
 type MockVerifier struct {
 	// VerifyFunc allows customizing verification behavior in tests
 	VerifyFunc func(ctx context.Context, artifactPath, attestationPath string) error
-	
+
 	// CallLog tracks verification calls for test assertions
 	CallLog []VerifyCall
-	
+
 	// DefaultResult controls the default verification result when VerifyFunc is nil
 	DefaultResult error
 }
@@ -40,12 +40,12 @@ func (m *MockVerifier) VerifyArtifact(ctx context.Context, artifactPath, attesta
 		AttestationPath: attestationPath,
 		Context:         ctx,
 	})
-	
+
 	// Use custom verification function if provided
 	if m.VerifyFunc != nil {
 		return m.VerifyFunc(ctx, artifactPath, attestationPath)
 	}
-	
+
 	// Return default result
 	return m.DefaultResult
 }

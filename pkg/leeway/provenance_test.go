@@ -25,18 +25,18 @@ func TestAccessAttestationBundleInCachedArchive(t *testing.T) {
 			setupFunc: func(t *testing.T, dir string) string {
 				artifactPath := filepath.Join(dir, "test.tar.gz")
 				provenancePath := artifactPath + leeway.ProvenanceBundleFilename
-				
+
 				// Create empty artifact
 				if err := os.WriteFile(artifactPath, []byte("fake tar.gz"), 0644); err != nil {
 					t.Fatal(err)
 				}
-				
+
 				// Create provenance file
 				content := `{"test": "provenance"}`
 				if err := os.WriteFile(provenancePath, []byte(content), 0644); err != nil {
 					t.Fatal(err)
 				}
-				
+
 				return artifactPath
 			},
 			expectError:   false,
@@ -46,12 +46,12 @@ func TestAccessAttestationBundleInCachedArchive(t *testing.T) {
 			name: "provenance does not exist",
 			setupFunc: func(t *testing.T, dir string) string {
 				artifactPath := filepath.Join(dir, "test.tar.gz")
-				
+
 				// Create only artifact, no provenance
 				if err := os.WriteFile(artifactPath, []byte("fake tar.gz"), 0644); err != nil {
 					t.Fatal(err)
 				}
-				
+
 				return artifactPath
 			},
 			expectError: true,
@@ -277,7 +277,7 @@ func TestProvenancePathExtensionHandling(t *testing.T) {
 
 func TestProvenanceDirectoryCreation(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create nested directory structure
 	nestedDir := filepath.Join(tmpDir, "cache", "subdir", "nested")
 	artifactPath := filepath.Join(nestedDir, "test.tar.gz")

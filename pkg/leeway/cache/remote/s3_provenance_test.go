@@ -13,11 +13,11 @@ import (
 // TestS3Cache_ProvenanceUpload tests provenance bundle upload functionality
 func TestS3Cache_ProvenanceUpload(t *testing.T) {
 	tests := []struct {
-		name                  string
-		createProvenanceFile  bool
-		provenanceContent     string
-		expectUpload          bool
-		expectedLogContains   string
+		name                 string
+		createProvenanceFile bool
+		provenanceContent    string
+		expectUpload         bool
+		expectedLogContains  string
 	}{
 		{
 			name:                 "successful provenance upload",
@@ -143,7 +143,7 @@ func TestS3Cache_ProvenanceDownload(t *testing.T) {
 
 			// Create mock package
 			pkg := &mockPackage{
-				
+
 				version: "v1.0.0",
 			}
 
@@ -212,7 +212,7 @@ func TestS3Cache_ProvenanceRoundTrip(t *testing.T) {
 
 	// Create mock package
 	pkg := &mockPackage{
-		
+
 		version: "v1.0.0",
 	}
 
@@ -281,7 +281,7 @@ func TestS3Cache_ProvenanceAtomicMove(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	pkg := &mockPackage{
-		
+
 		version: "v1.0.0",
 	}
 

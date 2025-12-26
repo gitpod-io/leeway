@@ -588,7 +588,7 @@ func TestOTelReporter_BuildError(t *testing.T) {
 	}
 
 	reporter.BuildStarted(pkg, status)
-	
+
 	// Simulate build error
 	buildErr := fmt.Errorf("build failed: compilation error")
 	reporter.BuildFinished(pkg, buildErr)
@@ -762,9 +762,9 @@ func TestOTelReporter_TestCoverageAttributes(t *testing.T) {
 
 	// Verify test coverage attributes
 	expectedAttrs := map[string]int64{
-		"leeway.package.test.coverage_percentage":     85,
-		"leeway.package.test.functions_with_test":     42,
-		"leeway.package.test.functions_without_test":  8,
+		"leeway.package.test.coverage_percentage":    85,
+		"leeway.package.test.functions_with_test":    42,
+		"leeway.package.test.functions_without_test": 8,
 	}
 
 	foundAttrs := make(map[string]int64)

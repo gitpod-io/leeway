@@ -91,7 +91,7 @@ func GenerateSignedSLSAAttestation(ctx context.Context, artifactPath string, git
 	}
 
 	sourceURI := fmt.Sprintf("%s/%s", githubCtx.ServerURL, githubCtx.Repository)
-	
+
 	// Extract builder ID from OIDC token to match certificate identity
 	// This is critical for compatibility with reusable workflows
 	builderID, err := extractBuilderIDFromOIDC(ctx, githubCtx)
@@ -428,7 +428,7 @@ func extractBuilderIDFromOIDC(ctx context.Context, githubCtx *GitHubContext) (st
 	}
 
 	// Try to extract job_workflow_ref from the sub claim first
-	// 
+	//
 	// Context:
 	// When we call sign.Bundle() with the OIDC token, the Sigstore library sends it to Fulcio (Sigstore's CA).
 	// Fulcio extracts claims from the OIDC token and issues a short-lived certificate with the builder identity in the Subject Alternative Name (SAN).
@@ -438,7 +438,7 @@ func extractBuilderIDFromOIDC(ctx context.Context, githubCtx *GitHubContext) (st
 	// GitHub docs show it as top-level, but we need to confirm what Fulcio actually uses. The current
 	// implementation tries both approaches to ensure we match Fulcio's extraction logic.
 	jobWorkflowRef := extractJobWorkflowRef(sub)
-	
+
 	// If not found in sub, try the top-level job_workflow_ref claim
 	if jobWorkflowRef == "" {
 		if jwfRef, ok := claims["job_workflow_ref"].(string); ok && jwfRef != "" {
@@ -446,14 +446,14 @@ func extractBuilderIDFromOIDC(ctx context.Context, githubCtx *GitHubContext) (st
 			log.WithField("job_workflow_ref", jobWorkflowRef).Debug("Using top-level job_workflow_ref claim (not found in sub)")
 		}
 	}
-	
+
 	if jobWorkflowRef == "" {
 		return "", fmt.Errorf("job_workflow_ref not found in sub claim or top-level claims: %s", sub)
 	}
 
 	// Construct the builder ID URL
 	builderID := fmt.Sprintf("%s/%s", githubCtx.ServerURL, jobWorkflowRef)
-	
+
 	log.WithFields(log.Fields{
 		"sub_claim":        sub,
 		"job_workflow_ref": jobWorkflowRef,
@@ -472,7 +472,7 @@ func extractBuilderIDFromOIDC(ctx context.Context, githubCtx *GitHubContext) (st
 func extractJobWorkflowRef(sub string) string {
 	// Split by colon to parse the structured claim
 	parts := strings.Split(sub, ":")
-	
+
 	// Find the job_workflow_ref field
 	for i, part := range parts {
 		if part == "job_workflow_ref" && i+1 < len(parts) {
@@ -481,7 +481,7 @@ func extractJobWorkflowRef(sub string) string {
 			return strings.Join(parts[i+1:], ":")
 		}
 	}
-	
+
 	// If no job_workflow_ref found, return empty string
 	return ""
 }

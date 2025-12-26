@@ -68,7 +68,7 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 		// Artifact doesn't exist yet - this shouldn't happen as provenance should be written after packaging
 		log.WithField("package", p.FullName()).WithField("path", artifactPath).Warn("Writing provenance before artifact exists")
 	}
-	
+
 	// Ensure we use the .tar.gz extension
 	if strings.HasSuffix(artifactPath, ".tar") && !strings.HasSuffix(artifactPath, ".tar.gz") {
 		artifactPath = artifactPath + ".gz"
@@ -79,7 +79,7 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 	// Write provenance alongside artifact: <artifact>.provenance.jsonl
 	// This keeps provenance metadata separate from the artifact for determinism
 	provenancePath := artifactPath + ProvenanceBundleFilename
-	
+
 	// Ensure directory exists
 	dir := filepath.Dir(provenancePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
