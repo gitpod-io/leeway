@@ -19,6 +19,8 @@ import (
 	"github.com/gookit/color"
 	segment "github.com/segmentio/analytics-go/v3"
 	"github.com/segmentio/textio"
+
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 )
 
 // Reporter provides feedback about the build progress to the user.
@@ -46,6 +48,10 @@ type Reporter interface {
 	// PackageBuildFinished is called when the package build has finished. If an error is passed in
 	// the package build was not succesfull.
 	PackageBuildFinished(pkg *Package, rep *PackageBuildReport)
+
+	// CacheUploadFailed is called when uploading build artifacts to remote cache fails.
+	// This is a non-fatal error that doesn't prevent the build from succeeding.
+	CacheUploadFailed(pkgs []cache.Package, err error)
 }
 
 type PackageBuildReport struct {
@@ -247,6 +253,25 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRe
 	io.WriteString(out, msg)
 }
 
+// CacheUploadFailed is called when uploading build artifacts to remote cache fails.
+func (r *ConsoleReporter) CacheUploadFailed(pkgs []cache.Package, err error) {
+	if len(pkgs) == 0 {
+		return
+	}
+
+	color.Printf("<yellow>⚠️  cache upload failed</> <gray>(built packages remain in local cache)</>\n")
+	color.Printf("<white>Reason:</> %s\n", err)
+
+	if len(pkgs) <= 5 {
+		color.Printf("<gray>Affected packages:</>\n")
+		for _, pkg := range pkgs {
+			color.Printf("  - %s\n", pkg.FullName())
+		}
+	} else {
+		color.Printf("<gray>%d packages affected</>\n", len(pkgs))
+	}
+}
+
 func getRunPrefix(p *Package) string {
 	return color.Gray.Render(fmt.Sprintf("[%s] ", p.FullName()))
 }
@@ -295,6 +320,11 @@ func (r *WerftReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRepo
 		msg = rep.Error.Error()
 	}
 	fmt.Printf("[%s|%s] %s\n", pkg.FullName(), status, msg)
+}
+
+// CacheUploadFailed is called when uploading build artifacts to remote cache fails.
+func (r *WerftReporter) CacheUploadFailed(pkgs []cache.Package, err error) {
+	log.WithError(err).WithField("packageCount", len(pkgs)).Warn("cache upload failed")
 }
 
 type HTMLPackageReport struct {
@@ -425,6 +455,11 @@ func (r *HTMLReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRepor
 	}
 }
 
+// CacheUploadFailed is called when uploading build artifacts to remote cache fails.
+func (r *HTMLReporter) CacheUploadFailed(pkgs []cache.Package, err error) {
+	// HTML reporter doesn't need to track cache upload failures
+}
+
 func (r *HTMLReporter) Report() {
 	vars := make(map[string]interface{})
 	vars["Name"] = r.filename
@@ -535,6 +570,13 @@ func (cr CompositeReporter) PackageBuildStarted(pkg *Package) {
 	}
 }
 
+// CacheUploadFailed implements Reporter
+func (cr CompositeReporter) CacheUploadFailed(pkgs []cache.Package, err error) {
+	for _, r := range cr {
+		r.CacheUploadFailed(pkgs, err)
+	}
+}
+
 var _ Reporter = CompositeReporter{}
 
 type NoopReporter struct{}
@@ -553,6 +595,9 @@ func (*NoopReporter) PackageBuildLog(pkg *Package, isErr bool, buf []byte) {}
 
 // PackageBuildStarted implements Reporter
 func (*NoopReporter) PackageBuildStarted(pkg *Package) {}
+
+// CacheUploadFailed implements Reporter
+func (*NoopReporter) CacheUploadFailed(pkgs []cache.Package, err error) {}
 
 var _ Reporter = ((*NoopReporter)(nil))
 
@@ -650,6 +695,11 @@ func (sr *SegmentReporter) track(event string, props segment.Properties) {
 	}
 }
 
+// CacheUploadFailed is called when uploading build artifacts to remote cache fails.
+func (sr *SegmentReporter) CacheUploadFailed(pkgs []cache.Package, err error) {
+	// Could track cache upload failures for analytics in the future
+}
+
 func NewGitHubReporter() *GitHubActionReporter {
 	return &GitHubActionReporter{}
 }
@@ -680,4 +730,9 @@ func (sr *GitHubActionReporter) PackageBuildFinished(pkg *Package, rep *PackageB
 		success = true
 	}
 	fmt.Fprintf(f, "%s=%v\n", pkg.FilesystemSafeName(), success)
+}
+
+// CacheUploadFailed is called when uploading build artifacts to remote cache fails.
+func (sr *GitHubActionReporter) CacheUploadFailed(pkgs []cache.Package, err error) {
+	fmt.Printf("::warning::Cache upload failed: %s (%d packages affected)\n", err, len(pkgs))
 }
