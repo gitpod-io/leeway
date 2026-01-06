@@ -38,7 +38,7 @@ func TestConsoleReporter(t *testing.T) {
 				r.PackageBuildStarted(pkg, "/tmp/build")
 
 				r.now = func() time.Time {
-					return start.Add(5 * time.Second)
+					return start.Add(6 * time.Second)
 				}
 				r.PackageBuildFinished(pkg, &PackageBuildReport{
 					Phases: []PackageBuildPhase{
@@ -46,13 +46,15 @@ func TestConsoleReporter(t *testing.T) {
 						PackageBuildPhasePull,
 						PackageBuildPhaseLint,
 						PackageBuildPhaseTest,
-						PackageBuildPhaseBuild},
+						PackageBuildPhaseBuild,
+						PackageBuildPhaseSBOM},
 					phaseEnter: map[PackageBuildPhase]time.Time{
 						PackageBuildPhasePrep:  start,
 						PackageBuildPhasePull:  start.Add(time.Second),
 						PackageBuildPhaseBuild: start.Add(2 * time.Second),
 						PackageBuildPhaseTest:  start.Add(3 * time.Second),
 						PackageBuildPhaseLint:  start.Add(4 * time.Second),
+						PackageBuildPhaseSBOM:  start.Add(5 * time.Second),
 					},
 					phaseDone: map[PackageBuildPhase]time.Time{
 						PackageBuildPhasePrep:  start.Add(time.Second),
@@ -60,12 +62,13 @@ func TestConsoleReporter(t *testing.T) {
 						PackageBuildPhaseBuild: start.Add(3 * time.Second),
 						PackageBuildPhaseTest:  start.Add(4 * time.Second),
 						PackageBuildPhaseLint:  start.Add(5 * time.Second),
+						PackageBuildPhaseSBOM:  start.Add(6 * time.Second),
 					},
 				})
 			},
 			Expect: Expectation{
 				Output: `[test:test] build started (version unknown, builddir /tmp/build)
-[test:test] package build succeeded (5.00s) [prep: 1.0s | pull: 1.0s | lint: 1.0s | test: 1.0s | build: 1.0s]
+[test:test] package build succeeded in 6.00s (prep 1.0s, pull 1.0s, lint 1.0s, test 1.0s, build 1.0s, sbom 1.0s)
 `,
 			},
 		},
@@ -79,7 +82,7 @@ func TestConsoleReporter(t *testing.T) {
 			},
 			Expect: Expectation{
 				Output: `[test:test] build started (version unknown, builddir /tmp/build)
-[test:test] package build succeeded (0.00s)
+[test:test] package build succeeded in 0.00s
 `,
 			},
 		},

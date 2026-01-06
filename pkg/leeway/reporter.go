@@ -234,12 +234,12 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRe
 	var phaseDurations []string
 	for _, phase := range rep.Phases {
 		if d := rep.PhaseDuration(phase); d > 0 {
-			phaseDurations = append(phaseDurations, fmt.Sprintf("%s: %.1fs", phase, d.Seconds()))
+			phaseDurations = append(phaseDurations, fmt.Sprintf("%s %.1fs", phase, d.Seconds()))
 		}
 	}
 	phaseDurStr := ""
 	if len(phaseDurations) > 0 {
-		phaseDurStr = color.Sprintf(" [%s]", strings.Join(phaseDurations, " | "))
+		phaseDurStr = color.Sprintf(" (%s)", strings.Join(phaseDurations, ", "))
 	}
 
 	var msg string
@@ -250,7 +250,7 @@ func (r *ConsoleReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRe
 		if rep.TestCoverageAvailable {
 			coverage = color.Sprintf("<fg=yellow>test coverage: %d%%</> <gray>(%d of %d functions have tests)</>\n", rep.TestCoveragePercentage, rep.FunctionsWithTest, rep.FunctionsWithTest+rep.FunctionsWithoutTest)
 		}
-		msg = color.Sprintf("%s<green>package build succeeded</> <gray>(%.2fs)%s</>\n", coverage, dur.Seconds(), phaseDurStr)
+		msg = color.Sprintf("%s<green>package build succeeded</> <gray>in %.2fs%s</>\n", coverage, dur.Seconds(), phaseDurStr)
 	}
 	//nolint:errcheck
 	io.WriteString(out, msg)
