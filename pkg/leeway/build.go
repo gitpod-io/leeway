@@ -68,9 +68,11 @@ type buildContext struct {
 	mu                 sync.Mutex
 	newlyBuiltPackages map[string]*Package
 
-	pkgLockCond *sync.Cond
-	pkgLocks    map[string]struct{}
-	buildLimit  *semaphore.Weighted
+	pkgLockCond           *sync.Cond
+	pkgLocks              map[string]struct{}
+	buildLimit            *semaphore.Weighted
+	immediateCacheUpload  bool
+	uploadedPackages      map[string]struct{} // Track packages already uploaded to avoid duplicates
 }
 
 const (
@@ -84,6 +86,12 @@ const (
 	// See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
 	// Defaults to "network".
 	EnvvarYarnMutex = "LEEWAY_YARN_MUTEX"
+
+	// EnvvarImmediateCacheUpload controls whether packages are uploaded to remote cache immediately
+	// after successful build, rather than waiting until the end of the entire build.
+	// Set to "true" to enable immediate uploads. This is useful when builds may be interrupted
+	// externally (e.g., CI timeouts, manual cancellation) to ensure partial results are cached.
+	EnvvarImmediateCacheUpload = "LEEWAY_CACHE_UPLOAD_IMMEDIATE"
 
 	// dockerImageNamesFiles is the name of the file store in poushed Docker build artifacts
 	// which contains the names of the Docker images we just pushed
@@ -145,15 +153,20 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 		return nil, xerrors.Errorf("cannot compute hash of myself: %w", err)
 	}
 
+	// Check if immediate cache upload is enabled
+	immediateCacheUpload := os.Getenv(EnvvarImmediateCacheUpload) == "true"
+
 	ctx = &buildContext{
-		buildOptions:       options,
-		buildDir:           buildDir,
-		buildID:            buildID,
-		newlyBuiltPackages: make(map[string]*Package),
-		pkgLockCond:        sync.NewCond(&sync.Mutex{}),
-		pkgLocks:           make(map[string]struct{}),
-		buildLimit:         buildLimit,
-		leewayHash:         hex.EncodeToString(leewayHash.Sum(nil)),
+		buildOptions:         options,
+		buildDir:             buildDir,
+		buildID:              buildID,
+		newlyBuiltPackages:   make(map[string]*Package),
+		pkgLockCond:          sync.NewCond(&sync.Mutex{}),
+		pkgLocks:             make(map[string]struct{}),
+		buildLimit:           buildLimit,
+		leewayHash:           hex.EncodeToString(leewayHash.Sum(nil)),
+		immediateCacheUpload: immediateCacheUpload,
+		uploadedPackages:     make(map[string]struct{}),
 	}
 
 	err = os.MkdirAll(buildDir, 0755)
@@ -235,14 +248,59 @@ func (c *buildContext) RegisterNewlyBuilt(p *Package) error {
 	c.mu.Lock()
 	c.newlyBuiltPackages[ver] = p
 	c.mu.Unlock()
+
+	// If immediate cache upload is enabled, upload this package right away
+	if c.immediateCacheUpload && !p.Ephemeral {
+		if err := c.uploadPackageImmediately(p); err != nil {
+			// Log the error but don't fail the build
+			log.WithError(err).WithField("package", p.FullName()).Warn("immediate cache upload failed")
+			c.Reporter.CacheUploadFailed([]cache.Package{p}, err)
+		}
+	}
+
+	return nil
+}
+
+// uploadPackageImmediately uploads a single package to remote cache immediately after build
+func (c *buildContext) uploadPackageImmediately(p *Package) error {
+	ver, err := p.Version()
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	// Check if already uploaded to avoid duplicate uploads
+	if _, uploaded := c.uploadedPackages[ver]; uploaded {
+		c.mu.Unlock()
+		return nil
+	}
+	c.uploadedPackages[ver] = struct{}{}
+	c.mu.Unlock()
+
+	log.WithField("package", p.FullName()).Debug("uploading package to remote cache immediately")
+
+	pkgsToUpload := []cache.Package{p}
+	err = c.RemoteCache.Upload(context.Background(), c.LocalCache, pkgsToUpload)
+	if err != nil {
+		// Remove from uploaded set on failure so it can be retried at the end
+		c.mu.Lock()
+		delete(c.uploadedPackages, ver)
+		c.mu.Unlock()
+		return err
+	}
+
 	return nil
 }
 
 func (c *buildContext) GetNewPackagesForCache() []*Package {
 	res := make([]*Package, 0, len(c.newlyBuiltPackages))
 	c.mu.Lock()
-	for _, pkg := range c.newlyBuiltPackages {
+	for ver, pkg := range c.newlyBuiltPackages {
 		if pkg.Ephemeral {
+			continue
+		}
+		// Skip packages that were already uploaded immediately
+		if _, uploaded := c.uploadedPackages[ver]; uploaded {
 			continue
 		}
 		res = append(res, pkg)

@@ -491,6 +491,7 @@ variables have an effect on leeway:
           For details on configuring AWS credentials see https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
 - `LEEWAY_CACHE_DIR`: Location of the local build cache. The directory does not have to exist yet.
 - `LEEWAY_BUILD_DIR`: Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O which makes it advisable to place this on a fast SSD or in RAM.
+- `LEEWAY_CACHE_UPLOAD_IMMEDIATE`: When set to "true", packages are uploaded to remote cache immediately after successful build, rather than waiting until the end of the entire build. This is useful when builds may be interrupted externally (e.g., CI timeouts, manual cancellation) to ensure partial results are cached. Defaults to "false".
 - `LEEWAY_YARN_MUTEX`: Configures the mutex flag leeway will pass to yarn. Defaults to "network". See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
 - `LEEWAY_EXPERIMENTAL`: Enables exprimental features
 
