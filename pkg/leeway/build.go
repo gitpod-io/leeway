@@ -1362,7 +1362,13 @@ func executeBuildPhase(buildctx *buildContext, p *Package, builddir string, bld 
 
 	log.WithField("phase", phase).WithField("package", p.FullName()).WithField("commands", bld.Commands[phase]).Debug("running commands")
 
-	err := executeCommandsForPackage(buildctx, p, builddir, cmds)
+	var err error
+	// Use TestExecutor for test phase if available (enables per-test tracing)
+	if phase == PackageBuildPhaseTest && bld.TestExecutor != nil {
+		err = bld.TestExecutor(buildctx, p, builddir)
+	} else {
+		err = executeCommandsForPackage(buildctx, p, builddir, cmds)
+	}
 	pkgRep.phaseDone[phase] = time.Now()
 
 	return err
@@ -1521,6 +1527,11 @@ type packageBuild struct {
 	// It's used for post-build processing that needs to happen regardless of provenance settings,
 	// such as Docker image extraction.
 	PostProcess func(buildCtx *buildContext, pkg *Package, buildDir string) error
+
+	// TestExecutor is an optional function that executes tests with tracing support.
+	// If set, it will be used instead of the standard command execution for the test phase.
+	// This allows Go packages to create spans for individual tests.
+	TestExecutor func(buildctx *buildContext, p *Package, builddir string) error
 }
 
 type testCoverageFunc func() (coverage, funcsWithoutTest, funcsWithTest int, err error)
@@ -2103,6 +2114,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		}
 	}
 	var reportCoverage testCoverageFunc
+	var testExecutor func(buildctx *buildContext, p *Package, builddir string) error
 	if !cfg.DontTest && !buildctx.DontTest {
 		testCommand := []string{goCommand, "test"}
 		if log.IsLevelEnabled(log.DebugLevel) {
@@ -2122,6 +2134,9 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		testCommand = append(testCommand, "./...")
 
 		commands[PackageBuildPhaseTest] = append(commands[PackageBuildPhaseTest], testCommand)
+
+		// Create test executor for tracing individual tests
+		testExecutor = createGoTestExecutor(testCommand)
 	}
 
 	var buildCmd []string
@@ -2160,7 +2175,46 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	return &packageBuild{
 		Commands:     commands,
 		TestCoverage: reportCoverage,
+		TestExecutor: testExecutor,
 	}, nil
+}
+
+// createGoTestExecutor creates a test executor function that runs go test with JSON output
+// and creates OpenTelemetry spans for each individual test when a TestTracingReporter is available.
+func createGoTestExecutor(testCommand []string) func(buildctx *buildContext, p *Package, builddir string) error {
+	return func(buildctx *buildContext, p *Package, builddir string) error {
+		// Check if the reporter supports test tracing
+		tracingReporter, ok := buildctx.Reporter.(TestTracingReporter)
+		if !ok {
+			// Fall back to standard execution without tracing
+			return executeCommandsForPackage(buildctx, p, builddir, [][]string{testCommand})
+		}
+
+		// Get the test tracer from the reporter
+		tracer := tracingReporter.GetGoTestTracer(p)
+		if tracer == nil {
+			// Tracer not available, fall back to standard execution
+			return executeCommandsForPackage(buildctx, p, builddir, [][]string{testCommand})
+		}
+
+		// Set up environment
+		env := append(os.Environ(), p.Environment...)
+		env = append(env, fmt.Sprintf("%s=%s", EnvvarWorkspaceRoot, p.C.W.Origin))
+
+		// Export SOURCE_DATE_EPOCH for reproducible builds
+		mtime, err := p.getDeterministicMtime()
+		if err == nil {
+			env = append(env, fmt.Sprintf("SOURCE_DATE_EPOCH=%d", mtime))
+		}
+		env = append(env, "DOCKER_BUILDKIT=1")
+
+		// Create output writer that reports to the build reporter
+		outputWriter := &reporterStream{R: buildctx.Reporter, P: p, IsErr: false}
+
+		// Run go test with JSON output and create spans for each test
+		log.WithField("package", p.FullName()).WithField("command", strings.Join(testCommand, " ")).Debug("running go test with tracing")
+		return tracer.RunGoTest(context.Background(), env, builddir, testCommand, outputWriter)
+	}
 }
 
 func collectGoTestCoverage(covfile string) testCoverageFunc {

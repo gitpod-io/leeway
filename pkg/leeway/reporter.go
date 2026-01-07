@@ -52,6 +52,16 @@ type Reporter interface {
 	PackageBuildFinished(pkg *Package, rep *PackageBuildReport)
 }
 
+// TestTracingReporter is an optional interface that reporters can implement
+// to support creating spans for individual Go tests during the test phase.
+type TestTracingReporter interface {
+	Reporter
+
+	// GetGoTestTracer returns a GoTestTracer for creating test spans as children
+	// of the package's test phase span. Returns nil if test tracing is not available.
+	GetGoTestTracer(pkg *Package) *GoTestTracer
+}
+
 type PackageBuildReport struct {
 	phaseEnter map[PackageBuildPhase]time.Time
 	phaseDone  map[PackageBuildPhase]time.Time
@@ -941,4 +951,25 @@ func (r *OTelReporter) addGitHubAttributes(span trace.Span) {
 	}
 }
 
+// GetGoTestTracer returns a GoTestTracer for creating test spans as children
+// of the package's span. This allows individual Go tests to be traced.
+func (r *OTelReporter) GetGoTestTracer(pkg *Package) *GoTestTracer {
+	if r.tracer == nil {
+		return nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	pkgName := pkg.FullName()
+	ctx, ok := r.packageCtxs[pkgName]
+	if !ok {
+		log.WithField("package", pkgName).Warn("GetGoTestTracer called without active package context")
+		return nil
+	}
+
+	return NewGoTestTracer(r.tracer, ctx)
+}
+
 var _ Reporter = (*OTelReporter)(nil)
+var _ TestTracingReporter = (*OTelReporter)(nil)
