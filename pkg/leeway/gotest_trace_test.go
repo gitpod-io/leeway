@@ -278,3 +278,45 @@ func TestGoTestEvent_Parsing(t *testing.T) {
 		t.Error("expected non-zero time")
 	}
 }
+
+func TestCompositeReporter_GetGoTestTracer(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSyncer(exporter),
+	)
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	tracer := tp.Tracer("test")
+	otelReporter := NewOTelReporter(tracer, context.Background())
+
+	// Create a mock package for testing with required fields
+	ws := &Workspace{Origin: "/tmp/workspace"}
+	comp := &Component{Name: "test-component", W: ws}
+	pkg := &Package{
+		C: comp,
+		PackageInternal: PackageInternal{
+			Name:    "test-pkg",
+			Type:    GoPackage,
+			Sources: []string{},
+		},
+	}
+
+	// Simulate build started to create package context
+	otelReporter.BuildStarted(pkg, map[*Package]PackageBuildStatus{pkg: PackageNotBuiltYet})
+	otelReporter.PackageBuildStarted(pkg, "/tmp/build")
+
+	// Test with CompositeReporter containing OTelReporter
+	composite := CompositeReporter{NewConsoleReporter(), otelReporter}
+
+	goTracer := composite.GetGoTestTracer(pkg)
+	if goTracer == nil {
+		t.Error("expected GetGoTestTracer to return non-nil tracer from CompositeReporter")
+	}
+
+	// Test with CompositeReporter without any TestTracingReporter
+	compositeNoTracing := CompositeReporter{NewConsoleReporter()}
+	goTracerNil := compositeNoTracing.GetGoTestTracer(pkg)
+	if goTracerNil != nil {
+		t.Error("expected GetGoTestTracer to return nil when no TestTracingReporter is present")
+	}
+}

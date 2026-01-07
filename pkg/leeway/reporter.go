@@ -554,7 +554,21 @@ func (cr CompositeReporter) PackageBuildStarted(pkg *Package, builddir string) {
 	}
 }
 
+// GetGoTestTracer implements TestTracingReporter by delegating to the first
+// wrapped reporter that supports test tracing.
+func (cr CompositeReporter) GetGoTestTracer(pkg *Package) *GoTestTracer {
+	for _, r := range cr {
+		if tr, ok := r.(TestTracingReporter); ok {
+			if tracer := tr.GetGoTestTracer(pkg); tracer != nil {
+				return tracer
+			}
+		}
+	}
+	return nil
+}
+
 var _ Reporter = CompositeReporter{}
+var _ TestTracingReporter = CompositeReporter{}
 
 type NoopReporter struct{}
 
