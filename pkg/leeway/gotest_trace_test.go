@@ -33,9 +33,12 @@ func TestGoTestTracer_ParseJSONOutput(t *testing.T) {
 {"Time":"2024-01-01T10:00:00.100Z","Action":"output","Package":"example.com/pkg","Test":"TestOne","Output":"--- PASS: TestOne (0.10s)\n"}
 {"Time":"2024-01-01T10:00:00.100Z","Action":"pass","Package":"example.com/pkg","Test":"TestOne","Elapsed":0.1}
 {"Time":"2024-01-01T10:00:00.101Z","Action":"run","Package":"example.com/pkg","Test":"TestTwo"}
+{"Time":"2024-01-01T10:00:00.150Z","Action":"output","Package":"example.com/pkg","Test":"TestTwo","Output":"    test_two.go:10: assertion failed\n"}
 {"Time":"2024-01-01T10:00:00.200Z","Action":"fail","Package":"example.com/pkg","Test":"TestTwo","Elapsed":0.1}
 {"Time":"2024-01-01T10:00:00.201Z","Action":"run","Package":"example.com/pkg","Test":"TestThree"}
 {"Time":"2024-01-01T10:00:00.250Z","Action":"skip","Package":"example.com/pkg","Test":"TestThree","Elapsed":0.05}
+{"Time":"2024-01-01T10:00:00.299Z","Action":"output","Package":"example.com/pkg","Output":"PASS\n"}
+{"Time":"2024-01-01T10:00:00.300Z","Action":"output","Package":"example.com/pkg","Output":"ok  \texample.com/pkg\t0.3s\n"}
 {"Time":"2024-01-01T10:00:00.300Z","Action":"pass","Package":"example.com/pkg","Elapsed":0.3}
 `
 
@@ -99,8 +102,13 @@ func TestGoTestTracer_ParseJSONOutput(t *testing.T) {
 
 	// Verify output was written
 	output := outputBuf.String()
-	if !strings.Contains(output, "=== RUN   TestOne") {
-		t.Error("expected test output to be written")
+	// Package-level output should always be shown
+	if !strings.Contains(output, "ok  \texample.com/pkg") {
+		t.Error("expected package summary output to be written")
+	}
+	// Failed test output should be shown (TestTwo failed)
+	if !strings.Contains(output, "assertion failed") {
+		t.Error("expected failed test output to be written")
 	}
 }
 

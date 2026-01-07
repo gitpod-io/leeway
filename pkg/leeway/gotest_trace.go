@@ -104,6 +104,11 @@ func (t *GoTestTracer) parseJSONOutput(r io.Reader, outputWriter io.Writer) erro
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
 
+	verbose := log.IsLevelEnabled(log.DebugLevel)
+
+	// Buffer output for each test so we can show it on failure
+	testOutput := make(map[string][]string)
+
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
@@ -117,12 +122,41 @@ func (t *GoTestTracer) parseJSONOutput(r io.Reader, outputWriter io.Writer) erro
 			continue
 		}
 
-		// Write the output to the reporter
+		// Handle output based on verbosity
 		if outputWriter != nil && event.Output != "" {
-			_, _ = outputWriter.Write([]byte(event.Output))
+			if verbose {
+				// Verbose mode: show all output
+				_, _ = outputWriter.Write([]byte(event.Output))
+			} else if event.Test == "" {
+				// Non-verbose: always show package-level output
+				_, _ = outputWriter.Write([]byte(event.Output))
+			} else {
+				// Non-verbose: buffer test output in case of failure
+				key := spanKey(event.Package, event.Test)
+				testOutput[key] = append(testOutput[key], event.Output)
+			}
 		}
 
-		// Handle the event
+		// On test failure, flush buffered output (non-verbose mode only)
+		if !verbose && event.Action == "fail" && event.Test != "" {
+			key := spanKey(event.Package, event.Test)
+			if output, ok := testOutput[key]; ok {
+				for _, line := range output {
+					_, _ = outputWriter.Write([]byte(line))
+				}
+				delete(testOutput, key)
+			}
+		}
+
+		// Clean up buffer on test completion (pass/skip)
+		if event.Action == "pass" || event.Action == "skip" {
+			if event.Test != "" {
+				key := spanKey(event.Package, event.Test)
+				delete(testOutput, key)
+			}
+		}
+
+		// Handle the event for span creation
 		t.handleEvent(&event)
 	}
 
