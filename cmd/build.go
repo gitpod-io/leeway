@@ -99,6 +99,7 @@ func build(cmd *cobra.Command, args []string) error {
 					if save != "" {
 						err = saveBuildResult(ctx, save, localCache, pkg)
 						if err != nil {
+							cancel()
 							return err
 						}
 					}
@@ -109,6 +110,7 @@ func build(cmd *cobra.Command, args []string) error {
 					log.Error(err)
 				}
 			case err = <-errs:
+				cancel()
 				return err
 			}
 		}
