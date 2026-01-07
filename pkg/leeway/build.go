@@ -131,7 +131,7 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 
 	// Ensure cache directory exists with proper permissions
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
-		log.WithError(err).Fatal("failed to create build directory")
+		return nil, xerrors.Errorf("failed to create build directory: %w", err)
 	}
 
 	var buildLimit *semaphore.Weighted

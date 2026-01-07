@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,80 +36,98 @@ var buildCmd = &cobra.Command{
 Docker Export Mode:
   By default, Docker packages with 'image' configuration push directly to registries.
   Use --docker-export-to-cache to export images to cache instead (enables SLSA L3).
-  
+
   The LEEWAY_DOCKER_EXPORT_TO_CACHE environment variable sets the default for the flag.
 
 Examples:
   # Build with Docker export mode enabled (CLI flag)
   leeway build --docker-export-to-cache :myapp
-  
+
   # Build with Docker export mode enabled (environment variable)
   LEEWAY_DOCKER_EXPORT_TO_CACHE=true leeway build :myapp
-  
+
   # Disable export mode even if env var is set
   leeway build --docker-export-to-cache=false :myapp`,
 	Args: cobra.MaximumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		_, pkg, _, _ := getTarget(args, false)
-		if pkg == nil {
-			log.Fatal("build needs a package")
-		}
-		opts, localCache, shutdown := getBuildOpts(cmd)
-		defer shutdown()
-
-		var (
-			watch, _ = cmd.Flags().GetBool("watch")
-			save, _  = cmd.Flags().GetString("save")
-			serve, _ = cmd.Flags().GetString("serve")
-		)
-		if watch {
-			err := leeway.Build(pkg, opts...)
-			if err != nil {
-				log.Fatal(err)
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			if save != "" {
-				saveBuildResult(ctx, save, localCache, pkg)
-			}
-			if serve != "" {
-				go serveBuildResult(ctx, serve, localCache, pkg)
-			}
-
-			evt, errs := leeway.WatchSources(context.Background(), append(pkg.GetTransitiveDependencies(), pkg), 2*time.Second)
-			for {
-				select {
-				case <-evt:
-					_, pkg, _, _ := getTarget(args, false)
-					err := leeway.Build(pkg, opts...)
-					if err == nil {
-						cancel()
-						ctx, cancel = context.WithCancel(context.Background())
-						if save != "" {
-							saveBuildResult(ctx, save, localCache, pkg)
-						}
-						if serve != "" {
-							go serveBuildResult(ctx, serve, localCache, pkg)
-						}
-					} else {
-						log.Error(err)
-					}
-				case err = <-errs:
-					log.Fatal(err)
-				}
-			}
-		}
-
-		err := leeway.Build(pkg, opts...)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		err := build(cmd, args)
 		if err != nil {
 			log.Fatal(err)
 		}
+		return nil
+	},
+}
+
+func build(cmd *cobra.Command, args []string) error {
+	_, pkg, _, _ := getTarget(args, false)
+	if pkg == nil {
+		return errors.New("build needs a package")
+	}
+	opts, localCache, shutdown := getBuildOpts(cmd)
+	defer shutdown()
+
+	var (
+		watch, _ = cmd.Flags().GetBool("watch")
+		save, _  = cmd.Flags().GetString("save")
+		serve, _ = cmd.Flags().GetString("serve")
+	)
+	if watch {
+		err := leeway.Build(pkg, opts...)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithCancel(context.Background())
 		if save != "" {
-			saveBuildResult(context.Background(), save, localCache, pkg)
+			err = saveBuildResult(ctx, save, localCache, pkg)
+			if err != nil {
+				return err
+			}
 		}
 		if serve != "" {
-			serveBuildResult(context.Background(), serve, localCache, pkg)
+			go serveBuildResult(ctx, serve, localCache, pkg)
 		}
-	},
+
+		evt, errs := leeway.WatchSources(context.Background(), append(pkg.GetTransitiveDependencies(), pkg), 2*time.Second)
+		for {
+			select {
+			case <-evt:
+				_, pkg, _, _ := getTarget(args, false)
+				err := leeway.Build(pkg, opts...)
+				if err == nil {
+					cancel()
+					ctx, cancel = context.WithCancel(context.Background())
+					if save != "" {
+						err = saveBuildResult(ctx, save, localCache, pkg)
+						if err != nil {
+							return err
+						}
+					}
+					if serve != "" {
+						go serveBuildResult(ctx, serve, localCache, pkg)
+					}
+				} else {
+					log.Error(err)
+				}
+			case err = <-errs:
+				return err
+			}
+		}
+	}
+
+	err := leeway.Build(pkg, opts...)
+	if err != nil {
+		return err
+	}
+	if save != "" {
+		err = saveBuildResult(context.Background(), save, localCache, pkg)
+		if err != nil {
+			return err
+		}
+	}
+	if serve != "" {
+		serveBuildResult(context.Background(), serve, localCache, pkg)
+	}
+	return nil
 }
 
 func serveBuildResult(ctx context.Context, addr string, localCache cache.LocalCache, pkg *leeway.Package) {
@@ -148,30 +167,31 @@ func serveBuildResult(ctx context.Context, addr string, localCache cache.LocalCa
 	}
 }
 
-func saveBuildResult(ctx context.Context, loc string, localCache cache.LocalCache, pkg *leeway.Package) {
+func saveBuildResult(ctx context.Context, loc string, localCache cache.LocalCache, pkg *leeway.Package) error {
 	br, exists := localCache.Location(pkg)
 	if !exists {
-		log.Fatal("build result is not in local cache despite just being built. Something's wrong with the cache.")
+		return errors.New("build result is not in local cache despite just being built. Something's wrong with the cache.")
 	}
 
 	fout, err := os.OpenFile(loc, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.WithError(err).Fatal("cannot open result file for writing")
+		return fmt.Errorf("cannot open result file for writing: %w", err)
 	}
 	fin, err := os.OpenFile(br, os.O_RDONLY, 0644)
 	if err != nil {
 		fout.Close()
-		log.WithError(err).Fatal("cannot copy build result")
+		return fmt.Errorf("cannot copy build result: %w", err)
 	}
 
 	_, err = io.Copy(fout, fin)
 	fout.Close()
 	fin.Close()
 	if err != nil {
-		log.WithError(err).Fatal("cannot copy build result")
+		return fmt.Errorf("cannot copy build result: %w", err)
 	}
 
 	fmt.Printf("\n💾  saving build result to %s\n", color.Cyan.Render(loc))
+	return nil
 }
 
 func init() {
