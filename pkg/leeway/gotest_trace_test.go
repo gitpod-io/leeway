@@ -287,7 +287,7 @@ func TestGoTestEvent_Parsing(t *testing.T) {
 	}
 }
 
-func TestCompositeReporter_GetGoTestTracer(t *testing.T) {
+func TestFindOTelReporter(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithSyncer(exporter),
@@ -297,34 +297,47 @@ func TestCompositeReporter_GetGoTestTracer(t *testing.T) {
 	tracer := tp.Tracer("test")
 	otelReporter := NewOTelReporter(tracer, context.Background())
 
-	// Create a mock package for testing with required fields
-	ws := &Workspace{Origin: "/tmp/workspace"}
-	comp := &Component{Name: "test-component", W: ws}
-	pkg := &Package{
-		C: comp,
-		PackageInternal: PackageInternal{
-			Name:    "test-pkg",
-			Type:    GoPackage,
-			Sources: []string{},
-		},
+	// Test finding OTelReporter directly
+	found, ok := findOTelReporter(otelReporter)
+	if !ok || found != otelReporter {
+		t.Error("expected to find OTelReporter directly")
 	}
 
-	// Simulate build started to create package context
-	otelReporter.BuildStarted(pkg, map[*Package]PackageBuildStatus{pkg: PackageNotBuiltYet})
-	otelReporter.PackageBuildStarted(pkg, "/tmp/build")
-
-	// Test with CompositeReporter containing OTelReporter
+	// Test finding OTelReporter in CompositeReporter
 	composite := CompositeReporter{NewConsoleReporter(), otelReporter}
-
-	goTracer := composite.GetGoTestTracer(pkg)
-	if goTracer == nil {
-		t.Error("expected GetGoTestTracer to return non-nil tracer from CompositeReporter")
+	found, ok = findOTelReporter(composite)
+	if !ok || found != otelReporter {
+		t.Error("expected to find OTelReporter in CompositeReporter")
 	}
 
-	// Test with CompositeReporter without any TestTracingReporter
-	compositeNoTracing := CompositeReporter{NewConsoleReporter()}
-	goTracerNil := compositeNoTracing.GetGoTestTracer(pkg)
-	if goTracerNil != nil {
-		t.Error("expected GetGoTestTracer to return nil when no TestTracingReporter is present")
+	// Test not finding OTelReporter
+	compositeNoOtel := CompositeReporter{NewConsoleReporter()}
+	_, ok = findOTelReporter(compositeNoOtel)
+	if ok {
+		t.Error("expected not to find OTelReporter when none present")
+	}
+}
+
+func TestIsGoTestCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		cmdName  string
+		args     []string
+		expected bool
+	}{
+		{"go test", "go", []string{"test", "./..."}, true},
+		{"go test with flags", "go", []string{"test", "-v", "-json", "./..."}, true},
+		{"go build", "go", []string{"build", "."}, false},
+		{"not go", "make", []string{"test"}, false},
+		{"go without subcommand", "go", []string{}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isGoTestCommand(tt.cmdName, tt.args)
+			if result != tt.expected {
+				t.Errorf("isGoTestCommand(%q, %v) = %v, want %v", tt.cmdName, tt.args, result, tt.expected)
+			}
+		})
 	}
 }

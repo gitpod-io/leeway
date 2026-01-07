@@ -52,16 +52,6 @@ type Reporter interface {
 	PackageBuildFinished(pkg *Package, rep *PackageBuildReport)
 }
 
-// TestTracingReporter is an optional interface that reporters can implement
-// to support creating spans for individual Go tests during the test phase.
-type TestTracingReporter interface {
-	Reporter
-
-	// GetGoTestTracer returns a GoTestTracer for creating test spans as children
-	// of the package's test phase span. Returns nil if test tracing is not available.
-	GetGoTestTracer(pkg *Package) *GoTestTracer
-}
-
 type PackageBuildReport struct {
 	phaseEnter map[PackageBuildPhase]time.Time
 	phaseDone  map[PackageBuildPhase]time.Time
@@ -554,21 +544,7 @@ func (cr CompositeReporter) PackageBuildStarted(pkg *Package, builddir string) {
 	}
 }
 
-// GetGoTestTracer implements TestTracingReporter by delegating to the first
-// wrapped reporter that supports test tracing.
-func (cr CompositeReporter) GetGoTestTracer(pkg *Package) *GoTestTracer {
-	for _, r := range cr {
-		if tr, ok := r.(TestTracingReporter); ok {
-			if tracer := tr.GetGoTestTracer(pkg); tracer != nil {
-				return tracer
-			}
-		}
-	}
-	return nil
-}
-
 var _ Reporter = CompositeReporter{}
-var _ TestTracingReporter = CompositeReporter{}
 
 type NoopReporter struct{}
 
@@ -965,9 +941,10 @@ func (r *OTelReporter) addGitHubAttributes(span trace.Span) {
 	}
 }
 
-// GetGoTestTracer returns a GoTestTracer for creating test spans as children
-// of the package's span. This allows individual Go tests to be traced.
-func (r *OTelReporter) GetGoTestTracer(pkg *Package) *GoTestTracer {
+// GetPackageContext returns the tracing context for a package build.
+// This can be used to create child spans for operations within the package build.
+// Returns nil if no context is available for the package.
+func (r *OTelReporter) GetPackageContext(pkg *Package) context.Context {
 	if r.tracer == nil {
 		return nil
 	}
@@ -978,12 +955,16 @@ func (r *OTelReporter) GetGoTestTracer(pkg *Package) *GoTestTracer {
 	pkgName := pkg.FullName()
 	ctx, ok := r.packageCtxs[pkgName]
 	if !ok {
-		log.WithField("package", pkgName).Warn("GetGoTestTracer called without active package context")
 		return nil
 	}
 
-	return NewGoTestTracer(r.tracer, ctx)
+	return ctx
+}
+
+// GetTracer returns the OpenTelemetry tracer used by this reporter.
+// Returns nil if tracing is not configured.
+func (r *OTelReporter) GetTracer() trace.Tracer {
+	return r.tracer
 }
 
 var _ Reporter = (*OTelReporter)(nil)
-var _ TestTracingReporter = (*OTelReporter)(nil)

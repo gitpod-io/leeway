@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -59,42 +58,6 @@ func spanKey(pkg, test string) string {
 		return pkg
 	}
 	return pkg + "/" + test
-}
-
-// RunGoTest executes `go test` with JSON output and creates spans for each test.
-// It returns the combined output and any error from the test execution.
-func (t *GoTestTracer) RunGoTest(ctx context.Context, env []string, cwd string, testArgs []string, outputWriter io.Writer) error {
-	if t.tracer == nil {
-		// No tracer configured, fall back to regular execution
-		return runGoTestWithoutTracing(env, cwd, testArgs, outputWriter)
-	}
-
-	// Ensure -json flag is present
-	args := ensureJSONFlag(testArgs)
-
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Dir = cwd
-	cmd.Env = env
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-
-	// Capture stderr separately
-	cmd.Stderr = outputWriter
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start go test: %w", err)
-	}
-
-	// Parse JSON output and create spans
-	if err := t.parseJSONOutput(stdout, outputWriter); err != nil {
-		log.WithError(err).Warn("error parsing go test JSON output")
-	}
-
-	// Wait for command to complete
-	return cmd.Wait()
 }
 
 // parseJSONOutput reads JSON events from the reader and creates/ends spans accordingly
@@ -389,14 +352,4 @@ func ensureJSONFlag(args []string) []string {
 	}
 
 	return result
-}
-
-// runGoTestWithoutTracing runs go test without JSON parsing (fallback)
-func runGoTestWithoutTracing(env []string, cwd string, testArgs []string, outputWriter io.Writer) error {
-	cmd := exec.Command(testArgs[0], testArgs[1:]...)
-	cmd.Dir = cwd
-	cmd.Env = env
-	cmd.Stdout = outputWriter
-	cmd.Stderr = outputWriter
-	return cmd.Run()
 }
