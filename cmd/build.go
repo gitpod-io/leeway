@@ -206,6 +206,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().UintP("max-concurrent-tasks", "j", uint(cpus), "Limit the number of max concurrent build tasks - set to 0 to disable the limit")
 	cmd.Flags().String("coverage-output-path", "", "Output path where test coverage file will be copied after running tests")
 	cmd.Flags().Bool("disable-coverage", false, "Disable test coverage collection (defaults to false)")
+	cmd.Flags().Bool("enable-test-tracing", false, "Enable per-test OpenTelemetry span creation (defaults to false)")
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
 	cmd.Flags().Bool("slsa-cache-verification", false, "Enable SLSA verification for cached artifacts")
 	cmd.Flags().String("slsa-source-uri", "", "Expected source URI for SLSA verification (required when verification enabled)")
@@ -394,6 +395,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, C
 	}
 
 	disableCoverage, _ := cmd.Flags().GetBool("disable-coverage")
+	enableTestTracing, _ := cmd.Flags().GetBool("enable-test-tracing")
 
 	var dockerBuildOptions leeway.DockerBuildOptions
 	dockerBuildOptions, err = cmd.Flags().GetStringToString("docker-build-options")
@@ -459,6 +461,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, C
 		leeway.WithCompressionDisabled(dontCompress),
 		leeway.WithFixedBuildDir(fixedBuildDir),
 		leeway.WithDisableCoverage(disableCoverage),
+		leeway.WithEnableTestTracing(enableTestTracing),
 		leeway.WithInFlightChecksums(inFlightChecksums),
 		leeway.WithDockerExportToCache(dockerExportToCache, dockerExportSet),
 		leeway.WithDockerExportEnv(dockerExportEnvValue, dockerExportEnvSet),

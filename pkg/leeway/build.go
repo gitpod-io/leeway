@@ -480,6 +480,7 @@ type buildOptions struct {
 	JailedExecution        bool
 	UseFixedBuildDir       bool
 	DisableCoverage        bool
+	EnableTestTracing      bool
 	InFlightChecksums      bool
 	DockerExportToCache    bool
 	DockerExportSet        bool // Track if explicitly set via CLI flag
@@ -600,6 +601,14 @@ func WithFixedBuildDir(fixedBuildDir bool) BuildOption {
 func WithDisableCoverage(disableCoverage bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.DisableCoverage = disableCoverage
+		return nil
+	}
+}
+
+// WithEnableTestTracing enables per-test OpenTelemetry span creation during Go test execution
+func WithEnableTestTracing(enable bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.EnableTestTracing = enable
 		return nil
 	}
 }
@@ -2183,6 +2192,11 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 // and creates OpenTelemetry spans for each individual test when a TestTracingReporter is available.
 func createGoTestExecutor(testCommand []string) func(buildctx *buildContext, p *Package, builddir string) error {
 	return func(buildctx *buildContext, p *Package, builddir string) error {
+		// Check if test tracing is enabled
+		if !buildctx.EnableTestTracing {
+			return executeCommandsForPackage(buildctx, p, builddir, [][]string{testCommand})
+		}
+
 		// Check if the reporter supports test tracing
 		tracingReporter, ok := buildctx.Reporter.(TestTracingReporter)
 		if !ok {
