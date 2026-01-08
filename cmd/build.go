@@ -80,6 +80,7 @@ func build(cmd *cobra.Command, args []string) error {
 		if save != "" {
 			err = saveBuildResult(ctx, save, localCache, pkg)
 			if err != nil {
+				cancel()
 				return err
 			}
 		}
