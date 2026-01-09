@@ -930,6 +930,9 @@ func (r *OTelReporter) addGitHubAttributes(span trace.Span) {
 	if val := os.Getenv("GITHUB_REF"); val != "" {
 		span.SetAttributes(attribute.String("github.ref", val))
 	}
+	if val := os.Getenv("GITHUB_HEAD_REF"); val != "" {
+		span.SetAttributes(attribute.String("github.head_ref", val))
+	}
 	if val := os.Getenv("GITHUB_SHA"); val != "" {
 		span.SetAttributes(attribute.String("github.sha", val))
 	}
