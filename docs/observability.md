@@ -19,14 +19,24 @@ OpenTelemetry tracing in leeway captures:
 ```
 Root Span (leeway.build)
 ├── Package Span 1 (leeway.package)
+│   ├── Phase Span (leeway.phase: prep)
+│   ├── Phase Span (leeway.phase: pull)
+│   ├── Phase Span (leeway.phase: lint)
+│   ├── Phase Span (leeway.phase: test)
+│   ├── Phase Span (leeway.phase: build)
+│   └── Phase Span (leeway.phase: package)
 ├── Package Span 2 (leeway.package)
+│   ├── Phase Span (leeway.phase: prep)
+│   └── Phase Span (leeway.phase: build)
 └── Package Span N (leeway.package)
+    └── ...
 ```
 
 - **Root Span**: Created when `BuildStarted` is called, represents the entire build operation
 - **Package Spans**: Created for each package being built, as children of the root span
+- **Phase Spans**: Created for each build phase (prep, pull, lint, test, build, package) as children of package spans
 
-Build phase durations (prep, pull, lint, test, build, package) are captured as attributes on package spans, not as separate spans. This design provides lower overhead and simpler hierarchy while maintaining visibility into phase-level performance.
+Phase spans provide detailed timeline visualization and capture individual phase errors. Only phases with commands are executed and create spans.
 
 ### Context Propagation
 
@@ -35,6 +45,7 @@ Leeway supports W3C Trace Context propagation, allowing builds to be part of lar
 1. **Parent Context**: Accepts `traceparent` and `tracestate` headers from upstream systems
 2. **Root Context**: Creates a root span linked to the parent context
 3. **Package Context**: Each package span is a child of the root span
+4. **Phase Context**: Each phase span is a child of its package span
 
 ## Configuration
 
@@ -109,10 +120,23 @@ leeway build :my-package
 | `leeway.package.builddir` | string | Build directory | `"/tmp/leeway/build/..."` |
 | `leeway.package.last_phase` | string | Last completed phase | `"build"` |
 | `leeway.package.duration_ms` | int64 | Total build duration (ms) | `15234` |
-| `leeway.package.phase.{phase}.duration_ms` | int64 | Phase duration (ms) | `5432` |
 | `leeway.package.test.coverage_percentage` | int | Test coverage % | `85` |
 | `leeway.package.test.functions_with_test` | int | Functions with tests | `42` |
 | `leeway.package.test.functions_without_test` | int | Functions without tests | `8` |
+
+### Phase Span Attributes
+
+Phase spans are created for each build phase (prep, pull, lint, test, build, package) that has commands to execute.
+
+| Attribute | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `leeway.phase.name` | string | Phase name | `"prep"`, `"build"`, `"test"`, etc. |
+
+**Span Status:**
+- `OK`: Phase completed successfully
+- `ERROR`: Phase failed (error details in span events)
+
+**Span Duration:** The span's start and end times capture the phase execution duration automatically.
 
 ### GitHub Actions Attributes
 
