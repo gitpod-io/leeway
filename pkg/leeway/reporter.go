@@ -944,4 +944,30 @@ func (r *OTelReporter) addGitHubAttributes(span trace.Span) {
 	}
 }
 
+// GetPackageContext returns the tracing context for a package build.
+// This can be used to create child spans for operations within the package build.
+// Returns nil if no context is available for the package.
+func (r *OTelReporter) GetPackageContext(pkg *Package) context.Context {
+	if r.tracer == nil {
+		return nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	pkgName := pkg.FullName()
+	ctx, ok := r.packageCtxs[pkgName]
+	if !ok {
+		return nil
+	}
+
+	return ctx
+}
+
+// GetTracer returns the OpenTelemetry tracer used by this reporter.
+// Returns nil if tracing is not configured.
+func (r *OTelReporter) GetTracer() trace.Tracer {
+	return r.tracer
+}
+
 var _ Reporter = (*OTelReporter)(nil)
