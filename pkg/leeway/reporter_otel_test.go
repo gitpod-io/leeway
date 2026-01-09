@@ -389,7 +389,8 @@ func TestOTelReporter_GitHubAttributes(t *testing.T) {
 	_ = os.Setenv("GITHUB_JOB", "test-job")
 	_ = os.Setenv("GITHUB_ACTOR", "test-user")
 	_ = os.Setenv("GITHUB_REPOSITORY", "test-org/test-repo")
-	_ = os.Setenv("GITHUB_REF", "refs/heads/main")
+	_ = os.Setenv("GITHUB_REF", "refs/pull/123/merge")
+	_ = os.Setenv("GITHUB_HEAD_REF", "feature-branch")
 	_ = os.Setenv("GITHUB_SHA", "abc123def456")
 	_ = os.Setenv("GITHUB_SERVER_URL", "https://github.com")
 	_ = os.Setenv("GITHUB_WORKFLOW_REF", "test-org/test-repo/.github/workflows/test.yml@refs/heads/main")
@@ -453,7 +454,8 @@ func TestOTelReporter_GitHubAttributes(t *testing.T) {
 		"github.job":          "test-job",
 		"github.actor":        "test-user",
 		"github.repository":   "test-org/test-repo",
-		"github.ref":          "refs/heads/main",
+		"github.ref":          "refs/pull/123/merge",
+		"github.head_ref":     "feature-branch",
 		"github.sha":          "abc123def456",
 		"github.server_url":   "https://github.com",
 		"github.workflow_ref": "test-org/test-repo/.github/workflows/test.yml@refs/heads/main",
