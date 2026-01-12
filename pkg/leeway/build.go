@@ -25,6 +25,7 @@ import (
 	"github.com/in-toto/in-toto-golang/in_toto"
 	"github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/common"
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
@@ -480,6 +481,7 @@ type buildOptions struct {
 	JailedExecution        bool
 	UseFixedBuildDir       bool
 	DisableCoverage        bool
+	EnableTestTracing      bool
 	InFlightChecksums      bool
 	DockerExportToCache    bool
 	DockerExportSet        bool // Track if explicitly set via CLI flag
@@ -600,6 +602,14 @@ func WithFixedBuildDir(fixedBuildDir bool) BuildOption {
 func WithDisableCoverage(disableCoverage bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.DisableCoverage = disableCoverage
+		return nil
+	}
+}
+
+// WithEnableTestTracing enables per-test OpenTelemetry span creation during Go test execution
+func WithEnableTestTracing(enable bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.EnableTestTracing = enable
 		return nil
 	}
 }
@@ -3056,7 +3066,7 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 		if len(cmd) == 0 {
 			continue // Skip empty commands
 		}
-		err := run(buildctx.Reporter, p, env, wd, cmd[0], cmd[1:]...)
+		err := run(buildctx, p, env, wd, cmd[0], cmd[1:]...)
 		if err != nil {
 			return err
 		}
@@ -3064,21 +3074,93 @@ func executeCommandsForPackage(buildctx *buildContext, p *Package, wd string, co
 	return nil
 }
 
-func run(rep Reporter, p *Package, env []string, cwd, name string, args ...string) error {
+// isGoTestCommand checks if the command is a "go test" invocation
+func isGoTestCommand(name string, args []string) bool {
+	if name != "go" {
+		return false
+	}
+	for _, arg := range args {
+		if arg == "test" {
+			return true
+		}
+		// Stop at first non-flag argument that isn't "test"
+		if !strings.HasPrefix(arg, "-") {
+			return false
+		}
+	}
+	return false
+}
+
+func run(buildctx *buildContext, p *Package, env []string, cwd, name string, args ...string) error {
 	log.WithField("package", p.FullName()).WithField("command", strings.Join(append([]string{name}, args...), " ")).Debug("running")
 
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = &reporterStream{R: rep, P: p, IsErr: false}
-	cmd.Stderr = &reporterStream{R: rep, P: p, IsErr: true}
-	cmd.Dir = cwd
-	cmd.Env = env
-	err := cmd.Run()
-
-	if err != nil {
-		return err
+	// Check if this is a go test command and tracing is enabled
+	if buildctx != nil && buildctx.EnableTestTracing && isGoTestCommand(name, args) {
+		if otelRep, ok := findOTelReporter(buildctx.Reporter); ok {
+			if ctx := otelRep.GetPackageContext(p); ctx != nil {
+				return runGoTestWithTracing(buildctx, p, env, cwd, name, args, otelRep.GetTracer(), ctx)
+			}
+		}
 	}
 
-	return nil
+	// Standard command execution
+	cmd := exec.Command(name, args...)
+	if buildctx != nil {
+		cmd.Stdout = &reporterStream{R: buildctx.Reporter, P: p, IsErr: false}
+		cmd.Stderr = &reporterStream{R: buildctx.Reporter, P: p, IsErr: true}
+	}
+	cmd.Dir = cwd
+	cmd.Env = env
+
+	return cmd.Run()
+}
+
+// findOTelReporter finds an OTelReporter in the reporter chain
+func findOTelReporter(rep Reporter) (*OTelReporter, bool) {
+	switch r := rep.(type) {
+	case *OTelReporter:
+		return r, true
+	case CompositeReporter:
+		for _, inner := range r {
+			if otel, ok := findOTelReporter(inner); ok {
+				return otel, ok
+			}
+		}
+	}
+	return nil, false
+}
+
+// runGoTestWithTracing runs go test with JSON output and creates spans for each test
+func runGoTestWithTracing(buildctx *buildContext, p *Package, env []string, cwd, name string, args []string, tracer trace.Tracer, parentCtx context.Context) error {
+	// Build command with -json flag
+	fullArgs := append([]string{name}, args...)
+	jsonArgs := ensureJSONFlag(fullArgs)
+
+	log.WithField("package", p.FullName()).WithField("command", strings.Join(jsonArgs, " ")).Debug("running go test with tracing")
+
+	cmd := exec.Command(jsonArgs[0], jsonArgs[1:]...)
+	cmd.Dir = cwd
+	cmd.Env = env
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+	cmd.Stderr = &reporterStream{R: buildctx.Reporter, P: p, IsErr: true}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start go test: %w", err)
+	}
+
+	// Create tracer and parse output
+	goTracer := NewGoTestTracer(tracer, parentCtx)
+	outputWriter := &reporterStream{R: buildctx.Reporter, P: p, IsErr: false}
+
+	if err := goTracer.parseJSONOutput(stdout, outputWriter); err != nil {
+		log.WithError(err).Warn("error parsing go test JSON output")
+	}
+
+	return cmd.Wait()
 }
 
 type reporterStream struct {
