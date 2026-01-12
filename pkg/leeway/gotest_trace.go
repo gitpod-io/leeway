@@ -78,15 +78,13 @@ func (t *GoTestTracer) parseJSONOutput(r io.Reader, outputWriter io.Writer) erro
 		var event goTestEvent
 		if err := json.Unmarshal(line, &event); err != nil {
 			// Not valid JSON, write as-is (shouldn't happen with -json flag)
-			if outputWriter != nil {
-				_, _ = outputWriter.Write(line)
-				_, _ = outputWriter.Write([]byte("\n"))
-			}
+			_, _ = outputWriter.Write(line)
+			_, _ = outputWriter.Write([]byte("\n"))
 			continue
 		}
 
 		// Handle output based on verbosity
-		if outputWriter != nil && event.Output != "" {
+		if event.Output != "" {
 			if verbose {
 				// Verbose mode: show all output
 				_, _ = outputWriter.Write([]byte(event.Output))
