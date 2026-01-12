@@ -19,12 +19,13 @@ import (
 // goTestEvent represents a single event from `go test -json` output.
 // See https://pkg.go.dev/cmd/test2json for the format specification.
 type goTestEvent struct {
-	Time    time.Time `json:"Time"`
-	Action  string    `json:"Action"`
-	Package string    `json:"Package"`
-	Test    string    `json:"Test"`
-	Output  string    `json:"Output"`
-	Elapsed float64   `json:"Elapsed"` // seconds
+	Time        time.Time `json:"Time"`
+	Action      string    `json:"Action"`
+	Package     string    `json:"Package"`
+	Test        string    `json:"Test"`
+	Output      string    `json:"Output"`
+	Elapsed     float64   `json:"Elapsed"`     // seconds
+	FailedBuild string    `json:"FailedBuild"` // package that failed to build (when Action == "fail")
 }
 
 // testSpanData holds the span for an in-progress test
@@ -245,8 +246,16 @@ func (t *GoTestTracer) handleEnd(event *goTestEvent) {
 				data.span.SetStatus(codes.Ok, "")
 				data.span.SetAttributes(attribute.String("test.status", "passed"))
 			case "fail":
-				data.span.SetStatus(codes.Error, "test failed")
-				data.span.SetAttributes(attribute.String("test.status", "failed"))
+				if event.FailedBuild != "" {
+					data.span.SetStatus(codes.Error, "build failed")
+					data.span.SetAttributes(
+						attribute.String("test.status", "build_failed"),
+						attribute.String("test.failed_build", event.FailedBuild),
+					)
+				} else {
+					data.span.SetStatus(codes.Error, "test failed")
+					data.span.SetAttributes(attribute.String("test.status", "failed"))
+				}
 			case "skip":
 				data.span.SetStatus(codes.Ok, "test skipped")
 				data.span.SetAttributes(attribute.String("test.status", "skipped"))
@@ -272,8 +281,16 @@ func (t *GoTestTracer) handleEnd(event *goTestEvent) {
 				data.span.SetStatus(codes.Ok, "")
 				data.span.SetAttributes(attribute.String("test.status", "passed"))
 			case "fail":
-				data.span.SetStatus(codes.Error, "package tests failed")
-				data.span.SetAttributes(attribute.String("test.status", "failed"))
+				if event.FailedBuild != "" {
+					data.span.SetStatus(codes.Error, "build failed")
+					data.span.SetAttributes(
+						attribute.String("test.status", "build_failed"),
+						attribute.String("test.failed_build", event.FailedBuild),
+					)
+				} else {
+					data.span.SetStatus(codes.Error, "package tests failed")
+					data.span.SetAttributes(attribute.String("test.status", "failed"))
+				}
 			case "skip":
 				data.span.SetStatus(codes.Ok, "package tests skipped")
 				data.span.SetAttributes(attribute.String("test.status", "skipped"))
