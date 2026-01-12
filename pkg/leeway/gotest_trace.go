@@ -27,11 +27,9 @@ type goTestEvent struct {
 	Elapsed float64   `json:"Elapsed"` // seconds
 }
 
-// testSpanData holds the span and metadata for an in-progress test
+// testSpanData holds the span for an in-progress test
 type testSpanData struct {
-	span      trace.Span
-	startTime time.Time
-	pkg       string
+	span trace.Span
 }
 
 // GoTestTracer handles parsing Go test JSON output and creating OpenTelemetry spans
@@ -169,11 +167,7 @@ func (t *GoTestTracer) handleRun(event *goTestEvent) {
 		attribute.String("test.framework", "go"),
 	)
 
-	t.spans[key] = &testSpanData{
-		span:      span,
-		startTime: event.Time,
-		pkg:       event.Package,
-	}
+	t.spans[key] = &testSpanData{span: span}
 }
 
 // handlePackageStart creates a span for package-level test execution
@@ -203,11 +197,7 @@ func (t *GoTestTracer) handlePackageStart(event *goTestEvent) {
 		attribute.String("test.scope", "package"),
 	)
 
-	t.spans[key] = &testSpanData{
-		span:      span,
-		startTime: event.Time,
-		pkg:       event.Package,
-	}
+	t.spans[key] = &testSpanData{span: span}
 }
 
 // handlePause records that a test was paused (for t.Parallel())
