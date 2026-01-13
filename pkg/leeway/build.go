@@ -1262,12 +1262,19 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	// Generate SBOM if enabled (after packaging - written alongside artifact)
 	// SBOM files are stored outside the tar.gz to maintain artifact determinism.
 	if p.C.W.SBOM.Enabled {
+		if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
+			par.PackageBuildPhaseStarted(p, PackageBuildPhaseSBOM)
+		}
 		pkgRep.phaseEnter[PackageBuildPhaseSBOM] = time.Now()
 		pkgRep.Phases = append(pkgRep.Phases, PackageBuildPhaseSBOM)
-		if err := writeSBOMToCache(buildctx, p, builddir); err != nil {
-			return err
-		}
+		sbomErr := writeSBOMToCache(buildctx, p, builddir)
 		pkgRep.phaseDone[PackageBuildPhaseSBOM] = time.Now()
+		if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
+			par.PackageBuildPhaseFinished(p, PackageBuildPhaseSBOM, sbomErr)
+		}
+		if sbomErr != nil {
+			return sbomErr
+		}
 	}
 
 	// Register newly built package
