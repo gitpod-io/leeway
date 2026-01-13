@@ -941,7 +941,7 @@ func (r *OTelReporter) PackageBuildPhaseStarted(pkg *Package, phase PackageBuild
 
 	// Create phase span as child of package span
 	phaseKey := fmt.Sprintf("%s:%s", pkgName, phase)
-	ctx, span := r.tracer.Start(packageCtx, "leeway.phase",
+	_, span := r.tracer.Start(packageCtx, "leeway.phase",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 
@@ -950,9 +950,7 @@ func (r *OTelReporter) PackageBuildPhaseStarted(pkg *Package, phase PackageBuild
 		attribute.String("leeway.phase.name", string(phase)),
 	)
 
-	// Store phase span and update package context
 	r.phaseSpans[phaseKey] = span
-	r.packageCtxs[pkgName] = ctx
 }
 
 // PackageBuildPhaseFinished implements PhaseAwareReporter
