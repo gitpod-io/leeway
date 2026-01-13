@@ -52,6 +52,17 @@ type Reporter interface {
 	PackageBuildFinished(pkg *Package, rep *PackageBuildReport)
 }
 
+// PhaseAwareReporter is an optional interface that reporters can implement
+// to receive phase-level notifications for creating nested spans or tracking.
+// This follows the Go pattern of optional interfaces (like io.Closer, io.Seeker).
+type PhaseAwareReporter interface {
+	Reporter
+	// PackageBuildPhaseStarted is called when a build phase starts
+	PackageBuildPhaseStarted(pkg *Package, phase PackageBuildPhase)
+	// PackageBuildPhaseFinished is called when a build phase completes
+	PackageBuildPhaseFinished(pkg *Package, phase PackageBuildPhase, err error)
+}
+
 type PackageBuildReport struct {
 	phaseEnter map[PackageBuildPhase]time.Time
 	phaseDone  map[PackageBuildPhase]time.Time
@@ -544,7 +555,26 @@ func (cr CompositeReporter) PackageBuildStarted(pkg *Package, builddir string) {
 	}
 }
 
+// PackageBuildPhaseStarted implements PhaseAwareReporter
+func (cr CompositeReporter) PackageBuildPhaseStarted(pkg *Package, phase PackageBuildPhase) {
+	for _, r := range cr {
+		if par, ok := r.(PhaseAwareReporter); ok {
+			par.PackageBuildPhaseStarted(pkg, phase)
+		}
+	}
+}
+
+// PackageBuildPhaseFinished implements PhaseAwareReporter
+func (cr CompositeReporter) PackageBuildPhaseFinished(pkg *Package, phase PackageBuildPhase, err error) {
+	for _, r := range cr {
+		if par, ok := r.(PhaseAwareReporter); ok {
+			par.PackageBuildPhaseFinished(pkg, phase, err)
+		}
+	}
+}
+
 var _ Reporter = CompositeReporter{}
+var _ PhaseAwareReporter = CompositeReporter{}
 
 type NoopReporter struct{}
 
@@ -701,6 +731,8 @@ type OTelReporter struct {
 	rootSpan     trace.Span
 	packageCtxs  map[string]context.Context
 	packageSpans map[string]trace.Span
+	phaseSpans   map[string]trace.Span   // key: "packageName:phaseName"
+	phaseCtxs    map[string]context.Context // key: "packageName:phaseName"
 	mu           sync.RWMutex
 }
 
@@ -714,6 +746,8 @@ func NewOTelReporter(tracer trace.Tracer, parentCtx context.Context) *OTelReport
 		parentCtx:    parentCtx,
 		packageCtxs:  make(map[string]context.Context),
 		packageSpans: make(map[string]trace.Span),
+		phaseSpans:   make(map[string]trace.Span),
+		phaseCtxs:    make(map[string]context.Context),
 	}
 }
 
@@ -866,16 +900,6 @@ func (r *OTelReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRepor
 		attribute.Int64("leeway.package.duration_ms", rep.TotalTime().Milliseconds()),
 	)
 
-	// Add phase durations
-	for _, phase := range rep.Phases {
-		duration := rep.PhaseDuration(phase)
-		if duration >= 0 {
-			span.SetAttributes(
-				attribute.Int64(fmt.Sprintf("leeway.package.phase.%s.duration_ms", phase), duration.Milliseconds()),
-			)
-		}
-	}
-
 	// Add test coverage if available
 	if rep.TestCoverageAvailable {
 		span.SetAttributes(
@@ -899,6 +923,71 @@ func (r *OTelReporter) PackageBuildFinished(pkg *Package, rep *PackageBuildRepor
 	// Clean up
 	delete(r.packageSpans, pkgName)
 	delete(r.packageCtxs, pkgName)
+}
+
+// PackageBuildPhaseStarted implements PhaseAwareReporter
+func (r *OTelReporter) PackageBuildPhaseStarted(pkg *Package, phase PackageBuildPhase) {
+	if r.tracer == nil {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	pkgName := pkg.FullName()
+	packageCtx, ok := r.packageCtxs[pkgName]
+	if !ok {
+		log.WithField("package", pkgName).Warn("PackageBuildPhaseStarted called without package context")
+		return
+	}
+
+	// Create phase span as child of package span
+	phaseKey := fmt.Sprintf("%s:%s", pkgName, phase)
+	phaseCtx, span := r.tracer.Start(packageCtx, "leeway.phase",
+		trace.WithSpanKind(trace.SpanKindInternal),
+	)
+
+	// Add phase attributes
+	span.SetAttributes(
+		attribute.String("leeway.package.name", pkgName),
+		attribute.String("leeway.phase.name", string(phase)),
+	)
+
+	r.phaseSpans[phaseKey] = span
+	r.phaseCtxs[phaseKey] = phaseCtx
+}
+
+// PackageBuildPhaseFinished implements PhaseAwareReporter
+func (r *OTelReporter) PackageBuildPhaseFinished(pkg *Package, phase PackageBuildPhase, err error) {
+	if r.tracer == nil {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	pkgName := pkg.FullName()
+	phaseKey := fmt.Sprintf("%s:%s", pkgName, phase)
+	span, ok := r.phaseSpans[phaseKey]
+	if !ok {
+		log.WithField("package", pkgName).WithField("phase", phase).Warn("PackageBuildPhaseFinished called without corresponding PackageBuildPhaseStarted")
+		return
+	}
+
+	// Set error status if phase failed
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetStatus(codes.Ok, "phase completed successfully")
+	}
+
+	// End span
+	span.End()
+
+	// Clean up
+	delete(r.phaseSpans, phaseKey)
+	delete(r.phaseCtxs, phaseKey)
 }
 
 // addGitHubAttributes adds GitHub Actions context attributes to the span
@@ -945,7 +1034,8 @@ func (r *OTelReporter) addGitHubAttributes(span trace.Span) {
 }
 
 // GetPackageContext returns the tracing context for a package build.
-// This can be used to create child spans for operations within the package build.
+// If a phase is currently active, returns the phase context so child spans
+// are nested under the phase. Otherwise returns the package context.
 // Returns nil if no context is available for the package.
 func (r *OTelReporter) GetPackageContext(pkg *Package) context.Context {
 	if r.tracer == nil {
@@ -956,6 +1046,15 @@ func (r *OTelReporter) GetPackageContext(pkg *Package) context.Context {
 	defer r.mu.RUnlock()
 
 	pkgName := pkg.FullName()
+
+	// Check for active phase context first
+	for key, ctx := range r.phaseCtxs {
+		if len(key) > len(pkgName) && key[:len(pkgName)] == pkgName && key[len(pkgName)] == ':' {
+			return ctx
+		}
+	}
+
+	// Fall back to package context
 	ctx, ok := r.packageCtxs[pkgName]
 	if !ok {
 		return nil

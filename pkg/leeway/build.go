@@ -1262,12 +1262,19 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	// Generate SBOM if enabled (after packaging - written alongside artifact)
 	// SBOM files are stored outside the tar.gz to maintain artifact determinism.
 	if p.C.W.SBOM.Enabled {
+		if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
+			par.PackageBuildPhaseStarted(p, PackageBuildPhaseSBOM)
+		}
 		pkgRep.phaseEnter[PackageBuildPhaseSBOM] = time.Now()
 		pkgRep.Phases = append(pkgRep.Phases, PackageBuildPhaseSBOM)
-		if err := writeSBOMToCache(buildctx, p, builddir); err != nil {
-			return err
-		}
+		sbomErr := writeSBOMToCache(buildctx, p, builddir)
 		pkgRep.phaseDone[PackageBuildPhaseSBOM] = time.Now()
+		if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
+			par.PackageBuildPhaseFinished(p, PackageBuildPhaseSBOM, sbomErr)
+		}
+		if sbomErr != nil {
+			return sbomErr
+		}
 	}
 
 	// Register newly built package
@@ -1365,6 +1372,11 @@ func executeBuildPhase(buildctx *buildContext, p *Package, builddir string, bld 
 		return nil
 	}
 
+	// Notify phase-aware reporters
+	if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
+		par.PackageBuildPhaseStarted(p, phase)
+	}
+
 	if phase != PackageBuildPhasePrep {
 		pkgRep.phaseEnter[phase] = time.Now()
 		pkgRep.Phases = append(pkgRep.Phases, phase)
@@ -1374,6 +1386,11 @@ func executeBuildPhase(buildctx *buildContext, p *Package, builddir string, bld 
 
 	err := executeCommandsForPackage(buildctx, p, builddir, cmds)
 	pkgRep.phaseDone[phase] = time.Now()
+
+	// Notify phase-aware reporters
+	if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
+		par.PackageBuildPhaseFinished(p, phase, err)
+	}
 
 	return err
 }
@@ -3153,7 +3170,7 @@ func runGoTestWithTracing(buildctx *buildContext, p *Package, env []string, cwd,
 	}
 
 	// Create tracer and parse output
-	goTracer := NewGoTestTracer(tracer, parentCtx)
+	goTracer := NewGoTestTracer(tracer, parentCtx, p.FullName())
 	outputWriter := &reporterStream{R: buildctx.Reporter, P: p, IsErr: false}
 
 	if err := goTracer.parseJSONOutput(stdout, outputWriter); err != nil {

@@ -24,7 +24,7 @@ func TestGoTestTracer_ParseJSONOutput(t *testing.T) {
 	ctx, parentSpan := tracer.Start(context.Background(), "parent")
 	defer parentSpan.End()
 
-	goTracer := NewGoTestTracer(tracer, ctx)
+	goTracer := NewGoTestTracer(tracer, ctx, "test:pkg")
 
 	// Simulate go test -json output
 	jsonOutput := `{"Time":"2024-01-01T10:00:00Z","Action":"start","Package":"example.com/pkg"}
@@ -123,7 +123,7 @@ func TestGoTestTracer_ParallelTests(t *testing.T) {
 	ctx, parentSpan := tracer.Start(context.Background(), "parent")
 	defer parentSpan.End()
 
-	goTracer := NewGoTestTracer(tracer, ctx)
+	goTracer := NewGoTestTracer(tracer, ctx, "test:pkg")
 
 	// Simulate parallel test execution with pause/cont events
 	jsonOutput := `{"Time":"2024-01-01T10:00:00Z","Action":"run","Package":"example.com/pkg","Test":"TestParallel"}
@@ -167,7 +167,7 @@ func TestGoTestTracer_ParallelTests(t *testing.T) {
 
 func TestGoTestTracer_NoTracer(t *testing.T) {
 	// Test that nil tracer doesn't panic
-	goTracer := NewGoTestTracer(nil, context.Background())
+	goTracer := NewGoTestTracer(nil, context.Background(), "test:pkg")
 
 	jsonOutput := `{"Time":"2024-01-01T10:00:00Z","Action":"run","Package":"example.com/pkg","Test":"TestOne"}
 {"Time":"2024-01-01T10:00:00.100Z","Action":"pass","Package":"example.com/pkg","Test":"TestOne","Elapsed":0.1}

@@ -7,10 +7,14 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/gookit/color"
 )
 
 func TestConsoleReporter(t *testing.T) {
 	t.Parallel()
+
+	// Disable colors for consistent test output across environments.
+	color.Enable = false
 
 	type Expectation struct {
 		Output string
