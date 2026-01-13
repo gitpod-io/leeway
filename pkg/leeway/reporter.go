@@ -555,7 +555,26 @@ func (cr CompositeReporter) PackageBuildStarted(pkg *Package, builddir string) {
 	}
 }
 
+// PackageBuildPhaseStarted implements PhaseAwareReporter
+func (cr CompositeReporter) PackageBuildPhaseStarted(pkg *Package, phase PackageBuildPhase) {
+	for _, r := range cr {
+		if par, ok := r.(PhaseAwareReporter); ok {
+			par.PackageBuildPhaseStarted(pkg, phase)
+		}
+	}
+}
+
+// PackageBuildPhaseFinished implements PhaseAwareReporter
+func (cr CompositeReporter) PackageBuildPhaseFinished(pkg *Package, phase PackageBuildPhase, err error) {
+	for _, r := range cr {
+		if par, ok := r.(PhaseAwareReporter); ok {
+			par.PackageBuildPhaseFinished(pkg, phase, err)
+		}
+	}
+}
+
 var _ Reporter = CompositeReporter{}
+var _ PhaseAwareReporter = CompositeReporter{}
 
 type NoopReporter struct{}
 
