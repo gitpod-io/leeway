@@ -731,7 +731,8 @@ type OTelReporter struct {
 	rootSpan     trace.Span
 	packageCtxs  map[string]context.Context
 	packageSpans map[string]trace.Span
-	phaseSpans   map[string]trace.Span // key: "packageName:phaseName"
+	phaseSpans   map[string]trace.Span   // key: "packageName:phaseName"
+	phaseCtxs    map[string]context.Context // key: "packageName:phaseName"
 	mu           sync.RWMutex
 }
 
@@ -746,6 +747,7 @@ func NewOTelReporter(tracer trace.Tracer, parentCtx context.Context) *OTelReport
 		packageCtxs:  make(map[string]context.Context),
 		packageSpans: make(map[string]trace.Span),
 		phaseSpans:   make(map[string]trace.Span),
+		phaseCtxs:    make(map[string]context.Context),
 	}
 }
 
@@ -941,7 +943,7 @@ func (r *OTelReporter) PackageBuildPhaseStarted(pkg *Package, phase PackageBuild
 
 	// Create phase span as child of package span
 	phaseKey := fmt.Sprintf("%s:%s", pkgName, phase)
-	_, span := r.tracer.Start(packageCtx, "leeway.phase",
+	phaseCtx, span := r.tracer.Start(packageCtx, "leeway.phase",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 
@@ -951,6 +953,7 @@ func (r *OTelReporter) PackageBuildPhaseStarted(pkg *Package, phase PackageBuild
 	)
 
 	r.phaseSpans[phaseKey] = span
+	r.phaseCtxs[phaseKey] = phaseCtx
 }
 
 // PackageBuildPhaseFinished implements PhaseAwareReporter
@@ -983,6 +986,7 @@ func (r *OTelReporter) PackageBuildPhaseFinished(pkg *Package, phase PackageBuil
 
 	// Clean up
 	delete(r.phaseSpans, phaseKey)
+	delete(r.phaseCtxs, phaseKey)
 }
 
 // addGitHubAttributes adds GitHub Actions context attributes to the span
@@ -1029,7 +1033,8 @@ func (r *OTelReporter) addGitHubAttributes(span trace.Span) {
 }
 
 // GetPackageContext returns the tracing context for a package build.
-// This can be used to create child spans for operations within the package build.
+// If a phase is currently active, returns the phase context so child spans
+// are nested under the phase. Otherwise returns the package context.
 // Returns nil if no context is available for the package.
 func (r *OTelReporter) GetPackageContext(pkg *Package) context.Context {
 	if r.tracer == nil {
@@ -1040,6 +1045,15 @@ func (r *OTelReporter) GetPackageContext(pkg *Package) context.Context {
 	defer r.mu.RUnlock()
 
 	pkgName := pkg.FullName()
+
+	// Check for active phase context first
+	for key, ctx := range r.phaseCtxs {
+		if len(key) > len(pkgName) && key[:len(pkgName)] == pkgName && key[len(pkgName)] == ':' {
+			return ctx
+		}
+	}
+
+	// Fall back to package context
 	ctx, ok := r.packageCtxs[pkgName]
 	if !ok {
 		return nil
