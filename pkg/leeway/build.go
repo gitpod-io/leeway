@@ -3170,7 +3170,7 @@ func runGoTestWithTracing(buildctx *buildContext, p *Package, env []string, cwd,
 	}
 
 	// Create tracer and parse output
-	goTracer := NewGoTestTracer(tracer, parentCtx)
+	goTracer := NewGoTestTracer(tracer, parentCtx, p.FullName())
 	outputWriter := &reporterStream{R: buildctx.Reporter, P: p, IsErr: false}
 
 	if err := goTracer.parseJSONOutput(stdout, outputWriter); err != nil {

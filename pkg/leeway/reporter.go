@@ -949,6 +949,7 @@ func (r *OTelReporter) PackageBuildPhaseStarted(pkg *Package, phase PackageBuild
 
 	// Add phase attributes
 	span.SetAttributes(
+		attribute.String("leeway.package.name", pkgName),
 		attribute.String("leeway.phase.name", string(phase)),
 	)
 

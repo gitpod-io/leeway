@@ -35,19 +35,21 @@ type testSpanData struct {
 
 // GoTestTracer handles parsing Go test JSON output and creating OpenTelemetry spans
 type GoTestTracer struct {
-	tracer    trace.Tracer
-	parentCtx context.Context
+	tracer        trace.Tracer
+	parentCtx     context.Context
+	leewayPkgName string
 
 	mu    sync.Mutex
 	spans map[string]*testSpanData // key: "package/testname" or just "package" for package-level
 }
 
 // NewGoTestTracer creates a new GoTestTracer that will create spans as children of the given context
-func NewGoTestTracer(tracer trace.Tracer, parentCtx context.Context) *GoTestTracer {
+func NewGoTestTracer(tracer trace.Tracer, parentCtx context.Context, leewayPkgName string) *GoTestTracer {
 	return &GoTestTracer{
-		tracer:    tracer,
-		parentCtx: parentCtx,
-		spans:     make(map[string]*testSpanData),
+		tracer:        tracer,
+		parentCtx:     parentCtx,
+		leewayPkgName: leewayPkgName,
+		spans:         make(map[string]*testSpanData),
 	}
 }
 
@@ -163,6 +165,7 @@ func (t *GoTestTracer) handleRun(event *goTestEvent) {
 	)
 
 	span.SetAttributes(
+		attribute.String("leeway.package.name", t.leewayPkgName),
 		attribute.String("test.name", event.Test),
 		attribute.String("test.package", event.Package),
 		attribute.String("test.framework", "go"),
@@ -193,6 +196,7 @@ func (t *GoTestTracer) handlePackageStart(event *goTestEvent) {
 	)
 
 	span.SetAttributes(
+		attribute.String("leeway.package.name", t.leewayPkgName),
 		attribute.String("test.package", event.Package),
 		attribute.String("test.framework", "go"),
 		attribute.String("test.scope", "package"),
