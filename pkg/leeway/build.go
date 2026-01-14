@@ -82,6 +82,14 @@ type buildContext struct {
 	InFlightChecksums      bool              // Feature enabled flag
 	artifactChecksums      map[string]string // path -> sha256 hex
 	artifactChecksumsMutex sync.RWMutex      // Thread safety for parallel builds
+
+	// Lazy download support - downloads packages on-demand instead of upfront
+	lazyDownload         bool                            // Feature enabled flag
+	pkgsInRemoteCache    map[*Package]struct{}           // Packages known to exist in remote cache
+	pkgsInRemoteCacheMu  sync.RWMutex                    // Protects pkgsInRemoteCache
+	lazyDownloadResults  map[string]cache.DownloadResult // Track download results by package name
+	lazyDownloadDuration time.Duration                   // Total time spent downloading (lazy mode)
+	lazyDownloadMu       sync.Mutex                      // Protects lazyDownloadResults and lazyDownloadDuration
 }
 
 const (
@@ -182,6 +190,10 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 		// In-flight checksumming initialization
 		InFlightChecksums: options.InFlightChecksums,
 		artifactChecksums: checksumMap,
+		// Lazy download initialization
+		lazyDownload:        options.LazyDownload,
+		pkgsInRemoteCache:   make(map[*Package]struct{}),
+		lazyDownloadResults: make(map[string]cache.DownloadResult),
 	}
 
 	err = os.MkdirAll(buildDir, 0755)
@@ -330,6 +342,58 @@ func (ctx *buildContext) verifyArtifactChecksum(path string) error {
 	}
 
 	return nil
+}
+
+// isInRemoteCache checks if a package is known to exist in the remote cache.
+// Used for lazy download to determine if a download should be attempted.
+func (ctx *buildContext) isInRemoteCache(p *Package) bool {
+	ctx.pkgsInRemoteCacheMu.RLock()
+	defer ctx.pkgsInRemoteCacheMu.RUnlock()
+	_, exists := ctx.pkgsInRemoteCache[p]
+	return exists
+}
+
+// lazyDownloadPackage attempts to download a single package from the remote cache.
+// Returns the download result. This is called just-in-time when a package is needed.
+func (ctx *buildContext) lazyDownloadPackage(p *Package) cache.DownloadResult {
+	// Check if already downloaded in this build
+	ctx.lazyDownloadMu.Lock()
+	if result, exists := ctx.lazyDownloadResults[p.FullName()]; exists {
+		ctx.lazyDownloadMu.Unlock()
+		return result
+	}
+	ctx.lazyDownloadMu.Unlock()
+
+	// Download the single package with timing
+	startTime := time.Now()
+	results := ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, []cache.Package{p})
+	downloadDuration := time.Since(startTime)
+
+	result, ok := results[p.FullName()]
+	if !ok {
+		result = cache.DownloadResult{Status: cache.DownloadStatusFailed}
+	}
+
+	// Track result and accumulate total download time
+	ctx.lazyDownloadMu.Lock()
+	ctx.lazyDownloadResults[p.FullName()] = result
+	ctx.lazyDownloadDuration += downloadDuration
+	ctx.lazyDownloadMu.Unlock()
+
+	if result.Status == cache.DownloadStatusSuccess {
+		log.WithFields(log.Fields{
+			"package":  p.FullName(),
+			"duration": downloadDuration.Round(time.Millisecond),
+		}).Info("downloaded from cache")
+	} else {
+		log.WithFields(log.Fields{
+			"package":  p.FullName(),
+			"status":   result.Status,
+			"duration": downloadDuration.Round(time.Millisecond),
+		}).Debug("download did not succeed, will build locally")
+	}
+
+	return result
 }
 
 // computeSHA256 computes the SHA256 hash of a file
@@ -483,6 +547,7 @@ type buildOptions struct {
 	DisableCoverage        bool
 	EnableTestTracing      bool
 	InFlightChecksums      bool
+	LazyDownload           bool // Download packages on-demand instead of upfront
 	DockerExportToCache    bool
 	DockerExportSet        bool // Track if explicitly set via CLI flag
 
@@ -618,6 +683,17 @@ func WithEnableTestTracing(enable bool) BuildOption {
 func WithInFlightChecksums(enabled bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.InFlightChecksums = enabled
+		return nil
+	}
+}
+
+// WithLazyDownload enables on-demand downloading of packages from remote cache.
+// When enabled, packages are downloaded just-in-time when needed during the build,
+// rather than all at once upfront. This can significantly reduce download time
+// when only a subset of cached packages are actually needed.
+func WithLazyDownload(enabled bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.LazyDownload = enabled
 		return nil
 	}
 }
@@ -758,90 +834,107 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		pkgsToDownload = append(pkgsToDownload, p)
 	}
 
-	// Sort packages by dependency depth to prioritize critical path
-	// This ensures packages that block other builds are downloaded first
-	if len(pkgsToDownload) > 0 {
-		log.WithField("count", len(pkgsToDownload)).Debug("🔄 Dependency-aware scheduling: sorting packages by depth before download")
-		pkgsToDownload = sortPackagesByDependencyDepth(pkgsToDownload)
-		log.Debug("✅ Packages sorted - critical path packages will download first")
-	}
+	// Store remote cache info for lazy download
+	ctx.pkgsInRemoteCache = pkgsInRemoteCacheMap
+	ctx.lazyDownloadResults = make(map[string]cache.DownloadResult)
 
-	// Convert []*Package to []cache.Package
-	pkgsToDownloadCache := make([]cache.Package, len(pkgsToDownload))
-	for i, p := range pkgsToDownload {
-		pkgsToDownloadCache[i] = p
-	}
+	if ctx.lazyDownload {
+		// Lazy download mode: skip bulk download, packages will be downloaded on-demand during build
+		log.WithField("count", len(pkgsToDownload)).Info("lazy download enabled - packages will be downloaded on-demand")
+	} else {
+		// Eager download mode: download all packages upfront (original behavior)
+		// Sort packages by dependency depth to prioritize critical path
+		// This ensures packages that block other builds are downloaded first
+		if len(pkgsToDownload) > 0 {
+			log.WithField("count", len(pkgsToDownload)).Info("downloading cached packages from remote")
+			pkgsToDownload = sortPackagesByDependencyDepth(pkgsToDownload)
+		}
 
-	// Download packages and get detailed results for each
-	downloadResults := ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, pkgsToDownloadCache)
+		// Convert []*Package to []cache.Package
+		pkgsToDownloadCache := make([]cache.Package, len(pkgsToDownload))
+		for i, p := range pkgsToDownload {
+			pkgsToDownloadCache[i] = p
+		}
 
-	// Update status based on download results - enables smarter decisions about retries vs rebuilds
-	var failedCount, notFoundCount, successCount int
-	for _, p := range pkgsToDownload {
-		result, hasResult := downloadResults[p.FullName()]
-		_, inCache := ctx.LocalCache.Location(p)
+		// Download packages and get detailed results for each
+		downloadStartTime := time.Now()
+		downloadResults := ctx.RemoteCache.Download(context.Background(), ctx.LocalCache, pkgsToDownloadCache)
+		downloadDuration := time.Since(downloadStartTime)
 
-		if inCache {
-			// Successfully downloaded (or was already in cache)
-			pkgstatus[p] = PackageDownloaded
-			successCount++
-		} else if hasResult {
-			switch result.Status {
-			case cache.DownloadStatusNotFound:
-				// Package doesn't exist in remote cache - must build locally
-				pkgstatus[p] = PackageNotBuiltYet
-				notFoundCount++
-			case cache.DownloadStatusVerificationFailed:
-				// SLSA verification failed - must build locally with proper attestation
-				pkgstatus[p] = PackageVerificationFailed
-				log.WithField("package", p.FullName()).Warn("SLSA verification failed, will rebuild locally")
-			case cache.DownloadStatusFailed:
-				// Transient failure - mark for rebuild but log for visibility
-				pkgstatus[p] = PackageDownloadFailed
-				failedCount++
-				log.WithFields(log.Fields{
-					"package": p.FullName(),
-					"error":   result.Err,
-				}).Debug("Download failed (transient), will rebuild locally")
-			default:
+		// Update status based on download results - enables smarter decisions about retries vs rebuilds
+		var failedCount, notFoundCount, successCount int
+		for _, p := range pkgsToDownload {
+			result, hasResult := downloadResults[p.FullName()]
+			_, inCache := ctx.LocalCache.Location(p)
+
+			if inCache {
+				// Successfully downloaded (or was already in cache)
+				pkgstatus[p] = PackageDownloaded
+				successCount++
+			} else if hasResult {
+				switch result.Status {
+				case cache.DownloadStatusNotFound:
+					// Package doesn't exist in remote cache - must build locally
+					pkgstatus[p] = PackageNotBuiltYet
+					notFoundCount++
+				case cache.DownloadStatusVerificationFailed:
+					// SLSA verification failed - must build locally with proper attestation
+					pkgstatus[p] = PackageVerificationFailed
+					log.WithField("package", p.FullName()).Warn("SLSA verification failed, will rebuild locally")
+				case cache.DownloadStatusFailed:
+					// Transient failure - mark for rebuild but log for visibility
+					pkgstatus[p] = PackageDownloadFailed
+					failedCount++
+					log.WithFields(log.Fields{
+						"package": p.FullName(),
+						"error":   result.Err,
+					}).Debug("Download failed (transient), will rebuild locally")
+				default:
+					pkgstatus[p] = PackageNotBuiltYet
+				}
+			} else {
+				// No result - shouldn't happen but handle gracefully
 				pkgstatus[p] = PackageNotBuiltYet
 			}
-		} else {
-			// No result - shouldn't happen but handle gracefully
-			pkgstatus[p] = PackageNotBuiltYet
 		}
-	}
 
-	if failedCount > 0 || notFoundCount > 0 {
-		log.WithFields(log.Fields{
-			"success":  successCount,
-			"notFound": notFoundCount,
-			"failed":   failedCount,
-		}).Debug("Download phase completed")
+		// Log download summary at info level for CI visibility
+		if len(pkgsToDownload) > 0 {
+			log.WithFields(log.Fields{
+				"downloaded": successCount,
+				"not_found":  notFoundCount,
+				"failed":     failedCount,
+				"total":      len(pkgsToDownload),
+				"duration":   downloadDuration.Round(time.Millisecond),
+			}).Info("cache download completed")
+		}
 	}
 
 	// Validate that cached packages have all their dependencies available.
 	// This prevents build failures when a package is cached but a dependency failed to download.
 	// If a cached package has missing dependencies, remove it from cache and mark for rebuild.
-	for _, p := range allpkg {
-		status := pkgstatus[p]
-		if status != PackageDownloaded && status != PackageBuilt {
-			// Only validate packages that are in the local cache
-			continue
-		}
-
-		if !validateDependenciesAvailable(p, ctx.LocalCache, pkgstatus) {
-			log.WithField("package", p.FullName()).Warn("Cached package has missing dependencies, will rebuild")
-
-			// Remove the package from local cache
-			if path, exists := ctx.LocalCache.Location(p); exists {
-				if err := os.Remove(path); err != nil {
-					log.WithError(err).WithField("package", p.FullName()).Warn("Failed to remove package from cache")
-				}
+	// Skip this validation in lazy download mode - dependencies will be downloaded on-demand.
+	if !ctx.lazyDownload {
+		for _, p := range allpkg {
+			status := pkgstatus[p]
+			if status != PackageDownloaded && status != PackageBuilt {
+				// Only validate packages that are in the local cache
+				continue
 			}
 
-			// Mark for rebuild
-			pkgstatus[p] = PackageNotBuiltYet
+			if !validateDependenciesAvailable(p, ctx.LocalCache, pkgstatus) {
+				log.WithField("package", p.FullName()).Warn("Cached package has missing dependencies, will rebuild")
+
+				// Remove the package from local cache
+				if path, exists := ctx.LocalCache.Location(p); exists {
+					if err := os.Remove(path); err != nil {
+						log.WithError(err).WithField("package", p.FullName()).Warn("Failed to remove package from cache")
+					}
+				}
+
+				// Mark for rebuild
+				pkgstatus[p] = PackageNotBuiltYet
+			}
 		}
 	}
 
@@ -943,6 +1036,11 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 		pkgsToDownloadMap[p.FullName()] = true
 	}
 
+	// In lazy download mode, check lazyDownloadResults for download status
+	ctx.lazyDownloadMu.Lock()
+	lazyResults := ctx.lazyDownloadResults
+	ctx.lazyDownloadMu.Unlock()
+
 	for _, p := range allpkg {
 		// Check actual state in local cache
 		_, inCache := ctx.LocalCache.Location(p)
@@ -959,11 +1057,20 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 		inPkgsToDownload := pkgsToDownloadMap[p.FullName()]
 		status := statusAfterDownload[p]
 
+		// In lazy download mode, check if package was downloaded on-demand
+		wasLazyDownloaded := false
+		if ctx.lazyDownload && lazyResults != nil {
+			if result, ok := lazyResults[p.FullName()]; ok {
+				wasLazyDownloaded = result.Status == cache.DownloadStatusSuccess || result.Status == cache.DownloadStatusSkipped
+			}
+		}
+
 		log.WithFields(log.Fields{
-			"package":          p.FullName(),
-			"inNewlyBuilt":     inNewlyBuilt,
-			"inPkgsToDownload": inPkgsToDownload,
-			"status":           status,
+			"package":           p.FullName(),
+			"inNewlyBuilt":      inNewlyBuilt,
+			"inPkgsToDownload":  inPkgsToDownload,
+			"status":            status,
+			"wasLazyDownloaded": wasLazyDownloaded,
 		}).Debug("Categorizing package for build summary")
 
 		if inNewlyBuilt {
@@ -972,9 +1079,12 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 
 			// Check if this was supposed to be downloaded but wasn't
 			// This indicates verification or download failure
-			if inPkgsToDownload && status != PackageDownloaded {
+			if inPkgsToDownload && status != PackageDownloaded && !wasLazyDownloaded {
 				failedDownloads = append(failedDownloads, p)
 			}
+		} else if wasLazyDownloaded {
+			// Package was downloaded on-demand during lazy download
+			downloaded++
 		} else if inPkgsToDownload && status != PackageDownloaded {
 			// Package was supposed to be downloaded but wasn't, yet it's now in cache
 			// This means it was built locally after download/verification failure
@@ -986,7 +1096,7 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 			builtLocally++
 			failedDownloads = append(failedDownloads, p)
 		} else if status == PackageDownloaded {
-			// Package was downloaded
+			// Package was downloaded (eager mode)
 			downloaded++
 		} else if status == PackageBuilt {
 			// Package was already cached
@@ -998,13 +1108,24 @@ func printBuildSummary(ctx *buildContext, targetPkg *Package, allpkg []*Package,
 		}
 	}
 
-	log.WithFields(log.Fields{
+	// Build the log fields for the summary
+	logFields := log.Fields{
 		"target":         targetPkg.FullName(),
 		"total":          total,
 		"cached_locally": alreadyCached,
 		"downloaded":     downloaded,
 		"built_locally":  builtLocally,
-	}).Info("Build completed")
+	}
+
+	// Add download duration if lazy download was used and packages were downloaded
+	if ctx.lazyDownload && downloaded > 0 {
+		ctx.lazyDownloadMu.Lock()
+		downloadDuration := ctx.lazyDownloadDuration
+		ctx.lazyDownloadMu.Unlock()
+		logFields["download_time"] = downloadDuration.Round(time.Millisecond)
+	}
+
+	log.WithFields(logFields).Info("Build completed")
 
 	// Highlight packages that failed verification/download
 	if len(failedDownloads) > 0 {
@@ -1117,6 +1238,20 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
 		log.WithField("package", p.FullName()).Debug("package already in local cache, skipping")
 		return nil
+	}
+
+	// Lazy download: attempt to download from remote cache just-in-time
+	// This avoids downloading packages that won't be needed for the build
+	if buildctx.lazyDownload && !p.Ephemeral && buildctx.isInRemoteCache(p) {
+		result := buildctx.lazyDownloadPackage(p)
+		if result.Status == cache.DownloadStatusSuccess || result.Status == cache.DownloadStatusSkipped {
+			// Check if download succeeded (package now in local cache)
+			if _, inCache := buildctx.LocalCache.Location(p); inCache {
+				log.WithField("package", p.FullName()).Debug("package downloaded from remote cache")
+				return nil
+			}
+		}
+		// Download failed or package not found - continue to build locally
 	}
 
 	// Build dependencies first

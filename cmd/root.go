@@ -37,6 +37,9 @@ const (
 	// EnvvarEnableInFlightChecksums enables in-flight checksumming of cache artifacts
 	EnvvarEnableInFlightChecksums = "LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS"
 
+	// EnvvarLazyDownload enables on-demand downloading of packages from remote cache
+	EnvvarLazyDownload = "LEEWAY_LAZY_DOWNLOAD"
+
 	// EnvvarDockerExportToCache controls whether Docker images are exported to cache instead of pushed directly
 	EnvvarDockerExportToCache = "LEEWAY_DOCKER_EXPORT_TO_CACHE"
 

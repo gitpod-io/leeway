@@ -235,6 +235,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().String("slsa-source-uri", "", "Expected source URI for SLSA verification (required when verification enabled)")
 	cmd.Flags().Bool("slsa-require-attestation", false, "Require SLSA attestations (missing/invalid → build locally)")
 	cmd.Flags().Bool("in-flight-checksums", false, "Enable checksumming of cache artifacts to prevent TOCTU attacks")
+	cmd.Flags().Bool("lazy-download", false, "Download cached packages on-demand instead of upfront (reduces download time when only subset needed)")
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
 	cmd.Flags().String("report-segment", os.Getenv(EnvvarSegmentKey), "Report build events to segment using the segment key (defaults to $LEEWAY_SEGMENT_KEY)")
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
@@ -452,6 +453,17 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, C
 		inFlightChecksums = inFlightChecksumsDefault
 	}
 
+	// Get lazy download setting (env var as default, CLI flag overrides)
+	lazyDownloadDefault := os.Getenv(EnvvarLazyDownload) == "true"
+	lazyDownload, err := cmd.Flags().GetBool("lazy-download")
+	if err != nil {
+		log.Fatal(err)
+	}
+	// If flag wasn't explicitly set, use environment variable
+	if !cmd.Flags().Changed("lazy-download") {
+		lazyDownload = lazyDownloadDefault
+	}
+
 	// Get docker export to cache setting - CLI flag takes highest precedence
 	dockerExportToCache := false
 	dockerExportSet := false
@@ -486,6 +498,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache, C
 		leeway.WithDisableCoverage(disableCoverage),
 		leeway.WithEnableTestTracing(enableTestTracing),
 		leeway.WithInFlightChecksums(inFlightChecksums),
+		leeway.WithLazyDownload(lazyDownload),
 		leeway.WithDockerExportToCache(dockerExportToCache, dockerExportSet),
 		leeway.WithDockerExportEnv(dockerExportEnvValue, dockerExportEnvSet),
 	}, localCache, otelShutdown
