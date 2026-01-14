@@ -108,6 +108,8 @@ srcs:
 - "glob/**/path"
 # Deps list dependencies to other packages which must be built prior to building this package. How these dependencies are made
 # available during build depends on the package type.
+# NOTE: Go packages with `packaging: library` are automatically treated as "weak dependencies" - their source files
+# are copied (not built artifacts), and they don't block the build. See "Go Library Dependencies" section below.
 deps:
 - some/other:package
 # Argdeps makes build arguments version relevant. I.e. if the value of a build arg listed here changes, so does the package version.
@@ -125,6 +127,8 @@ config:
 ```YAML
 config:
   # Packaging method. See https://godoc.org/github.com/gitpod-io/leeway/pkg/leeway#GoPackaging for details. Defaults to library.
+  # IMPORTANT: Packages with `packaging: library` are treated as "weak dependencies" when referenced by other packages.
+  # This means their source files are copied (not built artifacts), and they build in parallel rather than blocking.
   packaging: library
   # If true leeway runs `go generate -v ./...` prior to testing/building. Defaults to false.
   generate: false
@@ -142,6 +146,43 @@ config:
   lintCommand: ["golangci-lint", "run"]
   # GoMod can point to a go.mod file outside the component root. Leeway expects a go.sum alongside the go.mod.
   goMod: "../go.mod"
+```
+
+#### Go Library Dependencies (Weak Dependencies)
+
+When a Go package with `packaging: library` is listed as a dependency, leeway automatically treats it as a "weak dependency". This behavior is optimized for Go's module system:
+
+| Aspect | Regular Dependency | Go Library (Weak) Dependency |
+|--------|-------------------|------------------------------|
+| Affects package version | ✅ | ✅ |
+| Must be built first | ✅ | ❌ |
+| What's copied to `_deps/` | Built artifact | Source files |
+| `go.mod replace` added | ✅ | ✅ |
+| Added to build queue | ✅ | ✅ |
+
+**Why this matters:**
+- Go libraries are typically used for their source code via `go.mod replace` directives
+- The library's tests can run in parallel with the dependent package's build
+- Changes to the library still trigger rebuilds of dependent packages (version tracking)
+- Build times improve because packages don't wait for library builds to complete
+
+**Example:**
+```yaml
+# my-lib/BUILD.yaml
+packages:
+- name: lib
+  type: go
+  config:
+    packaging: library  # This makes it a weak dependency when referenced
+
+# my-app/BUILD.yaml  
+packages:
+- name: app
+  type: go
+  deps:
+    - my-lib:lib  # Automatically treated as weak dep - sources copied, builds in parallel
+  config:
+    packaging: app
 ```
 
 ### Yarn packages

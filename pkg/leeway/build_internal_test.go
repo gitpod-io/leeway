@@ -14,6 +14,251 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
+func TestCollectWeakDependencies(t *testing.T) {
+	// Helper to create test packages
+	newPkg := func(name string, pkgType PackageType, packaging interface{}) *Package {
+		pkg := &Package{
+			C: &Component{
+				W:      &Workspace{Packages: make(map[string]*Package)},
+				Origin: "test",
+				Name:   "test",
+			},
+			PackageInternal: PackageInternal{Name: name, Type: pkgType},
+		}
+		switch pkgType {
+		case GoPackage:
+			if p, ok := packaging.(GoPackaging); ok {
+				pkg.Config = GoPkgConfig{Packaging: p}
+			}
+		case GenericPackage:
+			pkg.Config = GenericPkgConfig{}
+		}
+		return pkg
+	}
+
+	t.Run("collects direct weak deps", func(t *testing.T) {
+		libA := newPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{}
+
+		app := newPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{}
+		app.weakDependencies = []*Package{libA}
+
+		result := collectWeakDependencies(app)
+
+		if len(result) != 1 {
+			t.Errorf("expected 1 weak dep, got %d", len(result))
+		}
+		if result[0].Name != "lib-a" {
+			t.Errorf("expected lib-a, got %s", result[0].Name)
+		}
+	})
+
+	t.Run("collects nested weak deps (weak dep of weak dep)", func(t *testing.T) {
+		// lib-b depends on lib-a (both are Go libraries)
+		libA := newPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{}
+
+		libB := newPkg("lib-b", GoPackage, GoLibrary)
+		libB.dependencies = []*Package{}
+		libB.weakDependencies = []*Package{libA} // lib-a is weak dep of lib-b
+
+		app := newPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{}
+		app.weakDependencies = []*Package{libB}
+
+		result := collectWeakDependencies(app)
+
+		// Should collect both lib-b and lib-a
+		if len(result) != 2 {
+			t.Errorf("expected 2 weak deps, got %d: %v", len(result), result)
+		}
+
+		names := make(map[string]bool)
+		for _, p := range result {
+			names[p.Name] = true
+		}
+		if !names["lib-a"] || !names["lib-b"] {
+			t.Errorf("expected lib-a and lib-b, got %v", names)
+		}
+	})
+
+	t.Run("collects hard deps of weak deps", func(t *testing.T) {
+		// lib-a has a hard dep on generic-pkg
+		genericPkg := newPkg("generic-pkg", GenericPackage, nil)
+		genericPkg.dependencies = []*Package{}
+		genericPkg.weakDependencies = []*Package{}
+
+		libA := newPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{genericPkg} // hard dep
+		libA.weakDependencies = []*Package{}
+
+		app := newPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{}
+		app.weakDependencies = []*Package{libA}
+
+		result := collectWeakDependencies(app)
+
+		// Should collect lib-a and generic-pkg
+		if len(result) != 2 {
+			t.Errorf("expected 2 deps, got %d: %v", len(result), result)
+		}
+
+		names := make(map[string]bool)
+		for _, p := range result {
+			names[p.Name] = true
+		}
+		if !names["lib-a"] || !names["generic-pkg"] {
+			t.Errorf("expected lib-a and generic-pkg, got %v", names)
+		}
+	})
+
+	t.Run("collects weak deps from hard deps", func(t *testing.T) {
+		// app -> hard-dep -> lib-a (weak)
+		libA := newPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{}
+
+		hardDep := newPkg("hard-dep", GoPackage, GoApp)
+		hardDep.dependencies = []*Package{}
+		hardDep.weakDependencies = []*Package{libA}
+
+		app := newPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{hardDep}
+		app.weakDependencies = []*Package{}
+
+		result := collectWeakDependencies(app)
+
+		// Should collect lib-a (weak dep of hard-dep)
+		if len(result) != 1 {
+			t.Errorf("expected 1 weak dep, got %d: %v", len(result), result)
+		}
+		if result[0].Name != "lib-a" {
+			t.Errorf("expected lib-a, got %s", result[0].Name)
+		}
+	})
+
+	t.Run("no duplicates", func(t *testing.T) {
+		// Both app and hard-dep depend on lib-a
+		libA := newPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{}
+
+		hardDep := newPkg("hard-dep", GoPackage, GoApp)
+		hardDep.dependencies = []*Package{}
+		hardDep.weakDependencies = []*Package{libA}
+
+		app := newPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{hardDep}
+		app.weakDependencies = []*Package{libA} // also directly depends on lib-a
+
+		result := collectWeakDependencies(app)
+
+		// Should only have lib-a once
+		if len(result) != 1 {
+			t.Errorf("expected 1 weak dep (no duplicates), got %d: %v", len(result), result)
+		}
+	})
+}
+
+func TestCollectHardDepsOfWeakDeps(t *testing.T) {
+	newPkg := func(name string, pkgType PackageType, packaging interface{}) *Package {
+		pkg := &Package{
+			C: &Component{
+				W:      &Workspace{Packages: make(map[string]*Package)},
+				Origin: "test",
+				Name:   "test",
+			},
+			PackageInternal: PackageInternal{Name: name, Type: pkgType},
+		}
+		switch pkgType {
+		case GoPackage:
+			if p, ok := packaging.(GoPackaging); ok {
+				pkg.Config = GoPkgConfig{Packaging: p}
+			}
+		case GenericPackage:
+			pkg.Config = GenericPkgConfig{}
+		}
+		return pkg
+	}
+
+	t.Run("collects hard deps of weak deps", func(t *testing.T) {
+		// go-lib depends on generic-pkg (hard dep)
+		genericPkg := newPkg("generic-pkg", GenericPackage, nil)
+		genericPkg.dependencies = []*Package{}
+		genericPkg.weakDependencies = []*Package{}
+
+		goLib := newPkg("go-lib", GoPackage, GoLibrary)
+		goLib.dependencies = []*Package{genericPkg}
+		goLib.weakDependencies = []*Package{}
+
+		weakdeps := []*Package{goLib}
+		transdep := []*Package{} // app has no direct hard deps
+
+		result := collectHardDepsOfWeakDeps(weakdeps, transdep)
+
+		if len(result) != 1 {
+			t.Errorf("expected 1 hard dep of weak dep, got %d", len(result))
+		}
+		if result[0].Name != "generic-pkg" {
+			t.Errorf("expected generic-pkg, got %s", result[0].Name)
+		}
+	})
+
+	t.Run("excludes deps already in transdep", func(t *testing.T) {
+		genericPkg := newPkg("generic-pkg", GenericPackage, nil)
+		genericPkg.dependencies = []*Package{}
+		genericPkg.weakDependencies = []*Package{}
+
+		goLib := newPkg("go-lib", GoPackage, GoLibrary)
+		goLib.dependencies = []*Package{genericPkg}
+		goLib.weakDependencies = []*Package{}
+
+		weakdeps := []*Package{goLib}
+		transdep := []*Package{genericPkg} // already in transdep
+
+		result := collectHardDepsOfWeakDeps(weakdeps, transdep)
+
+		if len(result) != 0 {
+			t.Errorf("expected 0 (already in transdep), got %d", len(result))
+		}
+	})
+
+	t.Run("collects nested hard deps", func(t *testing.T) {
+		// go-lib -> generic-a -> generic-b
+		genericB := newPkg("generic-b", GenericPackage, nil)
+		genericB.dependencies = []*Package{}
+		genericB.weakDependencies = []*Package{}
+
+		genericA := newPkg("generic-a", GenericPackage, nil)
+		genericA.dependencies = []*Package{genericB}
+		genericA.weakDependencies = []*Package{}
+
+		goLib := newPkg("go-lib", GoPackage, GoLibrary)
+		goLib.dependencies = []*Package{genericA}
+		goLib.weakDependencies = []*Package{}
+
+		weakdeps := []*Package{goLib}
+		transdep := []*Package{}
+
+		result := collectHardDepsOfWeakDeps(weakdeps, transdep)
+
+		if len(result) != 2 {
+			t.Errorf("expected 2 hard deps, got %d", len(result))
+		}
+
+		names := make(map[string]bool)
+		for _, p := range result {
+			names[p.Name] = true
+		}
+		if !names["generic-a"] || !names["generic-b"] {
+			t.Errorf("expected generic-a and generic-b, got %v", names)
+		}
+	})
+}
+
 func TestDefaultGoBuildCommand_IncludesTrimpath(t *testing.T) {
 	// The default Go build command should include -trimpath for reproducible builds.
 	// Without -trimpath, Go embeds absolute file paths in the binary, which vary
