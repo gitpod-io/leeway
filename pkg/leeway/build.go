@@ -687,6 +687,21 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	requirements := pkg.GetTransitiveDependencies()
 	allpkg := append(requirements, pkg)
 
+	weakDeps := collectWeakDependencies(pkg)
+	for _, wd := range weakDeps {
+		// Only add if not already in allpkg (avoid duplicates)
+		found := false
+		for _, p := range allpkg {
+			if p.FullName() == wd.FullName() {
+				found = true
+				break
+			}
+		}
+		if !found {
+			allpkg = append(allpkg, wd)
+		}
+	}
+
 	pkgsInLocalCache := make(map[*Package]struct{})
 	var pkgsToCheckRemoteCache []*Package
 	for _, p := range allpkg {
@@ -872,7 +887,38 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return nil
 	}
 
-	buildErr := pkg.build(ctx)
+	// Build hard deps of weak deps first - they need to be available for extraction
+	// when the main package builds. Use GetTransitiveWeakDependencies to get only
+	// the actual weak deps (Go libraries), not the mixed result from collectWeakDependencies.
+	hardDepsOfWeakDeps := collectHardDepsOfWeakDepsForBuild(pkg.GetTransitiveWeakDependencies())
+	if len(hardDepsOfWeakDeps) > 0 {
+		var hdGroup errgroup.Group
+		for _, hd := range hardDepsOfWeakDeps {
+			hardDep := hd
+			hdGroup.Go(func() error {
+				return hardDep.build(ctx)
+			})
+		}
+		if err := hdGroup.Wait(); err != nil {
+			return xerrors.Errorf("build failed")
+		}
+	}
+
+	// Now build weak deps and main package in parallel
+	var buildGroup errgroup.Group
+
+	for _, wd := range weakDeps {
+		weakDep := wd
+		buildGroup.Go(func() error {
+			return weakDep.build(ctx)
+		})
+	}
+
+	buildGroup.Go(func() error {
+		return pkg.build(ctx)
+	})
+
+	buildErr := buildGroup.Wait()
 
 	// Check for build errors immediately and return if there are any
 	if buildErr != nil {
@@ -1103,6 +1149,64 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 	return nil
 }
 
+func (p *Package) buildHardDepsOfWeakDeps(buildctx *buildContext) error {
+	hardDeps := collectHardDepsOfWeakDepsForBuild(p.GetTransitiveWeakDependencies())
+	if len(hardDeps) == 0 {
+		return nil
+	}
+
+	log.WithFields(log.Fields{
+		"package":  p.FullName(),
+		"hardDeps": len(hardDeps),
+	}).Debug("building hard deps of weak deps")
+
+	g := new(errgroup.Group)
+	for _, dep := range hardDeps {
+		d := dep
+		g.Go(func() error {
+			return d.build(buildctx)
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+		}).Error("hard deps of weak deps build failed")
+		return err
+	}
+
+	return nil
+}
+
+func (p *Package) buildWeakDeps(buildctx *buildContext) {
+	weakDeps := p.GetTransitiveWeakDependencies()
+	if len(weakDeps) == 0 {
+		return
+	}
+
+	log.WithFields(log.Fields{
+		"package":  p.FullName(),
+		"weakDeps": len(weakDeps),
+	}).Debug("building weak deps in background")
+
+	var wg errgroup.Group
+	for _, dep := range weakDeps {
+		d := dep
+		wg.Go(func() error {
+			return d.build(buildctx)
+		})
+	}
+
+	// Don't block on weak deps - they run in parallel
+	// Errors are logged but don't fail the main build
+	if err := wg.Wait(); err != nil {
+		log.WithFields(log.Fields{
+			"package": p.FullName(),
+			"error":   err,
+		}).Warn("weak dep build failed")
+	}
+}
+
 func (p *Package) build(buildctx *buildContext) (err error) {
 	// Try to obtain lock for building this package
 	doBuild := buildctx.ObtainBuildLock(p)
@@ -1123,6 +1227,17 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	if err := p.buildDependencies(buildctx); err != nil {
 		return err
 	}
+
+	// Build hard deps of weak deps - they need to be available for extraction
+	// This handles cases like: app -> golib (weak) -> generic (hard dep of golib)
+	// The generic package needs to be built before app can extract it to _deps/
+	if err := p.buildHardDepsOfWeakDeps(buildctx); err != nil {
+		return err
+	}
+
+	// Start building weak deps in parallel (they don't block this build)
+	// This ensures weak deps are built (for their tests) even when build() is called directly
+	go p.buildWeakDeps(buildctx)
 
 	// Check again after dependencies - might have been built as a dependency
 	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
@@ -1452,6 +1567,10 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	// 			as we also need components/gitpod-protocol:gitpod-schema to be available on disk to perform the build.
 	case YarnPackage, GoPackage:
 		deps = p.GetTransitiveDependencies()
+		// Also include hard deps of weak deps (e.g., generic packages that Go libraries depend on)
+		for _, wd := range p.GetTransitiveWeakDependencies() {
+			deps = append(deps, wd.GetTransitiveDependencies()...)
+		}
 	// For Generic and Docker packages it is sufficient to have the direct dependencies.
 	case GenericPackage, DockerPackage:
 		deps = p.GetDependencies()
@@ -1460,6 +1579,91 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	for _, p := range deps {
 		p.packagesToDownload(inLocalCache, inRemoteCache, toDownload)
 	}
+}
+
+// collectHardDepsOfWeakDeps returns hard dependencies of weak deps that aren't already in transdep.
+// These need to be extracted as built artifacts for the weak dep sources to compile.
+func collectHardDepsOfWeakDeps(weakdeps []*Package, transdep []*Package) []*Package {
+	existing := make(map[string]struct{})
+	for _, dep := range transdep {
+		existing[dep.FullName()] = struct{}{}
+	}
+
+	seen := make(map[string]struct{})
+	var result []*Package
+
+	for _, wd := range weakdeps {
+		for _, hd := range wd.GetTransitiveDependencies() {
+			if _, ok := existing[hd.FullName()]; ok {
+				continue
+			}
+			if _, ok := seen[hd.FullName()]; ok {
+				continue
+			}
+			seen[hd.FullName()] = struct{}{}
+			result = append(result, hd)
+		}
+	}
+
+	return result
+}
+
+// collectHardDepsOfWeakDepsForBuild returns hard deps of weak deps that need to be built
+// before the main package can build (they need to be extracted to _deps/).
+func collectHardDepsOfWeakDepsForBuild(weakDeps []*Package) []*Package {
+	seen := make(map[string]struct{})
+	var result []*Package
+
+	for _, wd := range weakDeps {
+		for _, hd := range wd.GetTransitiveDependencies() {
+			if _, ok := seen[hd.FullName()]; ok {
+				continue
+			}
+			seen[hd.FullName()] = struct{}{}
+			result = append(result, hd)
+		}
+	}
+
+	return result
+}
+
+// collectWeakDependencies collects all weak dependencies from a package and its dependency tree,
+// including hard deps of weak deps (they need to be built for the weak dep to work).
+func collectWeakDependencies(pkg *Package) []*Package {
+	seen := make(map[string]struct{})
+	visited := make(map[string]struct{})
+	var result []*Package
+
+	var collectFromPackage func(p *Package)
+	collectFromPackage = func(p *Package) {
+		if _, ok := visited[p.FullName()]; ok {
+			return
+		}
+		visited[p.FullName()] = struct{}{}
+
+		for _, wd := range p.GetWeakDependencies() {
+			if _, ok := seen[wd.FullName()]; !ok {
+				seen[wd.FullName()] = struct{}{}
+				result = append(result, wd)
+			}
+
+			collectFromPackage(wd)
+
+			for _, td := range wd.GetTransitiveDependencies() {
+				if _, ok := seen[td.FullName()]; !ok {
+					seen[td.FullName()] = struct{}{}
+					result = append(result, td)
+				}
+			}
+		}
+
+		for _, dep := range p.GetDependencies() {
+			collectFromPackage(dep)
+		}
+	}
+
+	collectFromPackage(pkg)
+	return result
 }
 
 // validateDependenciesAvailable checks if all required dependencies of a package are available.
@@ -1475,6 +1679,10 @@ func validateDependenciesAvailable(p *Package, localCache cache.LocalCache, pkgs
 	case YarnPackage, GoPackage:
 		// Go and Yarn packages need all transitive dependencies
 		deps = p.GetTransitiveDependencies()
+		// Also include hard deps of weak deps (e.g., generic packages that Go libraries depend on)
+		for _, wd := range p.GetTransitiveWeakDependencies() {
+			deps = append(deps, wd.GetTransitiveDependencies()...)
+		}
 	case GenericPackage, DockerPackage:
 		// Generic and Docker packages only need direct dependencies
 		deps = p.GetDependencies()
@@ -2068,43 +2276,81 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	}
 
 	transdep := p.GetTransitiveDependencies()
-	if len(transdep) > 0 {
+	weakdeps := p.GetTransitiveWeakDependencies()
+
+	// Collect hard deps of weak deps - they need to be extracted as built artifacts
+	hardDepsOfWeakDeps := collectHardDepsOfWeakDeps(weakdeps, transdep)
+
+	needsDepsDir := len(transdep) > 0 || len(weakdeps) > 0 || len(hardDepsOfWeakDeps) > 0
+
+	if needsDepsDir {
 		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"mkdir", "_deps"})
+	}
 
-		for _, dep := range transdep {
-			if dep.Ephemeral {
-				continue
-			}
+	// Combine transdep and hardDepsOfWeakDeps for extraction
+	allHardDeps := make(map[string]*Package)
+	for _, dep := range transdep {
+		allHardDeps[dep.FullName()] = dep
+	}
+	for _, dep := range hardDepsOfWeakDeps {
+		allHardDeps[dep.FullName()] = dep
+	}
 
-			builtpkg, ok := buildctx.LocalCache.Location(dep)
-			if !ok {
-				return nil, PkgNotBuiltErr{dep}
-			}
+	for _, dep := range allHardDeps {
+		if dep.Ephemeral {
+			continue
+		}
 
-			tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
-			untarCmd, err := BuildUnTarCommand(
-				WithInputFile(builtpkg),
-				WithTargetDir(tgt),
-				WithAutoDetectCompression(true),
-			)
-			if err != nil {
-				return nil, err
-			}
+		builtpkg, ok := buildctx.LocalCache.Location(dep)
+		if !ok {
+			return nil, PkgNotBuiltErr{dep}
+		}
 
-			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
-				{"mkdir", tgt},
-				untarCmd,
-			}...)
+		tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
+		untarCmd, err := BuildUnTarCommand(
+			WithInputFile(builtpkg),
+			WithTargetDir(tgt),
+			WithAutoDetectCompression(true),
+		)
+		if err != nil {
+			return nil, err
+		}
 
-			if dep.Type != GoPackage {
-				continue
-			}
+		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
+			{"mkdir", tgt},
+			untarCmd,
+		}...)
 
-			if isGoWorkspace {
-				commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"go", "work", "use", tgt})
-			} else {
-				commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"sh", "-c", fmt.Sprintf("%s mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2 | head -n1)=./%s", goCommand, tgt, tgt)})
-			}
+		if dep.Type != GoPackage {
+			continue
+		}
+
+		if isGoWorkspace {
+			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"go", "work", "use", tgt})
+		} else {
+			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"sh", "-c", fmt.Sprintf("%s mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2 | head -n1)=./%s", goCommand, tgt, tgt)})
+		}
+	}
+
+	for _, dep := range weakdeps {
+		if dep.Type != GoPackage {
+			log.WithField("package", p.FullName()).WithField("weakdep", dep.FullName()).
+				Warn("weak dependencies are only supported for Go packages, skipping")
+			continue
+		}
+
+		tgt := filepath.Join("_deps", p.BuildLayoutLocation(dep))
+		srcDir := dep.C.Origin
+
+		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], [][]string{
+			{"mkdir", "-p", tgt},
+			{"sh", "-c", fmt.Sprintf("cp -r %s/* %s/", srcDir, tgt)},
+		}...)
+
+		if isGoWorkspace {
+			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"go", "work", "use", tgt})
+		} else {
+			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"sh", "-c", fmt.Sprintf("%s mod edit -replace $(cd %s; grep module go.mod | cut -d ' ' -f 2 | head -n1)=./%s", goCommand, tgt, tgt)})
 		}
 	}
 

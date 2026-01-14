@@ -163,6 +163,7 @@ type Package struct {
 	Definition []byte `yaml:"-"`
 
 	dependencies     []*Package
+	weakDependencies []*Package
 	layout           map[*Package]string
 	originalSources  []string
 	fullNameOverride string
@@ -175,22 +176,55 @@ func (p *Package) link(idx map[string]*Package) error {
 		return nil
 	}
 
-	p.dependencies = make([]*Package, len(p.Dependencies))
 	p.layout = make(map[*Package]string)
-	for i, dep := range p.Dependencies {
+
+	var hardDeps []*Package
+	var weakDeps []*Package
+
+	for _, dep := range p.Dependencies {
 		deppkg, ok := idx[dep]
 		if !ok {
 			return PackageNotFoundErr{dep}
 		}
-		p.dependencies[i] = deppkg
 
-		// if the user hasn't specified a layout, tie it down at this point
-		p.layout[deppkg], ok = p.Layout[dep]
-		if !ok {
+		if isGoLibrary(deppkg) {
+			weakDeps = append(weakDeps, deppkg)
+		} else {
+			hardDeps = append(hardDeps, deppkg)
+		}
+
+		if layoutLoc, hasLayout := p.Layout[dep]; hasLayout {
+			p.layout[deppkg] = layoutLoc
+		} else {
 			p.layout[deppkg] = deppkg.FilesystemSafeName()
 		}
 	}
+
+	if hardDeps == nil {
+		p.dependencies = []*Package{}
+	} else {
+		p.dependencies = hardDeps
+	}
+
+	if weakDeps == nil {
+		p.weakDependencies = []*Package{}
+	} else {
+		p.weakDependencies = weakDeps
+	}
+
 	return nil
+}
+
+// isGoLibrary returns true if the package is a Go package with library packaging
+func isGoLibrary(pkg *Package) bool {
+	if pkg.Type != GoPackage {
+		return false
+	}
+	cfg, ok := pkg.Config.(GoPkgConfig)
+	if !ok {
+		return false
+	}
+	return cfg.Packaging == GoLibrary
 }
 
 func (p *Package) findCycle() ([]string, error) {
@@ -245,6 +279,43 @@ func (p *Package) findCycle() ([]string, error) {
 // GetDependencies returns the linked package dependencies or nil if not linked yet
 func (p *Package) GetDependencies() []*Package {
 	return p.dependencies
+}
+
+// GetWeakDependencies returns the linked weak dependencies or nil if not linked yet.
+func (p *Package) GetWeakDependencies() []*Package {
+	return p.weakDependencies
+}
+
+// GetTransitiveWeakDependencies returns all transitive weak dependencies of a package.
+// The returned slice is sorted by FullName() to ensure deterministic ordering.
+func (p *Package) GetTransitiveWeakDependencies() []*Package {
+	idx := make(map[string]*Package)
+	queue := []*Package{p}
+	for len(queue) != 0 {
+		pkg := queue[0]
+		queue = queue[1:]
+
+		if _, ok := idx[pkg.FullName()]; ok {
+			continue
+		}
+
+		idx[pkg.FullName()] = pkg
+		queue = append(queue, pkg.weakDependencies...)
+	}
+
+	keys := make([]string, 0, len(idx)-1)
+	for k := range idx {
+		if k != p.FullName() {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+
+	res := make([]*Package, len(keys))
+	for i, k := range keys {
+		res[i] = idx[k]
+	}
+	return res
 }
 
 // GetTransitiveDependencies returns all transitive dependencies of a package.
@@ -995,6 +1066,13 @@ func (p *Package) WriteVersionManifest(out io.Writer) error {
 			return err
 		}
 		bundle = append(bundle, fmt.Sprintf("%s.%s\n", dep.FullName(), ver))
+	}
+	for _, dep := range p.GetTransitiveWeakDependencies() {
+		ver, err := dep.Version()
+		if err != nil {
+			return err
+		}
+		bundle = append(bundle, fmt.Sprintf("weak:%s.%s\n", dep.FullName(), ver))
 	}
 	bundle = append(bundle, strings.Join(manifest, "\n"))
 	bundle = append(bundle, "\n")

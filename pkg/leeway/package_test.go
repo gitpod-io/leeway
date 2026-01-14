@@ -361,6 +361,293 @@ func NewTestPackage(name string) *Package {
 	}
 }
 
+func TestGoLibraryAutoWeakDeps(t *testing.T) {
+	t.Run("Go library deps auto-converted to weak deps", func(t *testing.T) {
+		goLib := NewTestPackage("go-lib")
+		goLib.Type = GoPackage
+		goLib.Config = GoPkgConfig{Packaging: GoLibrary}
+
+		pkg := NewTestPackage("main-pkg")
+		pkg.Dependencies = []string{"testcomp:go-lib"}
+		pkg.dependencies = nil // Reset to allow linking
+
+		idx := map[string]*Package{
+			"testcomp:go-lib": goLib,
+		}
+
+		err := pkg.link(idx)
+		assert.NoError(t, err)
+
+		// Go library should be in weak deps, not hard deps
+		assert.Len(t, pkg.GetDependencies(), 0, "Go library should not be in hard deps")
+		assert.Len(t, pkg.GetWeakDependencies(), 1, "Go library should be in weak deps")
+		assert.Equal(t, "go-lib", pkg.GetWeakDependencies()[0].Name)
+	})
+
+	t.Run("Go app deps remain as hard deps", func(t *testing.T) {
+		goApp := NewTestPackage("go-app")
+		goApp.Type = GoPackage
+		goApp.Config = GoPkgConfig{Packaging: GoApp}
+
+		pkg := NewTestPackage("main-pkg")
+		pkg.Dependencies = []string{"testcomp:go-app"}
+		pkg.dependencies = nil
+
+		idx := map[string]*Package{
+			"testcomp:go-app": goApp,
+		}
+
+		err := pkg.link(idx)
+		assert.NoError(t, err)
+
+		// Go app should remain as hard dep
+		assert.Len(t, pkg.GetDependencies(), 1, "Go app should be in hard deps")
+		assert.Len(t, pkg.GetWeakDependencies(), 0, "Go app should not be in weak deps")
+	})
+
+	t.Run("non-Go deps remain as hard deps", func(t *testing.T) {
+		dockerPkg := NewTestPackage("docker-pkg")
+		dockerPkg.Type = DockerPackage
+		dockerPkg.Config = DockerPkgConfig{Dockerfile: "Dockerfile"}
+
+		pkg := NewTestPackage("main-pkg")
+		pkg.Dependencies = []string{"testcomp:docker-pkg"}
+		pkg.dependencies = nil
+
+		idx := map[string]*Package{
+			"testcomp:docker-pkg": dockerPkg,
+		}
+
+		err := pkg.link(idx)
+		assert.NoError(t, err)
+
+		assert.Len(t, pkg.GetDependencies(), 1)
+		assert.Len(t, pkg.GetWeakDependencies(), 0)
+	})
+
+	t.Run("mixed deps correctly separated", func(t *testing.T) {
+		goLib := NewTestPackage("go-lib")
+		goLib.Type = GoPackage
+		goLib.Config = GoPkgConfig{Packaging: GoLibrary}
+
+		goApp := NewTestPackage("go-app")
+		goApp.Type = GoPackage
+		goApp.Config = GoPkgConfig{Packaging: GoApp}
+
+		genericPkg := NewTestPackage("generic-pkg")
+		genericPkg.Type = GenericPackage
+		genericPkg.Config = GenericPkgConfig{}
+
+		pkg := NewTestPackage("main-pkg")
+		pkg.Dependencies = []string{"testcomp:go-lib", "testcomp:go-app", "testcomp:generic-pkg"}
+		pkg.dependencies = nil
+
+		idx := map[string]*Package{
+			"testcomp:go-lib":      goLib,
+			"testcomp:go-app":      goApp,
+			"testcomp:generic-pkg": genericPkg,
+		}
+
+		err := pkg.link(idx)
+		assert.NoError(t, err)
+
+		// Go library -> weak dep, others -> hard deps
+		assert.Len(t, pkg.GetDependencies(), 2, "Should have 2 hard deps")
+		assert.Len(t, pkg.GetWeakDependencies(), 1, "Should have 1 weak dep")
+
+		// Verify the weak dep is the Go library
+		assert.Equal(t, "go-lib", pkg.GetWeakDependencies()[0].Name)
+	})
+
+	t.Run("Go library layout respected", func(t *testing.T) {
+		goLib := NewTestPackage("go-lib")
+		goLib.Type = GoPackage
+		goLib.Config = GoPkgConfig{Packaging: GoLibrary}
+
+		pkg := NewTestPackage("main-pkg")
+		pkg.Dependencies = []string{"testcomp:go-lib"}
+		pkg.Layout = map[string]string{"testcomp:go-lib": "custom-location"}
+		pkg.dependencies = nil
+
+		idx := map[string]*Package{
+			"testcomp:go-lib": goLib,
+		}
+
+		err := pkg.link(idx)
+		assert.NoError(t, err)
+
+		loc := pkg.BuildLayoutLocation(goLib)
+		assert.Equal(t, "custom-location", loc)
+	})
+
+	t.Run("weak deps included in version manifest", func(t *testing.T) {
+		goLib := NewTestPackage("go-lib")
+		goLib.Type = GoPackage
+		goLib.Config = GoPkgConfig{Packaging: GoLibrary}
+		goLib.versionCache = "lib-version-hash"
+
+		pkg := NewTestPackage("main-pkg")
+		pkg.Dependencies = []string{"testcomp:go-lib"}
+		pkg.dependencies = nil
+
+		idx := map[string]*Package{
+			"testcomp:go-lib": goLib,
+		}
+
+		err := pkg.link(idx)
+		assert.NoError(t, err)
+
+		pkg.versionCache = "" // Clear cache to force recalculation
+
+		var buf strings.Builder
+		err = pkg.WriteVersionManifest(&buf)
+		assert.NoError(t, err)
+
+		manifest := buf.String()
+		assert.Contains(t, manifest, "weak:testcomp:go-lib.lib-version-hash")
+	})
+
+	t.Run("weak dep change affects version", func(t *testing.T) {
+		goLib1 := NewTestPackage("go-lib")
+		goLib1.Type = GoPackage
+		goLib1.Config = GoPkgConfig{Packaging: GoLibrary}
+		goLib1.versionCache = "version-1"
+
+		goLib2 := NewTestPackage("go-lib")
+		goLib2.Type = GoPackage
+		goLib2.Config = GoPkgConfig{Packaging: GoLibrary}
+		goLib2.versionCache = "version-2"
+
+		pkg1 := NewTestPackage("main-pkg")
+		pkg1.dependencies = []*Package{}
+		pkg1.weakDependencies = []*Package{goLib1}
+		pkg1.versionCache = ""
+
+		pkg2 := NewTestPackage("main-pkg")
+		pkg2.dependencies = []*Package{}
+		pkg2.weakDependencies = []*Package{goLib2}
+		pkg2.versionCache = ""
+
+		var buf1, buf2 strings.Builder
+		_ = pkg1.WriteVersionManifest(&buf1)
+		_ = pkg2.WriteVersionManifest(&buf2)
+
+		// Different weak dep versions should produce different manifests
+		assert.NotEqual(t, buf1.String(), buf2.String())
+	})
+
+	t.Run("nested Go library deps become weak deps", func(t *testing.T) {
+		// lib-c is a Go library
+		libC := NewTestPackage("lib-c")
+		libC.Type = GoPackage
+		libC.Config = GoPkgConfig{Packaging: GoLibrary}
+
+		// lib-b is a Go library that depends on lib-c
+		libB := NewTestPackage("lib-b")
+		libB.Type = GoPackage
+		libB.Config = GoPkgConfig{Packaging: GoLibrary}
+		libB.Dependencies = []string{"testcomp:lib-c"}
+		libB.dependencies = nil
+
+		// Link lib-b first
+		idx := map[string]*Package{
+			"testcomp:lib-c": libC,
+		}
+		err := libB.link(idx)
+		assert.NoError(t, err)
+
+		// lib-c should be a weak dep of lib-b (since it's a Go library)
+		assert.Len(t, libB.GetDependencies(), 0, "lib-c should not be hard dep of lib-b")
+		assert.Len(t, libB.GetWeakDependencies(), 1, "lib-c should be weak dep of lib-b")
+
+		// app depends on lib-b
+		app := NewTestPackage("app")
+		app.Type = GoPackage
+		app.Config = GoPkgConfig{Packaging: GoApp}
+		app.Dependencies = []string{"testcomp:lib-b"}
+		app.dependencies = nil
+
+		idx["testcomp:lib-b"] = libB
+		err = app.link(idx)
+		assert.NoError(t, err)
+
+		// lib-b should be a weak dep of app
+		assert.Len(t, app.GetDependencies(), 0)
+		assert.Len(t, app.GetWeakDependencies(), 1)
+		assert.Equal(t, "lib-b", app.GetWeakDependencies()[0].Name)
+	})
+
+	t.Run("GetTransitiveWeakDependencies collects nested weak deps", func(t *testing.T) {
+		// lib-c is a Go library
+		libC := NewTestPackage("lib-c")
+		libC.Type = GoPackage
+		libC.Config = GoPkgConfig{Packaging: GoLibrary}
+		libC.dependencies = []*Package{}
+		libC.weakDependencies = []*Package{}
+
+		// lib-b depends on lib-c (both Go libraries)
+		libB := NewTestPackage("lib-b")
+		libB.Type = GoPackage
+		libB.Config = GoPkgConfig{Packaging: GoLibrary}
+		libB.dependencies = []*Package{}
+		libB.weakDependencies = []*Package{libC}
+
+		// app depends on lib-b
+		app := NewTestPackage("app")
+		app.Type = GoPackage
+		app.Config = GoPkgConfig{Packaging: GoApp}
+		app.dependencies = []*Package{}
+		app.weakDependencies = []*Package{libB}
+
+		// GetTransitiveWeakDependencies should return both lib-b and lib-c
+		transitiveWeakDeps := app.GetTransitiveWeakDependencies()
+
+		assert.Len(t, transitiveWeakDeps, 2, "Should have 2 transitive weak deps")
+
+		names := make(map[string]bool)
+		for _, p := range transitiveWeakDeps {
+			names[p.Name] = true
+		}
+		assert.True(t, names["lib-b"], "Should include lib-b")
+		assert.True(t, names["lib-c"], "Should include lib-c")
+	})
+
+	t.Run("version manifest includes transitive weak deps", func(t *testing.T) {
+		// lib-c is a Go library
+		libC := NewTestPackage("lib-c")
+		libC.Type = GoPackage
+		libC.Config = GoPkgConfig{Packaging: GoLibrary}
+		libC.dependencies = []*Package{}
+		libC.weakDependencies = []*Package{}
+		libC.versionCache = "lib-c-version"
+
+		// lib-b depends on lib-c (both Go libraries)
+		libB := NewTestPackage("lib-b")
+		libB.Type = GoPackage
+		libB.Config = GoPkgConfig{Packaging: GoLibrary}
+		libB.dependencies = []*Package{}
+		libB.weakDependencies = []*Package{libC}
+		libB.versionCache = "lib-b-version"
+
+		// app depends on lib-b
+		app := NewTestPackage("app")
+		app.Type = GoPackage
+		app.Config = GoPkgConfig{Packaging: GoApp}
+		app.dependencies = []*Package{}
+		app.weakDependencies = []*Package{libB}
+		app.versionCache = ""
+
+		var buf strings.Builder
+		err := app.WriteVersionManifest(&buf)
+		assert.NoError(t, err)
+
+		manifest := buf.String()
+		// Both lib-b and lib-c should be in the manifest (transitive weak deps)
+		assert.Contains(t, manifest, "weak:testcomp:lib-b.lib-b-version")
+		assert.Contains(t, manifest, "weak:testcomp:lib-c.lib-c-version")
+	})
+}
+
 func TestCodecovComponentName(t *testing.T) {
 	tests := []struct {
 		Test     string
