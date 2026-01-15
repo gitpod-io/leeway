@@ -360,11 +360,3 @@ func (m *mockS3StorageForProvenance) UploadObject(ctx context.Context, key strin
 	m.objects[key] = data
 	return nil
 }
-
-func (m *mockS3StorageForProvenance) ListObjects(ctx context.Context, prefix string) ([]string, error) {
-	var keys []string
-	for key := range m.objects {
-		keys = append(keys, key)
-	}
-	return keys, nil
-}

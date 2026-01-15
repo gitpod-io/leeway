@@ -125,7 +125,7 @@ func getProvenanceTarget(cmd *cobra.Command, args []string) (bundleFN, pkgFN str
 			log.Fatal("provenance export requires a package")
 		}
 
-		_, cache, _ := getBuildOpts(cmd)
+		_, cache := getBuildOpts(cmd)
 
 		var ok bool
 		pkgFN, ok = cache.Location(pkg)

@@ -32,7 +32,7 @@ If no package is specified, the workspace's default target is used.`,
 		}
 
 		// Get build options and cache
-		_, localCache, _ := getBuildOpts(cmd)
+		_, localCache := getBuildOpts(cmd)
 
 		// Get output format and file
 		format, _ := cmd.Flags().GetString("format")

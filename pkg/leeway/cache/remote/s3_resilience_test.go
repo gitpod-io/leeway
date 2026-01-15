@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -152,20 +151,6 @@ func (m *mockS3WithFailures) UploadObject(ctx context.Context, key string, src s
 	}
 
 	return nil
-}
-
-func (m *mockS3WithFailures) ListObjects(ctx context.Context, prefix string) ([]string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	var keys []string
-	for key := range m.data {
-		if strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
-		}
-	}
-
-	return keys, nil
 }
 
 // Mock package for testing

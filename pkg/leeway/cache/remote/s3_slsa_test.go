@@ -71,16 +71,6 @@ func (m *mockS3StorageWithSLSA) getCallLog() []string {
 	return result
 }
 
-func (m *mockS3StorageWithSLSA) ListObjects(ctx context.Context, prefix string) ([]string, error) {
-	var keys []string
-	for key := range m.objects {
-		if strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
-		}
-	}
-	return keys, nil
-}
-
 type mockNotFoundError struct {
 	key string
 }

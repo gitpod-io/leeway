@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -114,23 +113,6 @@ func (m *realisticMockS3Storage) UploadObject(ctx context.Context, key string, s
 
 	m.objects[key] = data
 	return nil
-}
-
-func (m *realisticMockS3Storage) ListObjects(ctx context.Context, prefix string) ([]string, error) {
-	// Simulate network latency for list operation
-	latency := m.latency
-	if latency == 0 {
-		latency = s3Latency // Default to realistic latency
-	}
-	time.Sleep(latency / 2)
-
-	var keys []string
-	for key := range m.objects {
-		if strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
-		}
-	}
-	return keys, nil
 }
 
 // realisticMockVerifier implements realistic SLSA verification performance
@@ -417,9 +399,8 @@ func TestS3Cache_ParallelVerificationScaling(t *testing.T) {
 	}
 }
 
-// TestS3Cache_ExistingPackagesBatchOptimization tests the ListObjects optimization
-func TestS3Cache_ExistingPackagesBatchOptimization(t *testing.T) {
-	// Use reduced latency for fast tests
+// TestS3Cache_ExistingPackagesParallel tests parallel HeadObject checks
+func TestS3Cache_ExistingPackagesParallel(t *testing.T) {
 	packageCounts := []int{10, 50, 100}
 
 	for _, count := range packageCounts {
@@ -449,37 +430,16 @@ func TestS3Cache_ExistingPackagesBatchOptimization(t *testing.T) {
 				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
 			}
 
-			// Measure time for batch check (using ListObjects)
+			// Measure time for parallel HeadObject checks
 			start := time.Now()
 			existing, err := s3Cache.ExistingPackages(context.Background(), packages)
-			batchDuration := time.Since(start)
+			duration := time.Since(start)
 			require.NoError(t, err)
 			require.Equal(t, count, len(existing), "All packages should be found")
 
-			// Measure time for sequential check (fallback method)
-			start = time.Now()
-			existingSeq, err := s3Cache.existingPackagesSequential(context.Background(), packages)
-			seqDuration := time.Since(start)
-			require.NoError(t, err)
-			require.Equal(t, count, len(existingSeq), "All packages should be found")
-
-			// Calculate speedup
-			speedup := float64(seqDuration) / float64(batchDuration)
-
 			t.Logf("Package count: %d", count)
-			t.Logf("Batch (ListObjects): %v", batchDuration)
-			t.Logf("Sequential (HeadObject): %v", seqDuration)
-			t.Logf("Speedup: %.2fx", speedup)
-
-			// For larger package counts, batch should be significantly faster
-			// Note: Using 2.5x threshold to account for CI environment variability
-			if count >= 50 {
-				require.Greater(t, speedup, 2.5, "Batch optimization should be at least 2.5x faster for 50+ packages")
-			} else {
-				// For small package counts, batch overhead may reduce speedup
-				// Use a lower threshold to avoid flaky tests
-				require.Greater(t, speedup, 0.45, "Batch optimization should not be significantly slower than sequential")
-			}
+			t.Logf("Duration: %v", duration)
+			t.Logf("Packages/sec: %.2f", float64(count)/duration.Seconds())
 		})
 	}
 }
@@ -527,39 +487,6 @@ func BenchmarkS3Cache_ExistingPackages(b *testing.B) {
 			}
 		})
 
-		b.Run(fmt.Sprintf("%d-packages-sequential", count), func(b *testing.B) {
-			// Create packages
-			packages := make([]cache.Package, count)
-			for i := 0; i < count; i++ {
-				packages[i] = &mockPackagePerf{
-					version:  fmt.Sprintf("package%d:v%d", i, i),
-					fullName: fmt.Sprintf("package%d", i),
-				}
-			}
-
-			// Setup mock storage
-			mockStorage := createRealisticMockS3StorageMultiple(b, count)
-
-			config := &cache.RemoteConfig{
-				BucketName: "test-bucket",
-			}
-
-			s3Cache := &S3Cache{
-				storage:             mockStorage,
-				cfg:                 config,
-				workerCount:         defaultWorkerCount,
-				downloadWorkerCount: defaultDownloadWorkerCount,
-				rateLimiter:         rate.NewLimiter(rate.Limit(defaultRateLimit), defaultBurstLimit),
-			}
-
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				_, err := s3Cache.existingPackagesSequential(context.Background(), packages)
-				if err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
 	}
 }
 
