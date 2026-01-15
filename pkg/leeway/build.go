@@ -887,24 +887,6 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return nil
 	}
 
-	// Build hard deps of weak deps first - they need to be available for extraction
-	// when the main package builds. Use GetTransitiveWeakDependencies to get only
-	// the actual weak deps (Go libraries), not the mixed result from collectWeakDependencies.
-	hardDepsOfWeakDeps := collectHardDepsOfWeakDepsForBuild(pkg.GetTransitiveWeakDependencies())
-	if len(hardDepsOfWeakDeps) > 0 {
-		var hdGroup errgroup.Group
-		for _, hd := range hardDepsOfWeakDeps {
-			hardDep := hd
-			hdGroup.Go(func() error {
-				return hardDep.build(ctx)
-			})
-		}
-		if err := hdGroup.Wait(); err != nil {
-			return xerrors.Errorf("build failed")
-		}
-	}
-
-	// Now build weak deps and main package in parallel
 	var buildGroup errgroup.Group
 
 	for _, wd := range weakDeps {
@@ -1149,35 +1131,6 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 	return nil
 }
 
-func (p *Package) buildHardDepsOfWeakDeps(buildctx *buildContext) error {
-	hardDeps := collectHardDepsOfWeakDepsForBuild(p.GetTransitiveWeakDependencies())
-	if len(hardDeps) == 0 {
-		return nil
-	}
-
-	log.WithFields(log.Fields{
-		"package":  p.FullName(),
-		"hardDeps": len(hardDeps),
-	}).Debug("building hard deps of weak deps")
-
-	g := new(errgroup.Group)
-	for _, dep := range hardDeps {
-		d := dep
-		g.Go(func() error {
-			return d.build(buildctx)
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		log.WithFields(log.Fields{
-			"package": p.FullName(),
-		}).Error("hard deps of weak deps build failed")
-		return err
-	}
-
-	return nil
-}
-
 func (p *Package) buildWeakDeps(buildctx *buildContext) {
 	weakDeps := p.GetTransitiveWeakDependencies()
 	if len(weakDeps) == 0 {
@@ -1225,13 +1178,6 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 
 	// Build dependencies first
 	if err := p.buildDependencies(buildctx); err != nil {
-		return err
-	}
-
-	// Build hard deps of weak deps - they need to be available for extraction
-	// This handles cases like: app -> golib (weak) -> generic (hard dep of golib)
-	// The generic package needs to be built before app can extract it to _deps/
-	if err := p.buildHardDepsOfWeakDeps(buildctx); err != nil {
 		return err
 	}
 
@@ -1567,10 +1513,6 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	// 			as we also need components/gitpod-protocol:gitpod-schema to be available on disk to perform the build.
 	case YarnPackage, GoPackage:
 		deps = p.GetTransitiveDependencies()
-		// Also include hard deps of weak deps (e.g., generic packages that Go libraries depend on)
-		for _, wd := range p.GetTransitiveWeakDependencies() {
-			deps = append(deps, wd.GetTransitiveDependencies()...)
-		}
 	// For Generic and Docker packages it is sufficient to have the direct dependencies.
 	case GenericPackage, DockerPackage:
 		deps = p.GetDependencies()
@@ -1581,54 +1523,7 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 	}
 }
 
-// collectHardDepsOfWeakDeps returns hard dependencies of weak deps that aren't already in transdep.
-// These need to be extracted as built artifacts for the weak dep sources to compile.
-func collectHardDepsOfWeakDeps(weakdeps []*Package, transdep []*Package) []*Package {
-	existing := make(map[string]struct{})
-	for _, dep := range transdep {
-		existing[dep.FullName()] = struct{}{}
-	}
-
-	seen := make(map[string]struct{})
-	var result []*Package
-
-	for _, wd := range weakdeps {
-		for _, hd := range wd.GetTransitiveDependencies() {
-			if _, ok := existing[hd.FullName()]; ok {
-				continue
-			}
-			if _, ok := seen[hd.FullName()]; ok {
-				continue
-			}
-			seen[hd.FullName()] = struct{}{}
-			result = append(result, hd)
-		}
-	}
-
-	return result
-}
-
-// collectHardDepsOfWeakDepsForBuild returns hard deps of weak deps that need to be built
-// before the main package can build (they need to be extracted to _deps/).
-func collectHardDepsOfWeakDepsForBuild(weakDeps []*Package) []*Package {
-	seen := make(map[string]struct{})
-	var result []*Package
-
-	for _, wd := range weakDeps {
-		for _, hd := range wd.GetTransitiveDependencies() {
-			if _, ok := seen[hd.FullName()]; ok {
-				continue
-			}
-			seen[hd.FullName()] = struct{}{}
-			result = append(result, hd)
-		}
-	}
-
-	return result
-}
-
-// collectWeakDependencies collects all weak dependencies from a package and its dependency tree,
-// including hard deps of weak deps (they need to be built for the weak dep to work).
+// collectWeakDependencies collects all weak dependencies from a package and its dependency tree.
 func collectWeakDependencies(pkg *Package) []*Package {
 	seen := make(map[string]struct{})
 	visited := make(map[string]struct{})
@@ -1646,15 +1541,7 @@ func collectWeakDependencies(pkg *Package) []*Package {
 				seen[wd.FullName()] = struct{}{}
 				result = append(result, wd)
 			}
-
 			collectFromPackage(wd)
-
-			for _, td := range wd.GetTransitiveDependencies() {
-				if _, ok := seen[td.FullName()]; !ok {
-					seen[td.FullName()] = struct{}{}
-					result = append(result, td)
-				}
-			}
 		}
 
 		for _, dep := range p.GetDependencies() {
@@ -1679,10 +1566,6 @@ func validateDependenciesAvailable(p *Package, localCache cache.LocalCache, pkgs
 	case YarnPackage, GoPackage:
 		// Go and Yarn packages need all transitive dependencies
 		deps = p.GetTransitiveDependencies()
-		// Also include hard deps of weak deps (e.g., generic packages that Go libraries depend on)
-		for _, wd := range p.GetTransitiveWeakDependencies() {
-			deps = append(deps, wd.GetTransitiveDependencies()...)
-		}
 	case GenericPackage, DockerPackage:
 		// Generic and Docker packages only need direct dependencies
 		deps = p.GetDependencies()
@@ -2277,26 +2160,13 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 
 	transdep := p.GetTransitiveDependencies()
 	weakdeps := p.GetTransitiveWeakDependencies()
-
-	// Collect hard deps of weak deps - they need to be extracted as built artifacts
-	hardDepsOfWeakDeps := collectHardDepsOfWeakDeps(weakdeps, transdep)
-
-	needsDepsDir := len(transdep) > 0 || len(weakdeps) > 0 || len(hardDepsOfWeakDeps) > 0
+	needsDepsDir := len(transdep) > 0 || len(weakdeps) > 0
 
 	if needsDepsDir {
 		commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"mkdir", "_deps"})
 	}
 
-	// Combine transdep and hardDepsOfWeakDeps for extraction
-	allHardDeps := make(map[string]*Package)
 	for _, dep := range transdep {
-		allHardDeps[dep.FullName()] = dep
-	}
-	for _, dep := range hardDepsOfWeakDeps {
-		allHardDeps[dep.FullName()] = dep
-	}
-
-	for _, dep := range allHardDeps {
 		if dep.Ephemeral {
 			continue
 		}

@@ -187,7 +187,8 @@ func (p *Package) link(idx map[string]*Package) error {
 			return PackageNotFoundErr{dep}
 		}
 
-		if isGoLibrary(deppkg) {
+		// Only treat as weak dep if it's a Go library AND all its deps are Go libraries
+		if canBeWeakDep(deppkg, idx) {
 			weakDeps = append(weakDeps, deppkg)
 		} else {
 			hardDeps = append(hardDeps, deppkg)
@@ -225,6 +226,43 @@ func isGoLibrary(pkg *Package) bool {
 		return false
 	}
 	return cfg.Packaging == GoLibrary
+}
+
+// canBeWeakDep returns true if a Go library can be treated as a weak dependency.
+// A Go library can only be a weak dep if all its transitive dependencies are also Go libraries.
+// If it depends on non-Go-library packages (e.g., generic packages), it must be a hard dependency.
+func canBeWeakDep(pkg *Package, idx map[string]*Package) bool {
+	if !isGoLibrary(pkg) {
+		return false
+	}
+
+	// Check all dependencies recursively
+	visited := make(map[string]bool)
+	return checkAllDepsAreGoLibraries(pkg, idx, visited)
+}
+
+func checkAllDepsAreGoLibraries(pkg *Package, idx map[string]*Package, visited map[string]bool) bool {
+	if visited[pkg.FullName()] {
+		return true
+	}
+	visited[pkg.FullName()] = true
+
+	for _, depName := range pkg.Dependencies {
+		dep, ok := idx[depName]
+		if !ok {
+			return false
+		}
+
+		if !isGoLibrary(dep) {
+			return false
+		}
+
+		if !checkAllDepsAreGoLibraries(dep, idx, visited) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (p *Package) findCycle() ([]string, error) {
