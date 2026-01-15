@@ -425,6 +425,36 @@ func TestGoLibraryAutoWeakDeps(t *testing.T) {
 		assert.Len(t, pkg.GetWeakDependencies(), 0)
 	})
 
+	t.Run("Go library with non-Go-library dep is hard dep", func(t *testing.T) {
+		// generic-pkg is not a Go library
+		genericPkg := NewTestPackage("generic-pkg")
+		genericPkg.Type = GenericPackage
+		genericPkg.Config = GenericPkgConfig{}
+
+		// go-lib depends on generic-pkg
+		goLib := NewTestPackage("go-lib")
+		goLib.Type = GoPackage
+		goLib.Config = GoPkgConfig{Packaging: GoLibrary}
+		goLib.Dependencies = []string{"testcomp:generic-pkg"}
+
+		pkg := NewTestPackage("main-pkg")
+		pkg.Dependencies = []string{"testcomp:go-lib"}
+		pkg.dependencies = nil
+
+		idx := map[string]*Package{
+			"testcomp:generic-pkg": genericPkg,
+			"testcomp:go-lib":      goLib,
+		}
+
+		err := pkg.link(idx)
+		assert.NoError(t, err)
+
+		// go-lib should be a HARD dep because it depends on a non-Go-library
+		assert.Len(t, pkg.GetDependencies(), 1, "Go library with non-Go-library dep should be hard dep")
+		assert.Len(t, pkg.GetWeakDependencies(), 0, "Should have no weak deps")
+		assert.Equal(t, "go-lib", pkg.GetDependencies()[0].Name)
+	})
+
 	t.Run("mixed deps correctly separated", func(t *testing.T) {
 		goLib := NewTestPackage("go-lib")
 		goLib.Type = GoPackage
