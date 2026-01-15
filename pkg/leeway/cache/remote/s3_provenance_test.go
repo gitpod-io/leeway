@@ -360,5 +360,3 @@ func (m *mockS3StorageForProvenance) UploadObject(ctx context.Context, key strin
 	m.objects[key] = data
 	return nil
 }
-
-

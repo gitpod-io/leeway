@@ -71,8 +71,6 @@ func (m *mockS3StorageWithSLSA) getCallLog() []string {
 	return result
 }
 
-
-
 type mockNotFoundError struct {
 	key string
 }

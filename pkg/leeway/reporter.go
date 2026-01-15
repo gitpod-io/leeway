@@ -731,7 +731,7 @@ type OTelReporter struct {
 	rootSpan     trace.Span
 	packageCtxs  map[string]context.Context
 	packageSpans map[string]trace.Span
-	phaseSpans   map[string]trace.Span   // key: "packageName:phaseName"
+	phaseSpans   map[string]trace.Span      // key: "packageName:phaseName"
 	phaseCtxs    map[string]context.Context // key: "packageName:phaseName"
 	mu           sync.RWMutex
 }

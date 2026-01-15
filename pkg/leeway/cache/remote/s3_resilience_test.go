@@ -153,8 +153,6 @@ func (m *mockS3WithFailures) UploadObject(ctx context.Context, key string, src s
 	return nil
 }
 
-
-
 // Mock package for testing
 type mockPackageResilience struct {
 	version  string

@@ -23,8 +23,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-
-
 // buildCmd represents the build command
 var buildCmd = &cobra.Command{
 	Use:   "build [targetPackage]",

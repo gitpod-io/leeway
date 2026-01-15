@@ -65,8 +65,6 @@ func (m *mockS3Client) UploadPart(ctx context.Context, params *s3.UploadPartInpu
 	return &s3.UploadPartOutput{}, nil
 }
 
-
-
 func TestS3Cache_ExistingPackages(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

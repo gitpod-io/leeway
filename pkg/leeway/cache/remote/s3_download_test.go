@@ -77,8 +77,6 @@ func (m *mockS3Storage) UploadObject(ctx context.Context, key string, src string
 	return nil
 }
 
-
-
 func TestS3CacheDownload(t *testing.T) {
 	tmpDir := t.TempDir()
 

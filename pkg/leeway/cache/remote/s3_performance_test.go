@@ -115,8 +115,6 @@ func (m *realisticMockS3Storage) UploadObject(ctx context.Context, key string, s
 	return nil
 }
 
-
-
 // realisticMockVerifier implements realistic SLSA verification performance
 type realisticMockVerifier struct{}
 
