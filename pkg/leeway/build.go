@@ -82,6 +82,35 @@ type buildContext struct {
 	InFlightChecksums      bool              // Feature enabled flag
 	artifactChecksums      map[string]string // path -> sha256 hex
 	artifactChecksumsMutex sync.RWMutex      // Thread safety for parallel builds
+
+	// Weak dependency result tracking
+	// Allows packages to wait for their weak deps to complete before marking success
+	weakDepResults   map[string]*weakDepResult
+	weakDepResultsMu sync.RWMutex
+}
+
+// weakDepResult tracks the build result of a weak dependency.
+// Uses a closed channel as broadcast mechanism - multiple waiters can wait on the same result.
+type weakDepResult struct {
+	done chan struct{} // Closed when build completes - acts as broadcast
+	err  error         // Build error (nil if success), set before closing done
+}
+
+func newWeakDepResult() *weakDepResult {
+	return &weakDepResult{done: make(chan struct{})}
+}
+
+// Wait blocks until the weak dep build completes and returns the result.
+// Multiple goroutines can call Wait on the same result.
+func (r *weakDepResult) Wait() error {
+	<-r.done
+	return r.err
+}
+
+// Signal marks the weak dep build as complete and broadcasts to all waiters.
+func (r *weakDepResult) Signal(err error) {
+	r.err = err
+	close(r.done)
 }
 
 const (
@@ -227,6 +256,71 @@ func (c *buildContext) ReleaseBuildLock(p *Package) {
 	delete(c.pkgLocks, key)
 	c.pkgLockCond.Broadcast()
 	c.pkgLockCond.L.Unlock()
+}
+
+// InitWeakDepTracking initializes tracking for weak dependency build results.
+// Must be called before starting weak dep builds.
+func (c *buildContext) InitWeakDepTracking(weakDeps []*Package) {
+	c.weakDepResultsMu.Lock()
+	defer c.weakDepResultsMu.Unlock()
+
+	c.weakDepResults = make(map[string]*weakDepResult)
+	for _, wd := range weakDeps {
+		c.weakDepResults[wd.FullName()] = newWeakDepResult()
+	}
+}
+
+// SignalWeakDepComplete marks a weak dependency build as complete.
+// Broadcasts the result to all packages waiting on this weak dep.
+func (c *buildContext) SignalWeakDepComplete(pkg *Package, err error) {
+	c.weakDepResultsMu.RLock()
+	result, ok := c.weakDepResults[pkg.FullName()]
+	c.weakDepResultsMu.RUnlock()
+
+	if ok {
+		result.Signal(err)
+	}
+}
+
+// WaitForWeakDeps waits for all weak dependencies of a package to complete.
+// This includes weak deps of the package itself AND weak deps of its transitive hard dependencies.
+// Returns an error if any weak dep failed.
+func (c *buildContext) WaitForWeakDeps(pkg *Package) error {
+	// Collect all weak deps: direct weak deps + weak deps of hard deps
+	weakDepsToWait := make(map[string]struct{})
+
+	// Add direct weak deps
+	for _, wd := range pkg.GetTransitiveWeakDependencies() {
+		weakDepsToWait[wd.FullName()] = struct{}{}
+	}
+
+	// Add weak deps of hard dependencies (transitive)
+	for _, dep := range pkg.GetTransitiveDependencies() {
+		for _, wd := range dep.GetTransitiveWeakDependencies() {
+			weakDepsToWait[wd.FullName()] = struct{}{}
+		}
+	}
+
+	if len(weakDepsToWait) == 0 {
+		return nil
+	}
+
+	for wdName := range weakDepsToWait {
+		c.weakDepResultsMu.RLock()
+		result, ok := c.weakDepResults[wdName]
+		c.weakDepResultsMu.RUnlock()
+
+		if !ok {
+			// Not tracked - might be cached or not a weak dep of this build
+			continue
+		}
+
+		if err := result.Wait(); err != nil {
+			return xerrors.Errorf("weak dependency %s failed: %w", wdName, err)
+		}
+	}
+
+	return nil
 }
 
 // LimitConcurrentBuilds blocks until there is a free slot to acutally build.
@@ -887,12 +981,19 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return nil
 	}
 
+	// Initialize weak dependency result tracking
+	// This allows packages to wait for their weak deps before marking success
+	ctx.InitWeakDepTracking(weakDeps)
+
 	var buildGroup errgroup.Group
 
+	// Start weak dep builds with result signaling
 	for _, wd := range weakDeps {
 		weakDep := wd
 		buildGroup.Go(func() error {
-			return weakDep.build(ctx)
+			err := weakDep.build(ctx)
+			ctx.SignalWeakDepComplete(weakDep, err)
+			return err
 		})
 	}
 
@@ -1131,35 +1232,6 @@ func (p *Package) buildDependencies(buildctx *buildContext) error {
 	return nil
 }
 
-func (p *Package) buildWeakDeps(buildctx *buildContext) {
-	weakDeps := p.GetTransitiveWeakDependencies()
-	if len(weakDeps) == 0 {
-		return
-	}
-
-	log.WithFields(log.Fields{
-		"package":  p.FullName(),
-		"weakDeps": len(weakDeps),
-	}).Debug("building weak deps in background")
-
-	var wg errgroup.Group
-	for _, dep := range weakDeps {
-		d := dep
-		wg.Go(func() error {
-			return d.build(buildctx)
-		})
-	}
-
-	// Don't block on weak deps - they run in parallel
-	// Errors are logged but don't fail the main build
-	if err := wg.Wait(); err != nil {
-		log.WithFields(log.Fields{
-			"package": p.FullName(),
-			"error":   err,
-		}).Warn("weak dep build failed")
-	}
-}
-
 func (p *Package) build(buildctx *buildContext) (err error) {
 	// Try to obtain lock for building this package
 	doBuild := buildctx.ObtainBuildLock(p)
@@ -1180,10 +1252,6 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	if err := p.buildDependencies(buildctx); err != nil {
 		return err
 	}
-
-	// Start building weak deps in parallel (they don't block this build)
-	// This ensures weak deps are built (for their tests) even when build() is called directly
-	go p.buildWeakDeps(buildctx)
 
 	// Check again after dependencies - might have been built as a dependency
 	if _, alreadyBuilt := buildctx.LocalCache.Location(p); !p.Ephemeral && alreadyBuilt {
@@ -1229,9 +1297,9 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		return err
 	}
 
-	// Acquire build resources
+	// Acquire build resources - released after build completes but before waiting for weak deps.
+	// We use a closure to ensure proper release on all exit paths.
 	buildctx.LimitConcurrentBuilds()
-	defer buildctx.ReleaseConcurrentBuild()
 
 	// Build the package based on its type
 	var (
@@ -1240,102 +1308,130 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 		sources   fileset
 	)
 
-	switch p.Type {
-	case YarnPackage:
-		bld, err = p.buildYarn(buildctx, builddir, result)
-	case GoPackage:
-		bld, err = p.buildGo(buildctx, builddir, result)
-	case DockerPackage:
-		bld, err = p.buildDocker(buildctx, builddir, result)
-	case GenericPackage:
-		bld, err = p.buildGeneric(buildctx, builddir, result)
-	default:
-		return xerrors.Errorf("cannot build package type: %s", p.Type)
-	}
+	// Execute the CPU/memory intensive build work, then release the semaphore.
+	// This allows other packages to start building while we wait for weak deps.
+	buildErr := func() error {
+		defer buildctx.ReleaseConcurrentBuild()
 
-	if err != nil {
-		return err
-	}
-
-	// Handle provenance if enabled
-	now := time.Now()
-	if p.C.W.Provenance.Enabled {
-		if sources, err = computeFileset(builddir); err != nil {
-			return err
+		switch p.Type {
+		case YarnPackage:
+			bld, err = p.buildYarn(buildctx, builddir, result)
+		case GoPackage:
+			bld, err = p.buildGo(buildctx, builddir, result)
+		case DockerPackage:
+			bld, err = p.buildDocker(buildctx, builddir, result)
+		case GenericPackage:
+			bld, err = p.buildGeneric(buildctx, builddir, result)
+		default:
+			return xerrors.Errorf("cannot build package type: %s", p.Type)
 		}
-	}
 
-	// Execute build phases
-	for _, phase := range []PackageBuildPhase{
-		PackageBuildPhasePrep,
-		PackageBuildPhasePull,
-		PackageBuildPhaseLint,
-		PackageBuildPhaseTest,
-		PackageBuildPhaseBuild,
-	} {
-		if err := executeBuildPhase(buildctx, p, builddir, bld, phase, pkgRep); err != nil {
-			return err
-		}
-	}
-
-	// Execute post-processing hook if available - this should run regardless of provenance settings
-	if bld.PostProcess != nil {
-		log.WithField("package", p.FullName()).Debug("running post-processing hook")
-		if err := bld.PostProcess(buildctx, p, builddir); err != nil {
-			return xerrors.Errorf("post-processing failed: %w", err)
-		}
-	}
-
-	// Handle test coverage if available (before packaging - needs _deps)
-	if bld.TestCoverage != nil {
-		coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
 		if err != nil {
 			return err
 		}
-		pkgRep.TestCoverageAvailable = true
-		pkgRep.TestCoveragePercentage = coverage
-		pkgRep.FunctionsWithoutTest = funcsWithoutTest
-		pkgRep.FunctionsWithTest = funcsWithTest
+
+		// Handle provenance if enabled
+		now := time.Now()
+		if p.C.W.Provenance.Enabled {
+			if sources, err = computeFileset(builddir); err != nil {
+				return err
+			}
+		}
+
+		// Execute build phases
+		for _, phase := range []PackageBuildPhase{
+			PackageBuildPhasePrep,
+			PackageBuildPhasePull,
+			PackageBuildPhaseLint,
+			PackageBuildPhaseTest,
+			PackageBuildPhaseBuild,
+		} {
+			if err := executeBuildPhase(buildctx, p, builddir, bld, phase, pkgRep); err != nil {
+				return err
+			}
+		}
+
+		// Execute post-processing hook if available - this should run regardless of provenance settings
+		if bld.PostProcess != nil {
+			log.WithField("package", p.FullName()).Debug("running post-processing hook")
+			if err := bld.PostProcess(buildctx, p, builddir); err != nil {
+				return xerrors.Errorf("post-processing failed: %w", err)
+			}
+		}
+
+		// Handle test coverage if available (before packaging - needs _deps)
+		if bld.TestCoverage != nil {
+			coverage, funcsWithoutTest, funcsWithTest, err := bld.TestCoverage()
+			if err != nil {
+				return err
+			}
+			pkgRep.TestCoverageAvailable = true
+			pkgRep.TestCoveragePercentage = coverage
+			pkgRep.FunctionsWithoutTest = funcsWithoutTest
+			pkgRep.FunctionsWithTest = funcsWithTest
+		}
+
+		// Package the build results
+		if len(bld.Commands[PackageBuildPhasePackage]) > 0 {
+			if err := executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage]); err != nil {
+				return err
+			}
+		}
+
+		// Record checksum immediately after cache artifact creation
+		if cacheArtifactPath, exists := buildctx.LocalCache.Location(p); exists {
+			if err := buildctx.recordArtifactChecksum(cacheArtifactPath); err != nil {
+				log.WithError(err).WithField("package", p.FullName()).Warn("Failed to record cache artifact checksum")
+				// Don't fail build - this is defensive, not critical path
+			}
+		}
+
+		// Handle provenance subjects (after packaging - artifact now exists)
+		if p.C.W.Provenance.Enabled {
+			if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
+				return err
+			}
+		}
+
+		// Generate SBOM if enabled (after packaging - written alongside artifact)
+		// SBOM files are stored outside the tar.gz to maintain artifact determinism.
+		if p.C.W.SBOM.Enabled {
+			if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
+				par.PackageBuildPhaseStarted(p, PackageBuildPhaseSBOM)
+			}
+			pkgRep.phaseEnter[PackageBuildPhaseSBOM] = time.Now()
+			pkgRep.Phases = append(pkgRep.Phases, PackageBuildPhaseSBOM)
+			sbomErr := writeSBOMToCache(buildctx, p, builddir)
+			pkgRep.phaseDone[PackageBuildPhaseSBOM] = time.Now()
+			if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
+				par.PackageBuildPhaseFinished(p, PackageBuildPhaseSBOM, sbomErr)
+			}
+			if sbomErr != nil {
+				return sbomErr
+			}
+		}
+
+		return nil
+	}()
+
+	if buildErr != nil {
+		return buildErr
 	}
 
-	// Package the build results
-	if len(bld.Commands[PackageBuildPhasePackage]) > 0 {
-		if err := executeCommandsForPackage(buildctx, p, builddir, bld.Commands[PackageBuildPhasePackage]); err != nil {
-			return err
+	// Semaphore is now released - wait for weak deps without holding build resources.
+	// All packages wait for their weak deps, including packages that are themselves weak deps.
+	// This ensures transitive weak dep failures propagate (App -> Lib1 -> Lib2: if Lib2 fails, Lib1 fails too).
+	if err := buildctx.WaitForWeakDeps(p); err != nil {
+		// Weak dep failed - remove the artifact from cache to prevent
+		// subsequent runs from using a potentially invalid build.
+		if cachePath, exists := buildctx.LocalCache.Location(p); exists {
+			if removeErr := os.Remove(cachePath); removeErr != nil {
+				log.WithError(removeErr).WithField("package", p.FullName()).Warn("Failed to remove artifact from cache after weak dep failure")
+			} else {
+				log.WithField("package", p.FullName()).Debug("Removed artifact from cache due to weak dep failure")
+			}
 		}
-	}
-
-	// Record checksum immediately after cache artifact creation
-	if cacheArtifactPath, exists := buildctx.LocalCache.Location(p); exists {
-		if err := buildctx.recordArtifactChecksum(cacheArtifactPath); err != nil {
-			log.WithError(err).WithField("package", p.FullName()).Warn("Failed to record cache artifact checksum")
-			// Don't fail build - this is defensive, not critical path
-		}
-	}
-
-	// Handle provenance subjects (after packaging - artifact now exists)
-	if p.C.W.Provenance.Enabled {
-		if err := handleProvenance(p, buildctx, builddir, bld, sources, now); err != nil {
-			return err
-		}
-	}
-
-	// Generate SBOM if enabled (after packaging - written alongside artifact)
-	// SBOM files are stored outside the tar.gz to maintain artifact determinism.
-	if p.C.W.SBOM.Enabled {
-		if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
-			par.PackageBuildPhaseStarted(p, PackageBuildPhaseSBOM)
-		}
-		pkgRep.phaseEnter[PackageBuildPhaseSBOM] = time.Now()
-		pkgRep.Phases = append(pkgRep.Phases, PackageBuildPhaseSBOM)
-		sbomErr := writeSBOMToCache(buildctx, p, builddir)
-		pkgRep.phaseDone[PackageBuildPhaseSBOM] = time.Now()
-		if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
-			par.PackageBuildPhaseFinished(p, PackageBuildPhaseSBOM, sbomErr)
-		}
-		if sbomErr != nil {
-			return sbomErr
-		}
+		return err
 	}
 
 	// Register newly built package
