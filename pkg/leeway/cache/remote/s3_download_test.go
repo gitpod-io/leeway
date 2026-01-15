@@ -77,15 +77,7 @@ func (m *mockS3Storage) UploadObject(ctx context.Context, key string, src string
 	return nil
 }
 
-func (m *mockS3Storage) ListObjects(ctx context.Context, prefix string) ([]string, error) {
-	var result []string
-	for key := range m.objects {
-		if len(prefix) == 0 || key[:len(prefix)] == prefix {
-			result = append(result, key)
-		}
-	}
-	return result, nil
-}
+
 
 func TestS3CacheDownload(t *testing.T) {
 	tmpDir := t.TempDir()

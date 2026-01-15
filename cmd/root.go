@@ -10,9 +10,12 @@ import (
 	"github.com/gookit/color"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel/attribute"
+	otelTrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/xerrors"
 
 	"github.com/gitpod-io/leeway/pkg/leeway"
+	"github.com/gitpod-io/leeway/pkg/leeway/telemetry"
 )
 
 const (
@@ -95,6 +98,9 @@ var (
 	buildArgs []string
 	verbose   bool
 	variant   string
+
+	// commandSpan is the root span for the current command execution
+	commandSpan otelTrace.Span
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -133,6 +139,46 @@ variables have an effect on leeway:
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if verbose {
 			log.SetLevel(log.DebugLevel)
+		}
+
+		// Initialize OpenTelemetry tracing if endpoint is configured
+		otelEndpoint, _ := cmd.Flags().GetString("otel-endpoint")
+		if otelEndpoint != "" {
+			telemetry.SetLeewayVersion(leeway.Version)
+
+			otelInsecure, _ := cmd.Flags().GetBool("otel-insecure")
+			if err := telemetry.Initialize(cmd.Context(), otelEndpoint, otelInsecure); err != nil {
+				log.WithError(err).Warn("failed to initialize OpenTelemetry tracer")
+			} else {
+				// Parse trace context if provided
+				traceParent, _ := cmd.Flags().GetString("trace-parent")
+				traceState, _ := cmd.Flags().GetString("trace-state")
+
+				parentCtx := cmd.Context()
+				if traceParent != "" {
+					if err := telemetry.ValidateTraceParent(traceParent); err != nil {
+						log.WithError(err).Warn("invalid trace-parent format")
+					} else if ctx, err := telemetry.ParseTraceContext(traceParent, traceState); err != nil {
+						log.WithError(err).Warn("failed to parse trace context")
+					} else {
+						parentCtx = ctx
+					}
+				}
+
+				// Create command span and update command context
+				var ctx context.Context
+				ctx, commandSpan = telemetry.StartSpan(parentCtx, "leeway.command",
+					attribute.String("leeway.version", leeway.Version),
+					attribute.String("leeway.command", cmd.Name()),
+				)
+				cmd.SetContext(ctx)
+			}
+		}
+	},
+	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		telemetry.FinishSpan(commandSpan, nil)
+		if err := telemetry.Shutdown(context.Background()); err != nil {
+			log.WithError(err).Warn("failed to shutdown tracer provider")
 		}
 	},
 	BashCompletionFunction: bashCompletionFunc,
@@ -183,6 +229,12 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&variant, "variant", "", "selects a package variant")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enables verbose logging")
 	rootCmd.PersistentFlags().Bool("dut", false, "used for testing only - doesn't actually do anything")
+
+	// OpenTelemetry tracing flags
+	rootCmd.PersistentFlags().String("otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "OpenTelemetry OTLP endpoint URL for tracing (defaults to $OTEL_EXPORTER_OTLP_ENDPOINT)")
+	rootCmd.PersistentFlags().Bool("otel-insecure", os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true", "Disable TLS for OTLP endpoint (for local development only, defaults to $OTEL_EXPORTER_OTLP_INSECURE)")
+	rootCmd.PersistentFlags().String("trace-parent", os.Getenv("TRACEPARENT"), "W3C Trace Context traceparent header for distributed tracing (defaults to $TRACEPARENT)")
+	rootCmd.PersistentFlags().String("trace-state", os.Getenv("TRACESTATE"), "W3C Trace Context tracestate header for distributed tracing (defaults to $TRACESTATE)")
 }
 
 func getWorkspace() (leeway.Workspace, error) {

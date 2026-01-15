@@ -166,17 +166,21 @@ func TestFormatTraceContext_Invalid(t *testing.T) {
 	}
 }
 
-func TestInitTracer_NoEndpoint(t *testing.T) {
-	_, err := InitTracer(context.Background(), "", false)
-	if err == nil {
-		t.Error("InitTracer() should fail when endpoint is empty")
+func TestInitialize_NoEndpoint(t *testing.T) {
+	// Empty endpoint should not error - it just disables tracing
+	err := Initialize(context.Background(), "", false)
+	if err != nil {
+		t.Errorf("Initialize() with empty endpoint should not error, got %v", err)
+	}
+	if Enabled() {
+		t.Error("Enabled() should return false when endpoint is empty")
 	}
 }
 
-func TestShutdown_NilProvider(t *testing.T) {
-	// Should not panic with nil provider
-	err := Shutdown(context.Background(), nil)
+func TestShutdown_NotInitialized(t *testing.T) {
+	// Should not panic when not initialized
+	err := Shutdown(context.Background())
 	if err != nil {
-		t.Errorf("Shutdown() with nil provider should not return error, got %v", err)
+		t.Errorf("Shutdown() when not initialized should not return error, got %v", err)
 	}
 }

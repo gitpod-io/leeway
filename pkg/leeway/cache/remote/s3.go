@@ -20,10 +20,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/time/rate"
 
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/gitpod-io/leeway/pkg/leeway/cache/slsa"
+	"github.com/gitpod-io/leeway/pkg/leeway/telemetry"
 )
 
 const (
@@ -243,110 +245,37 @@ func (s *S3Cache) processPackages(ctx context.Context, pkgs []cache.Package, wor
 }
 
 // ExistingPackages implements RemoteCache
+// Uses parallel HeadObject calls to check for specific package keys.
+// This is more efficient than ListObjects for buckets with many objects.
 func (s *S3Cache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (map[cache.Package]struct{}, error) {
-	result := make(map[cache.Package]struct{})
-
-	// Build a map of version -> package for quick lookup
-	versionToPackage := make(map[string]cache.Package, len(pkgs))
-	for _, p := range pkgs {
-		version, err := p.Version()
-		if err != nil {
-			log.WithError(err).WithField("package", p.FullName()).Debug("Failed to get version for package, skipping")
-			continue
-		}
-		versionToPackage[version] = p
+	if len(pkgs) == 0 {
+		return make(map[cache.Package]struct{}), nil
 	}
 
-	if len(versionToPackage) == 0 {
-		return result, nil
-	}
+	startTime := time.Now()
+	log.WithField("count", len(pkgs)).Debug("checking remote cache for existing packages")
 
-	// Use ListObjectsV2 to batch check all packages in 1-2 API calls
-	// We list all objects and check which packages exist
-	// This is much faster than 2N HeadObject calls (2 per package)
-	if err := s.waitForRateLimit(ctx); err != nil {
-		log.WithError(err).Debug("Rate limiter error during batch existence check")
-		// Fall back to sequential checks if rate limited
-		return s.existingPackagesSequential(ctx, pkgs)
-	}
-
-	timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	// List all objects with empty prefix to get all cached artifacts
-	// In practice, this could be optimized with a common prefix if versions share one
-	objects, err := s.storage.ListObjects(timeoutCtx, "")
-	if err != nil {
-		log.WithError(err).Debug("Failed to list objects in remote cache, falling back to sequential checks")
-		// Fall back to sequential checks on error
-		return s.existingPackagesSequential(ctx, pkgs)
-	}
-
-	// Build a set of existing keys for O(1) lookup
-	existingKeys := make(map[string]bool, len(objects))
-	for _, key := range objects {
-		existingKeys[key] = true
-	}
-
-	// Check which packages exist by looking up their keys
-	for version, p := range versionToPackage {
-		gzKey := fmt.Sprintf("%s.tar.gz", version)
-		tarKey := fmt.Sprintf("%s.tar", version)
-
-		if existingKeys[gzKey] {
-			log.WithFields(log.Fields{
-				"package": p.FullName(),
-				"key":     gzKey,
-			}).Debug("found package in remote cache (.tar.gz)")
-			result[p] = struct{}{}
-		} else if existingKeys[tarKey] {
-			log.WithFields(log.Fields{
-				"package": p.FullName(),
-				"key":     tarKey,
-			}).Debug("found package in remote cache (.tar)")
-			result[p] = struct{}{}
-		} else {
-			log.WithFields(log.Fields{
-				"package": p.FullName(),
-				"version": version,
-			}).Debug("package not found in remote cache, will build locally")
-		}
-	}
-
-	return result, nil
-}
-
-// existingPackagesSequential is the fallback implementation using sequential HeadObject calls
-// This is used when ListObjects fails or is rate limited
-func (s *S3Cache) existingPackagesSequential(ctx context.Context, pkgs []cache.Package) (map[cache.Package]struct{}, error) {
 	result := make(map[cache.Package]struct{})
 	var mu sync.Mutex
 
 	err := s.processPackages(ctx, pkgs, s.workerCount, func(ctx context.Context, p cache.Package) error {
 		version, err := p.Version()
 		if err != nil {
-			return fmt.Errorf("failed to get version: %w", err)
+			log.WithError(err).WithField("package", p.FullName()).Debug("Failed to get version for package, skipping")
+			return nil
 		}
 
 		// Try .tar.gz first
 		gzKey := fmt.Sprintf("%s.tar.gz", version)
-		// Wait for rate limiter permission
 		if err := s.waitForRateLimit(ctx); err != nil {
 			log.WithError(err).Debug("Rate limiter error during .tar.gz check")
-			// Continue to .tar check even if rate limited
 		}
 
 		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
 		exists, err := s.storage.HasObject(timeoutCtx, gzKey)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"package": p.FullName(),
-				"key":     gzKey,
-				"error":   err,
-			}).Debug("failed to check .tar.gz in remote cache, will try .tar")
-			// Continue to check .tar format - don't return error here
-		} else if exists {
+		cancel()
+
+		if err == nil && exists {
 			log.WithFields(log.Fields{
 				"package": p.FullName(),
 				"key":     gzKey,
@@ -357,27 +286,17 @@ func (s *S3Cache) existingPackagesSequential(ctx context.Context, pkgs []cache.P
 			return nil
 		}
 
-		// Fall back to .tar if .tar.gz doesn't exist or had error
+		// Try .tar if .tar.gz doesn't exist
 		tarKey := fmt.Sprintf("%s.tar", version)
-		// Wait for rate limiter permission
 		if err := s.waitForRateLimit(ctx); err != nil {
 			log.WithError(err).Debug("Rate limiter error during .tar check")
 		}
 
 		timeoutCtx2, cancel2 := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel2()
 		exists, err = s.storage.HasObject(timeoutCtx2, tarKey)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"package": p.FullName(),
-				"key":     tarKey,
-				"error":   err,
-			}).Debug("failed to check .tar in remote cache")
-			// Don't return error for missing objects - this is expected
-			return nil // Continue with next package, will trigger local build
-		}
+		cancel2()
 
-		if exists {
+		if err == nil && exists {
 			log.WithFields(log.Fields{
 				"package": p.FullName(),
 				"key":     tarKey,
@@ -385,20 +304,23 @@ func (s *S3Cache) existingPackagesSequential(ctx context.Context, pkgs []cache.P
 			mu.Lock()
 			result[p] = struct{}{}
 			mu.Unlock()
-		} else {
-			log.WithFields(log.Fields{
-				"package": p.FullName(),
-				"version": version,
-			}).Debug("package not found in remote cache, will build locally")
 		}
 
 		return nil
 	})
 
+	duration := time.Since(startTime)
 	if err != nil {
-		log.WithError(err).Warn("failed to check existing packages in remote cache")
-		// Return partial results even if some checks failed
-		return result, nil
+		log.WithError(err).WithFields(log.Fields{
+			"duration": duration.Round(time.Millisecond),
+			"found":    len(result),
+		}).Warn("error during remote cache check")
+	} else {
+		log.WithFields(log.Fields{
+			"duration": duration.Round(time.Millisecond),
+			"checked":  len(pkgs),
+			"found":    len(result),
+		}).Debug("remote cache check completed")
 	}
 
 	return result, nil
@@ -448,7 +370,18 @@ func (s *S3Cache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cac
 }
 
 // downloadPackage downloads a single package and returns detailed status
-func (s *S3Cache) downloadPackage(ctx context.Context, dst cache.LocalCache, p cache.Package) cache.DownloadResult {
+func (s *S3Cache) downloadPackage(ctx context.Context, dst cache.LocalCache, p cache.Package) (result cache.DownloadResult) {
+	ctx, span := telemetry.StartSpan(ctx, "leeway.cache.download",
+		attribute.String("leeway.package.name", p.FullName()),
+	)
+	defer func() {
+		span.SetAttributes(
+			attribute.String("leeway.cache.status", result.Status.String()),
+			attribute.Int64("leeway.cache.bytes", result.Bytes),
+		)
+		telemetry.FinishSpan(span, &result.Err)
+	}()
+
 	version, err := p.Version()
 	if err != nil {
 		log.WithError(err).WithField("package", p.FullName()).Warn("Failed to get version for package, skipping")
@@ -489,13 +422,17 @@ func (s *S3Cache) downloadOriginalResult(ctx context.Context, p cache.Package, v
 	// Try downloading .tar.gz first with retry
 	gzKey := fmt.Sprintf("%s.tar.gz", version)
 	gzNotFound := false
+	var gzBytes int64
 	gzErr := withRetry(3, func() error {
 		if err := s.waitForRateLimit(ctx); err != nil {
 			return err
 		}
 		timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
-		_, err := s.storage.GetObject(timeoutCtx, gzKey, localPath)
+		n, err := s.storage.GetObject(timeoutCtx, gzKey, localPath)
+		if err == nil {
+			gzBytes = n
+		}
 		return err
 	})
 
@@ -512,7 +449,7 @@ func (s *S3Cache) downloadOriginalResult(ctx context.Context, p cache.Package, v
 		// Download SBOM files if they exist (best effort, non-blocking)
 		s.downloadSBOMFiles(ctx, p.FullName(), gzKey, localPath)
 
-		return cache.DownloadResult{Status: cache.DownloadStatusSuccess}
+		return cache.DownloadResult{Status: cache.DownloadStatusSuccess, Bytes: gzBytes}
 	}
 
 	// Check if this is a "not found" error
@@ -532,13 +469,17 @@ func (s *S3Cache) downloadOriginalResult(ctx context.Context, p cache.Package, v
 
 	// Try .tar if .tar.gz fails, also with retry
 	tarKey := fmt.Sprintf("%s.tar", version)
+	var tarBytes int64
 	tarErr := withRetry(3, func() error {
 		if err := s.waitForRateLimit(ctx); err != nil {
 			return err
 		}
 		timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
-		_, err := s.storage.GetObject(timeoutCtx, tarKey, localPath)
+		n, err := s.storage.GetObject(timeoutCtx, tarKey, localPath)
+		if err == nil {
+			tarBytes = n
+		}
 		return err
 	})
 
@@ -555,7 +496,7 @@ func (s *S3Cache) downloadOriginalResult(ctx context.Context, p cache.Package, v
 		// Download SBOM files if they exist (best effort, non-blocking)
 		s.downloadSBOMFiles(ctx, p.FullName(), tarKey, localPath)
 
-		return cache.DownloadResult{Status: cache.DownloadStatusSuccess}
+		return cache.DownloadResult{Status: cache.DownloadStatusSuccess, Bytes: tarBytes}
 	}
 
 	// Determine if this was a "not found" or a transient failure
@@ -1206,7 +1147,6 @@ type s3ClientAPI interface {
 	CompleteMultipartUpload(ctx context.Context, params *s3.CompleteMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error)
 	CreateMultipartUpload(ctx context.Context, params *s3.CreateMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error)
 	UploadPart(ctx context.Context, params *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error)
-	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 }
 
 // S3Storage implements ObjectStorage using AWS S3
@@ -1367,28 +1307,6 @@ func (s *S3Storage) UploadObject(ctx context.Context, key string, src string) er
 	}
 
 	return nil
-}
-
-// ListObjects implements ObjectStorage
-func (s *S3Storage) ListObjects(ctx context.Context, prefix string) ([]string, error) {
-	var result []string
-	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(s.bucketName),
-		Prefix: aws.String(prefix),
-	})
-
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list objects: %w", err)
-		}
-
-		for _, obj := range page.Contents {
-			result = append(result, *obj.Key)
-		}
-	}
-
-	return result, nil
 }
 
 // fileExists checks if a file exists and is not a directory

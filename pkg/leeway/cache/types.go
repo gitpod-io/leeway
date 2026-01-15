@@ -89,6 +89,24 @@ const (
 	DownloadStatusSkipped
 )
 
+// String returns a string representation of the download status
+func (s DownloadStatus) String() string {
+	switch s {
+	case DownloadStatusSuccess:
+		return "success"
+	case DownloadStatusNotFound:
+		return "not_found"
+	case DownloadStatusFailed:
+		return "failed"
+	case DownloadStatusVerificationFailed:
+		return "verification_failed"
+	case DownloadStatusSkipped:
+		return "skipped"
+	default:
+		return "unknown"
+	}
+}
+
 // DownloadResult contains the outcome of a single package download attempt.
 // This enables callers to make informed decisions about retry strategies
 // and avoid unnecessary rebuilds when transient failures occur.
@@ -97,6 +115,8 @@ type DownloadResult struct {
 	Status DownloadStatus
 	// Err contains the error if Status is Failed or VerificationFailed
 	Err error
+	// Bytes is the size of the downloaded artifact in bytes (0 if not downloaded)
+	Bytes int64
 }
 
 // RemoteCache can download and upload build artifacts into a local cache
@@ -133,9 +153,6 @@ type ObjectStorage interface {
 
 	// UploadObject uploads a local file to remote storage
 	UploadObject(ctx context.Context, key string, src string) error
-
-	// ListObjects lists objects with the given prefix
-	ListObjects(ctx context.Context, prefix string) ([]string, error)
 }
 
 // Config holds configuration for cache implementations
