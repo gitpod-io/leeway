@@ -492,6 +492,11 @@ type buildOptions struct {
 	DockerExportEnvValue bool // Value from explicit user env var
 	DockerExportEnvSet   bool // Whether user explicitly set env var (before workspace)
 
+	// GoLibraryWeakDeps enables treating Go library dependencies as weak dependencies.
+	// When enabled, Go library deps copy source code instead of built artifacts,
+	// allowing parallel builds while still running tests.
+	GoLibraryWeakDeps bool
+
 	context *buildContext
 }
 
@@ -636,6 +641,16 @@ func WithDockerExportEnv(value, isSet bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.DockerExportEnvValue = value
 		opts.DockerExportEnvSet = isSet
+		return nil
+	}
+}
+
+// WithGoLibraryWeakDeps enables treating Go library dependencies as weak dependencies.
+// When enabled, Go library deps copy source code instead of built artifacts,
+// allowing parallel builds while still running tests.
+func WithGoLibraryWeakDeps(enabled bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.GoLibraryWeakDeps = enabled
 		return nil
 	}
 }
