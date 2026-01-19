@@ -258,6 +258,61 @@ func (c *buildContext) ReleaseBuildLock(p *Package) {
 	c.pkgLockCond.L.Unlock()
 }
 
+// GetEffectiveDependencies returns the dependencies to use for a package.
+// When GoLibraryWeakDeps is disabled, weak deps are treated as hard deps.
+func (c *buildContext) GetEffectiveDependencies(p *Package) []*Package {
+	if c.GoLibraryWeakDeps {
+		return p.GetDependencies()
+	}
+	// Combine hard and weak deps when feature is disabled
+	deps := p.GetDependencies()
+	weakDeps := p.GetWeakDependencies()
+	if len(weakDeps) == 0 {
+		return deps
+	}
+	result := make([]*Package, 0, len(deps)+len(weakDeps))
+	result = append(result, deps...)
+	result = append(result, weakDeps...)
+	return result
+}
+
+// GetEffectiveTransitiveDependencies returns all transitive dependencies.
+// When GoLibraryWeakDeps is disabled, weak deps are included as hard deps.
+func (c *buildContext) GetEffectiveTransitiveDependencies(p *Package) []*Package {
+	if c.GoLibraryWeakDeps {
+		return p.GetTransitiveDependencies()
+	}
+	// When feature is disabled, include weak deps in transitive deps
+	seen := make(map[string]bool)
+	var result []*Package
+
+	var collect func(pkg *Package)
+	collect = func(pkg *Package) {
+		if seen[pkg.FullName()] {
+			return
+		}
+		seen[pkg.FullName()] = true
+		result = append(result, pkg)
+
+		for _, dep := range pkg.GetDependencies() {
+			collect(dep)
+		}
+		for _, dep := range pkg.GetWeakDependencies() {
+			collect(dep)
+		}
+	}
+
+	// Collect from all direct deps (hard + weak)
+	for _, dep := range p.GetDependencies() {
+		collect(dep)
+	}
+	for _, dep := range p.GetWeakDependencies() {
+		collect(dep)
+	}
+
+	return result
+}
+
 // InitWeakDepTracking initializes tracking for weak dependency build results.
 // Must be called before starting weak dep builds.
 func (c *buildContext) InitWeakDepTracking(weakDeps []*Package) {
@@ -586,6 +641,11 @@ type buildOptions struct {
 	DockerExportEnvValue bool // Value from explicit user env var
 	DockerExportEnvSet   bool // Whether user explicitly set env var (before workspace)
 
+	// GoLibraryWeakDeps enables treating Go library dependencies as weak dependencies.
+	// When enabled, Go library deps copy source code instead of built artifacts,
+	// allowing parallel builds while still running tests.
+	GoLibraryWeakDeps bool
+
 	context *buildContext
 }
 
@@ -734,6 +794,16 @@ func WithDockerExportEnv(value, isSet bool) BuildOption {
 	}
 }
 
+// WithGoLibraryWeakDeps enables treating Go library dependencies as weak dependencies.
+// When enabled, Go library deps copy source code instead of built artifacts,
+// allowing parallel builds while still running tests.
+func WithGoLibraryWeakDeps(enabled bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.GoLibraryWeakDeps = enabled
+		return nil
+	}
+}
+
 func withBuildContext(ctx *buildContext) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.context = ctx
@@ -778,21 +848,27 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 		return err
 	}
 
-	requirements := pkg.GetTransitiveDependencies()
+	// Get all packages to build - uses effective deps which includes weak deps
+	// as hard deps when the feature is disabled
+	requirements := ctx.GetEffectiveTransitiveDependencies(pkg)
 	allpkg := append(requirements, pkg)
 
-	weakDeps := collectWeakDependencies(pkg)
-	for _, wd := range weakDeps {
-		// Only add if not already in allpkg (avoid duplicates)
-		found := false
-		for _, p := range allpkg {
-			if p.FullName() == wd.FullName() {
-				found = true
-				break
+	// Only collect weak deps separately if the feature is enabled
+	var weakDeps []*Package
+	if ctx.GoLibraryWeakDeps {
+		weakDeps = collectWeakDependencies(pkg)
+		for _, wd := range weakDeps {
+			// Only add if not already in allpkg (avoid duplicates)
+			found := false
+			for _, p := range allpkg {
+				if p.FullName() == wd.FullName() {
+					found = true
+					break
+				}
 			}
-		}
-		if !found {
-			allpkg = append(allpkg, wd)
+			if !found {
+				allpkg = append(allpkg, wd)
+			}
 		}
 	}
 
@@ -1191,7 +1267,8 @@ func writeBuildPlan(out io.Writer, pkg *Package, status map[*Package]PackageBuil
 }
 
 func (p *Package) buildDependencies(buildctx *buildContext) error {
-	deps := p.GetDependencies()
+	// Use effective dependencies - includes weak deps as hard deps when feature is disabled
+	deps := buildctx.GetEffectiveDependencies(p)
 	if deps == nil {
 		return xerrors.Errorf("package \"%s\" is not linked", p.FullName())
 	}
@@ -2285,15 +2362,21 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	// We don't check if ephemeral packages in the transitive dependency tree have been built,
 	// as they may be too far down the tree to trigger a build (e.g. their parent may be built already).
 	// Hence, we need to ensure all direct dependencies on ephemeral packages have been built.
-	for _, deppkg := range p.GetDependencies() {
+	for _, deppkg := range buildctx.GetEffectiveDependencies(p) {
 		_, ok := buildctx.LocalCache.Location(deppkg)
 		if deppkg.Ephemeral && !ok {
 			return nil, PkgNotBuiltErr{deppkg}
 		}
 	}
 
-	transdep := p.GetTransitiveDependencies()
-	weakdeps := p.GetTransitiveWeakDependencies()
+	// Get transitive dependencies - when feature is disabled, this includes weak deps as hard deps
+	transdep := buildctx.GetEffectiveTransitiveDependencies(p)
+
+	// Only use weak deps (source copy) if the feature is enabled via CLI flag
+	var weakdeps []*Package
+	if buildctx.GoLibraryWeakDeps {
+		weakdeps = p.GetTransitiveWeakDependencies()
+	}
 	needsDepsDir := len(transdep) > 0 || len(weakdeps) > 0
 
 	if needsDepsDir {
