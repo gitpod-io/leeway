@@ -14,34 +14,246 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func TestCollectWeakDependencies(t *testing.T) {
-	// Helper to create test packages
-	newPkg := func(name string, pkgType PackageType, packaging interface{}) *Package {
-		pkg := &Package{
-			C: &Component{
-				W:      &Workspace{Packages: make(map[string]*Package)},
-				Origin: "test",
-				Name:   "test",
-			},
-			PackageInternal: PackageInternal{Name: name, Type: pkgType},
-		}
-		switch pkgType {
-		case GoPackage:
-			if p, ok := packaging.(GoPackaging); ok {
-				pkg.Config = GoPkgConfig{Packaging: p}
-			}
-		case GenericPackage:
-			pkg.Config = GenericPkgConfig{}
-		}
-		return pkg
+// Helper to create test packages for weak dep tests
+func newTestPkg(name string, pkgType PackageType, packaging interface{}) *Package {
+	pkg := &Package{
+		C: &Component{
+			W:      &Workspace{Packages: make(map[string]*Package)},
+			Origin: "test",
+			Name:   "test",
+		},
+		PackageInternal: PackageInternal{Name: name, Type: pkgType},
 	}
+	switch pkgType {
+	case GoPackage:
+		if p, ok := packaging.(GoPackaging); ok {
+			pkg.Config = GoPkgConfig{Packaging: p}
+		}
+	case GenericPackage:
+		pkg.Config = GenericPkgConfig{}
+	}
+	return pkg
+}
 
-	t.Run("collects direct weak deps", func(t *testing.T) {
-		libA := newPkg("lib-a", GoPackage, GoLibrary)
+func TestGetEffectiveDependencies(t *testing.T) {
+	t.Run("with flag enabled returns only hard deps", func(t *testing.T) {
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
 		libA.dependencies = []*Package{}
 		libA.weakDependencies = []*Package{}
 
-		app := newPkg("app", GoPackage, GoApp)
+		libB := newTestPkg("lib-b", GoPackage, GoLibrary)
+		libB.dependencies = []*Package{}
+		libB.weakDependencies = []*Package{}
+
+		app := newTestPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{libA}      // hard dep
+		app.weakDependencies = []*Package{libB}  // weak dep
+
+		ctx := &buildContext{
+			buildOptions: buildOptions{GoLibraryWeakDeps: true},
+		}
+
+		result := ctx.GetEffectiveDependencies(app)
+
+		if len(result) != 1 {
+			t.Errorf("expected 1 dep (only hard), got %d", len(result))
+		}
+		if result[0].Name != "lib-a" {
+			t.Errorf("expected lib-a, got %s", result[0].Name)
+		}
+	})
+
+	t.Run("with flag disabled returns hard + weak deps", func(t *testing.T) {
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{}
+
+		libB := newTestPkg("lib-b", GoPackage, GoLibrary)
+		libB.dependencies = []*Package{}
+		libB.weakDependencies = []*Package{}
+
+		app := newTestPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{libA}      // hard dep
+		app.weakDependencies = []*Package{libB}  // weak dep
+
+		ctx := &buildContext{
+			buildOptions: buildOptions{GoLibraryWeakDeps: false},
+		}
+
+		result := ctx.GetEffectiveDependencies(app)
+
+		if len(result) != 2 {
+			t.Errorf("expected 2 deps (hard + weak), got %d", len(result))
+		}
+
+		names := make(map[string]bool)
+		for _, p := range result {
+			names[p.Name] = true
+		}
+		if !names["lib-a"] || !names["lib-b"] {
+			t.Errorf("expected lib-a and lib-b, got %v", names)
+		}
+	})
+
+	t.Run("with flag disabled and no weak deps returns only hard deps", func(t *testing.T) {
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{}
+
+		app := newTestPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{libA}
+		app.weakDependencies = []*Package{}
+
+		ctx := &buildContext{
+			buildOptions: buildOptions{GoLibraryWeakDeps: false},
+		}
+
+		result := ctx.GetEffectiveDependencies(app)
+
+		if len(result) != 1 {
+			t.Errorf("expected 1 dep, got %d", len(result))
+		}
+		if result[0].Name != "lib-a" {
+			t.Errorf("expected lib-a, got %s", result[0].Name)
+		}
+	})
+}
+
+func TestGetEffectiveTransitiveDependencies(t *testing.T) {
+	t.Run("with flag enabled returns only hard transitive deps", func(t *testing.T) {
+		// app -> libA (hard) -> libB (weak)
+		libB := newTestPkg("lib-b", GoPackage, GoLibrary)
+		libB.dependencies = []*Package{}
+		libB.weakDependencies = []*Package{}
+
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{libB}
+
+		app := newTestPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{libA}
+		app.weakDependencies = []*Package{}
+
+		ctx := &buildContext{
+			buildOptions: buildOptions{GoLibraryWeakDeps: true},
+		}
+
+		result := ctx.GetEffectiveTransitiveDependencies(app)
+
+		// Should only include libA (hard dep), not libB (weak dep of libA)
+		if len(result) != 1 {
+			t.Errorf("expected 1 transitive dep, got %d: %v", len(result), result)
+		}
+		if result[0].Name != "lib-a" {
+			t.Errorf("expected lib-a, got %s", result[0].Name)
+		}
+	})
+
+	t.Run("with flag disabled returns hard + weak transitive deps", func(t *testing.T) {
+		// app -> libA (hard) -> libB (weak)
+		libB := newTestPkg("lib-b", GoPackage, GoLibrary)
+		libB.dependencies = []*Package{}
+		libB.weakDependencies = []*Package{}
+
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{libB}
+
+		app := newTestPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{libA}
+		app.weakDependencies = []*Package{}
+
+		ctx := &buildContext{
+			buildOptions: buildOptions{GoLibraryWeakDeps: false},
+		}
+
+		result := ctx.GetEffectiveTransitiveDependencies(app)
+
+		// Should include both libA and libB
+		if len(result) != 2 {
+			t.Errorf("expected 2 transitive deps, got %d: %v", len(result), result)
+		}
+
+		names := make(map[string]bool)
+		for _, p := range result {
+			names[p.Name] = true
+		}
+		if !names["lib-a"] || !names["lib-b"] {
+			t.Errorf("expected lib-a and lib-b, got %v", names)
+		}
+	})
+
+	t.Run("with flag disabled includes direct weak deps", func(t *testing.T) {
+		// app -> libA (weak)
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{}
+
+		app := newTestPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{}
+		app.weakDependencies = []*Package{libA}
+
+		ctx := &buildContext{
+			buildOptions: buildOptions{GoLibraryWeakDeps: false},
+		}
+
+		result := ctx.GetEffectiveTransitiveDependencies(app)
+
+		// Should include libA even though it's a weak dep
+		if len(result) != 1 {
+			t.Errorf("expected 1 transitive dep, got %d: %v", len(result), result)
+		}
+		if result[0].Name != "lib-a" {
+			t.Errorf("expected lib-a, got %s", result[0].Name)
+		}
+	})
+
+	t.Run("with flag disabled handles deep transitive weak deps", func(t *testing.T) {
+		// app -> libA (weak) -> libB (weak) -> libC (weak)
+		libC := newTestPkg("lib-c", GoPackage, GoLibrary)
+		libC.dependencies = []*Package{}
+		libC.weakDependencies = []*Package{}
+
+		libB := newTestPkg("lib-b", GoPackage, GoLibrary)
+		libB.dependencies = []*Package{}
+		libB.weakDependencies = []*Package{libC}
+
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{libB}
+
+		app := newTestPkg("app", GoPackage, GoApp)
+		app.dependencies = []*Package{}
+		app.weakDependencies = []*Package{libA}
+
+		ctx := &buildContext{
+			buildOptions: buildOptions{GoLibraryWeakDeps: false},
+		}
+
+		result := ctx.GetEffectiveTransitiveDependencies(app)
+
+		// Should include all: libA, libB, libC
+		if len(result) != 3 {
+			t.Errorf("expected 3 transitive deps, got %d: %v", len(result), result)
+		}
+
+		names := make(map[string]bool)
+		for _, p := range result {
+			names[p.Name] = true
+		}
+		if !names["lib-a"] || !names["lib-b"] || !names["lib-c"] {
+			t.Errorf("expected lib-a, lib-b, and lib-c, got %v", names)
+		}
+	})
+}
+
+func TestCollectWeakDependencies(t *testing.T) {
+	t.Run("collects direct weak deps", func(t *testing.T) {
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
+		libA.dependencies = []*Package{}
+		libA.weakDependencies = []*Package{}
+
+		app := newTestPkg("app", GoPackage, GoApp)
 		app.dependencies = []*Package{}
 		app.weakDependencies = []*Package{libA}
 
@@ -57,15 +269,15 @@ func TestCollectWeakDependencies(t *testing.T) {
 
 	t.Run("collects nested weak deps (weak dep of weak dep)", func(t *testing.T) {
 		// lib-b depends on lib-a (both are Go libraries)
-		libA := newPkg("lib-a", GoPackage, GoLibrary)
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
 		libA.dependencies = []*Package{}
 		libA.weakDependencies = []*Package{}
 
-		libB := newPkg("lib-b", GoPackage, GoLibrary)
+		libB := newTestPkg("lib-b", GoPackage, GoLibrary)
 		libB.dependencies = []*Package{}
 		libB.weakDependencies = []*Package{libA} // lib-a is weak dep of lib-b
 
-		app := newPkg("app", GoPackage, GoApp)
+		app := newTestPkg("app", GoPackage, GoApp)
 		app.dependencies = []*Package{}
 		app.weakDependencies = []*Package{libB}
 
@@ -87,15 +299,15 @@ func TestCollectWeakDependencies(t *testing.T) {
 
 	t.Run("collects weak deps from hard deps", func(t *testing.T) {
 		// app -> hard-dep -> lib-a (weak)
-		libA := newPkg("lib-a", GoPackage, GoLibrary)
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
 		libA.dependencies = []*Package{}
 		libA.weakDependencies = []*Package{}
 
-		hardDep := newPkg("hard-dep", GoPackage, GoApp)
+		hardDep := newTestPkg("hard-dep", GoPackage, GoApp)
 		hardDep.dependencies = []*Package{}
 		hardDep.weakDependencies = []*Package{libA}
 
-		app := newPkg("app", GoPackage, GoApp)
+		app := newTestPkg("app", GoPackage, GoApp)
 		app.dependencies = []*Package{hardDep}
 		app.weakDependencies = []*Package{}
 
@@ -112,15 +324,15 @@ func TestCollectWeakDependencies(t *testing.T) {
 
 	t.Run("no duplicates", func(t *testing.T) {
 		// Both app and hard-dep depend on lib-a
-		libA := newPkg("lib-a", GoPackage, GoLibrary)
+		libA := newTestPkg("lib-a", GoPackage, GoLibrary)
 		libA.dependencies = []*Package{}
 		libA.weakDependencies = []*Package{}
 
-		hardDep := newPkg("hard-dep", GoPackage, GoApp)
+		hardDep := newTestPkg("hard-dep", GoPackage, GoApp)
 		hardDep.dependencies = []*Package{}
 		hardDep.weakDependencies = []*Package{libA}
 
-		app := newPkg("app", GoPackage, GoApp)
+		app := newTestPkg("app", GoPackage, GoApp)
 		app.dependencies = []*Package{hardDep}
 		app.weakDependencies = []*Package{libA} // also directly depends on lib-a
 
