@@ -1470,17 +1470,19 @@ func (p *Package) packagesToDownload(inLocalCache map[*Package]struct{}, inRemot
 // if all its dependencies are also available. This prevents build failures when
 // a package is cached but one of its dependencies failed to download.
 func validateDependenciesAvailable(p *Package, localCache cache.LocalCache, pkgstatus map[*Package]PackageBuildStatus) bool {
-	var deps []*Package
-	switch p.Type {
-	case YarnPackage, GoPackage:
-		// Go and Yarn packages need all transitive dependencies
-		deps = p.GetTransitiveDependencies()
-	case GenericPackage, DockerPackage:
-		// Generic and Docker packages only need direct dependencies
-		deps = p.GetDependencies()
-	default:
-		deps = p.GetDependencies()
-	}
+	// Always check ALL transitive dependencies for cached packages.
+	// This is necessary because a cached package might be used by a Go/Yarn package
+	// that needs all transitive dependencies available. If we only check direct
+	// dependencies for Generic/Docker packages, a Go package consuming them would
+	// fail during prep when it tries to access a missing transitive dependency.
+	//
+	// Example: GoPackage X -> GenericPackage A -> DockerPackage B
+	// If A is cached but B is not, and we only check A's direct deps (B),
+	// we'd correctly invalidate A. But if the chain is:
+	// GoPackage X -> GenericPackage A -> GenericPackage B -> DockerPackage C
+	// And A is cached, B is cached, but C is not, we need to check transitively
+	// to ensure C is available, otherwise X's build will fail.
+	deps := p.GetTransitiveDependencies()
 
 	for _, dep := range deps {
 		if dep.Ephemeral {

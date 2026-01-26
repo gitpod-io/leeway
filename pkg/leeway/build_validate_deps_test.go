@@ -216,24 +216,48 @@ func TestValidateDependenciesAvailable(t *testing.T) {
 			expectedResult: true,
 		},
 		{
-			name: "Docker package only checks direct dependencies",
+			name: "Docker package checks all transitive dependencies",
 			setupPackages: func() (*Package, map[*Package]PackageBuildStatus, *mockLocalCache) {
 				depB := newTestPackage("test:dep-b", GenericPackage)
 				depA := newTestPackage("test:dep-a", GenericPackage)
 				depA.dependencies = []*Package{depB}
 
-				pkg := newTestPackage("test:pkg", DockerPackage) // Docker only needs direct deps
+				pkg := newTestPackage("test:pkg", DockerPackage)
 				pkg.dependencies = []*Package{depA}
 
 				pkgstatus := map[*Package]PackageBuildStatus{
 					pkg:  PackageDownloaded,
 					depA: PackageBuilt,
-					// depB has no status - but Docker doesn't need it
+					// depB has no status - validation should fail because
+					// cached packages need all transitive deps available
 				}
 				cache := newMockLocalCache()
 				cache.addPackage("test:pkg", "/cache/test-pkg.tar.gz")
 				cache.addPackage("test:dep-a", "/cache/test-dep-a.tar.gz")
-				// depB is NOT in cache - but Docker doesn't check transitive deps
+				// depB is NOT in cache - validation should fail
+				return pkg, pkgstatus, cache
+			},
+			expectedResult: false, // Changed: now checks transitive deps
+		},
+		{
+			name: "Docker package with all transitive dependencies available",
+			setupPackages: func() (*Package, map[*Package]PackageBuildStatus, *mockLocalCache) {
+				depB := newTestPackage("test:dep-b", GenericPackage)
+				depA := newTestPackage("test:dep-a", GenericPackage)
+				depA.dependencies = []*Package{depB}
+
+				pkg := newTestPackage("test:pkg", DockerPackage)
+				pkg.dependencies = []*Package{depA}
+
+				pkgstatus := map[*Package]PackageBuildStatus{
+					pkg:  PackageDownloaded,
+					depA: PackageBuilt,
+					depB: PackageBuilt,
+				}
+				cache := newMockLocalCache()
+				cache.addPackage("test:pkg", "/cache/test-pkg.tar.gz")
+				cache.addPackage("test:dep-a", "/cache/test-dep-a.tar.gz")
+				cache.addPackage("test:dep-b", "/cache/test-dep-b.tar.gz")
 				return pkg, pkgstatus, cache
 			},
 			expectedResult: true,
