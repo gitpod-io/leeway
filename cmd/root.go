@@ -129,6 +129,9 @@ variables have an effect on leeway:
                                 which makes it advisable to place this on a fast SSD or in RAM.
              <light_blue>LEEWAY_YARN_MUTEX</>  Configures the mutex flag leeway will pass to yarn. Defaults to "network".
                                 See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
+   <light_blue>LEEWAY_NODE_MODULES_CACHE</>  Directory to cache node_modules between yarn builds. When set, leeway restores
+                                node_modules from cache before yarn install and saves it after. Cache is keyed by
+                                package name and yarn.lock hash. Useful for CI to avoid repeated yarn installs.
     <light_blue>LEEWAY_DEFAULT_CACHE_LEVEL</>  Sets the default cache level for builds. Defaults to "remote".
 <light_blue>LEEWAY_SLSA_CACHE_VERIFICATION</>  Enables SLSA verification for cached artifacts (true/false).
         <light_blue>LEEWAY_SLSA_SOURCE_URI</>  Expected source URI for SLSA verification (github.com/owner/repo).
