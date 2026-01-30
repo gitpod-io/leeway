@@ -241,6 +241,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
 	cmd.Flags().Bool("fixed-build-dir", true, "Use a fixed build directory for each package, instead of based on the package version, to better utilize caches based on absolute paths (defaults to true)")
 	cmd.Flags().Bool("docker-export-to-cache", false, "Export Docker images to cache instead of pushing directly (enables SLSA L3 compliance)")
+	cmd.Flags().Bool("disable-sbom", false, "Disable SBOM generation during build (overrides workspace config)")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
@@ -412,6 +413,17 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		dockerExportSet = true
 	}
 
+	// Get disable-sbom setting (env var as default, CLI flag overrides)
+	disableSBOMDefault := os.Getenv(EnvvarDisableSBOM) == "true"
+	disableSBOM, err := cmd.Flags().GetBool("disable-sbom")
+	if err != nil {
+		log.Fatal(err)
+	}
+	// If flag wasn't explicitly set, use environment variable
+	if !cmd.Flags().Changed("disable-sbom") {
+		disableSBOM = disableSBOMDefault
+	}
+
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
@@ -430,6 +442,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		leeway.WithInFlightChecksums(inFlightChecksums),
 		leeway.WithDockerExportToCache(dockerExportToCache, dockerExportSet),
 		leeway.WithDockerExportEnv(dockerExportEnvValue, dockerExportEnvSet),
+		leeway.WithDisableSBOM(disableSBOM),
 	}, localCache
 }
 
