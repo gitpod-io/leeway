@@ -241,6 +241,13 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("report-github", os.Getenv("GITHUB_OUTPUT") != "", "Report package build success/failure to GitHub Actions using the GITHUB_OUTPUT environment variable")
 	cmd.Flags().Bool("fixed-build-dir", true, "Use a fixed build directory for each package, instead of based on the package version, to better utilize caches based on absolute paths (defaults to true)")
 	cmd.Flags().Bool("docker-export-to-cache", false, "Export Docker images to cache instead of pushing directly (enables SLSA L3 compliance)")
+
+	// Docker S3 build cache flags
+	cmd.Flags().String("docker-s3-cache-bucket", os.Getenv(leeway.EnvvarDockerS3CacheBucket), "S3 bucket for Docker build layer caching (defaults to $LEEWAY_DOCKER_S3_CACHE_BUCKET)")
+	cmd.Flags().String("docker-s3-cache-region", os.Getenv(leeway.EnvvarDockerS3CacheRegion), "AWS region for Docker S3 cache bucket (defaults to $LEEWAY_DOCKER_S3_CACHE_REGION)")
+	cmd.Flags().String("docker-s3-cache-prefix", os.Getenv(leeway.EnvvarDockerS3CachePrefix), "Prefix for Docker S3 cache keys (defaults to $LEEWAY_DOCKER_S3_CACHE_PREFIX)")
+	cmd.Flags().String("docker-s3-cache-mode", os.Getenv(leeway.EnvvarDockerS3CacheMode), "Docker S3 cache mode: 'min' or 'max' (defaults to 'max')")
+	cmd.Flags().String("docker-s3-cache-endpoint", os.Getenv(leeway.EnvvarDockerS3CacheEndpoint), "Custom S3 endpoint for Docker cache (for S3-compatible storage)")
 }
 
 func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
@@ -412,6 +419,29 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		dockerExportSet = true
 	}
 
+	// Get Docker S3 cache configuration from CLI flags (which default to env vars)
+	dockerS3CacheBucket, _ := cmd.Flags().GetString("docker-s3-cache-bucket")
+	dockerS3CacheRegion, _ := cmd.Flags().GetString("docker-s3-cache-region")
+	dockerS3CachePrefix, _ := cmd.Flags().GetString("docker-s3-cache-prefix")
+	dockerS3CacheMode, _ := cmd.Flags().GetString("docker-s3-cache-mode")
+	dockerS3CacheEndpoint, _ := cmd.Flags().GetString("docker-s3-cache-endpoint")
+
+	var dockerS3Cache *leeway.DockerS3CacheConfig
+	if dockerS3CacheBucket != "" && dockerS3CacheRegion != "" {
+		dockerS3Cache = &leeway.DockerS3CacheConfig{
+			Bucket:   dockerS3CacheBucket,
+			Region:   dockerS3CacheRegion,
+			Prefix:   dockerS3CachePrefix,
+			Mode:     dockerS3CacheMode,
+			Endpoint: dockerS3CacheEndpoint,
+		}
+		log.WithFields(log.Fields{
+			"bucket": dockerS3Cache.Bucket,
+			"region": dockerS3Cache.Region,
+			"prefix": dockerS3Cache.Prefix,
+		}).Info("Docker S3 build cache enabled")
+	}
+
 	return []leeway.BuildOption{
 		leeway.WithLocalCache(localCache),
 		leeway.WithRemoteCache(remoteCache),
@@ -430,6 +460,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 		leeway.WithInFlightChecksums(inFlightChecksums),
 		leeway.WithDockerExportToCache(dockerExportToCache, dockerExportSet),
 		leeway.WithDockerExportEnv(dockerExportEnvValue, dockerExportEnvSet),
+		leeway.WithDockerS3Cache(dockerS3Cache),
 	}, localCache
 }
 
