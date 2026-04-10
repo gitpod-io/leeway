@@ -133,10 +133,9 @@ func (t *GoTestTracer) handleEvent(event *goTestEvent) {
 	switch event.Action {
 	case "run":
 		t.handleRun(event)
-	case "pause":
-		t.handlePause(event)
-	case "cont":
-		t.handleCont(event)
+	case "pause", "cont":
+		// Intentionally dropped: these events generate high-volume spans
+		// (test.paused/test.continued) with no diagnostic value.
 	case "pass", "fail", "skip":
 		t.handleEnd(event)
 	case "output":
@@ -203,36 +202,6 @@ func (t *GoTestTracer) handlePackageStart(event *goTestEvent) {
 	)
 
 	t.spans[key] = &testSpanData{span: span}
-}
-
-// handlePause records that a test was paused (for t.Parallel())
-func (t *GoTestTracer) handlePause(event *goTestEvent) {
-	if event.Test == "" {
-		return
-	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	key := spanKey(event.Package, event.Test)
-	if data, ok := t.spans[key]; ok {
-		data.span.AddEvent("test.paused", trace.WithTimestamp(event.Time))
-	}
-}
-
-// handleCont records that a paused test continued
-func (t *GoTestTracer) handleCont(event *goTestEvent) {
-	if event.Test == "" {
-		return
-	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	key := spanKey(event.Package, event.Test)
-	if data, ok := t.spans[key]; ok {
-		data.span.AddEvent("test.continued", trace.WithTimestamp(event.Time))
-	}
 }
 
 // handleEnd ends a span for a completed test
