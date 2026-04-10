@@ -96,6 +96,11 @@ const (
 	// Defaults to "network".
 	EnvvarYarnMutex = "LEEWAY_YARN_MUTEX"
 
+	// EnvvarNodeModulesCache specifies a directory to cache node_modules between builds.
+	// When set, leeway will restore node_modules from cache before yarn install and save
+	// it back after. Cache is keyed by package name and yarn.lock hash.
+	EnvvarNodeModulesCache = "LEEWAY_NODE_MODULES_CACHE"
+
 	// EnvvarDockerExportToCache controls whether Docker images are exported to cache instead of pushed directly
 	EnvvarDockerExportToCache = "LEEWAY_DOCKER_EXPORT_TO_CACHE"
 
@@ -1892,10 +1897,39 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		yarnMutex = "network"
 	}
 	yarnCache := filepath.Join(buildctx.BuildDir(), fmt.Sprintf("yarn-cache-%s", buildctx.buildID))
+
+	// node_modules caching: restore from cache before yarn install
+	nodeModulesCacheDir := os.Getenv(EnvvarNodeModulesCache)
+	var nodeModulesCachePath string
+	if nodeModulesCacheDir != "" {
+		// Compute cache key from yarn.lock hash
+		yarnLockPath := filepath.Join(wd, "yarn.lock")
+		yarnLockHash, err := computeSHA256(yarnLockPath)
+		if err != nil {
+			log.WithField("package", p.FullName()).WithError(err).Debug("cannot compute yarn.lock hash for node_modules cache")
+		} else {
+			// Use package name and yarn.lock hash as cache key
+			// Replace slashes in package name with underscores for filesystem safety
+			safePkgName := strings.ReplaceAll(p.FullName(), "/", "_")
+			nodeModulesCachePath = filepath.Join(nodeModulesCacheDir, safePkgName, yarnLockHash[:12])
+
+			// Restore node_modules from cache if it exists
+			restoreCmd := fmt.Sprintf("if [ -d \"%s/node_modules\" ]; then echo \"Restoring node_modules from cache...\"; cp -a \"%s/node_modules\" ./node_modules; fi", nodeModulesCachePath, nodeModulesCachePath)
+			commands[PackageBuildPhasePrep] = append(commands[PackageBuildPhasePrep], []string{"sh", "-c", restoreCmd})
+			log.WithField("package", p.FullName()).WithField("cachePath", nodeModulesCachePath).Debug("node_modules cache enabled")
+		}
+	}
+
 	if len(cfg.Commands.Install) == 0 {
 		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], []string{"yarn", "install", "--frozen-lockfile", "--mutex", yarnMutex, "--cache-folder", yarnCache})
 	} else {
 		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], cfg.Commands.Install)
+	}
+
+	// node_modules caching: save to cache after yarn install
+	if nodeModulesCachePath != "" {
+		saveCmd := fmt.Sprintf("mkdir -p \"%s\" && rm -rf \"%s/node_modules\" && cp -a ./node_modules \"%s/node_modules\"", nodeModulesCachePath, nodeModulesCachePath, nodeModulesCachePath)
+		commands[PackageBuildPhasePull] = append(commands[PackageBuildPhasePull], []string{"sh", "-c", saveCmd})
 	}
 	if len(cfg.Commands.Build) == 0 {
 		commands[PackageBuildPhaseBuild] = append(commands[PackageBuildPhaseBuild], []string{"yarn", "build"})

@@ -598,7 +598,56 @@ variables have an effect on leeway:
 - `LEEWAY_CACHE_DIR`: Location of the local build cache. The directory does not have to exist yet.
 - `LEEWAY_BUILD_DIR`: Working location of leeway (i.e. where the actual builds happen). This location will see heavy I/O which makes it advisable to place this on a fast SSD or in RAM.
 - `LEEWAY_YARN_MUTEX`: Configures the mutex flag leeway will pass to yarn. Defaults to "network". See https://yarnpkg.com/lang/en/docs/cli/#toc-concurrency-and-mutex for possible values.
+- `LEEWAY_NODE_MODULES_CACHE`: Directory to cache node_modules between yarn builds. When set, leeway restores node_modules from cache before `yarn install` and saves it after. Cache is keyed by package name and yarn.lock hash. See [Caching node_modules in CI](#caching-node_modules-in-ci) for usage.
 - `LEEWAY_EXPERIMENTAL`: Enables experimental features
+
+# Caching node_modules in CI
+
+Yarn package builds can be slow due to `yarn install` downloading and extracting dependencies. The `LEEWAY_NODE_MODULES_CACHE` environment variable enables caching of `node_modules` directories between builds.
+
+When enabled, leeway:
+1. Before `yarn install`: Restores `node_modules` from cache if available
+2. After `yarn install`: Saves `node_modules` to cache
+
+The cache is keyed by package name and the first 12 characters of the yarn.lock SHA256 hash, so it automatically invalidates when dependencies change.
+
+## GitHub Actions Example
+
+```yaml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.leeway-node-modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            node-modules-${{ runner.os }}-
+
+      - name: Build
+        env:
+          LEEWAY_NODE_MODULES_CACHE: ~/.leeway-node-modules
+        run: leeway build :my-yarn-package
+```
+
+## Performance Impact
+
+| Scenario | Typical yarn install time |
+|----------|---------------------------|
+| No cache (cold) | 60-180 seconds |
+| With node_modules cache | <5 seconds |
+
+The cache directory structure is:
+```
+$LEEWAY_NODE_MODULES_CACHE/
+  component_package-name/     # package full name (slashes replaced with underscores)
+    a1b2c3d4e5f6/            # first 12 chars of yarn.lock hash
+      node_modules/
+```
 
 # OpenTelemetry Tracing
 
