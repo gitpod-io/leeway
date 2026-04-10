@@ -154,14 +154,13 @@ func TestGoTestTracer_ParallelTests(t *testing.T) {
 		t.Fatal("TestParallel span not found")
 	}
 
-	// Verify pause and cont events were recorded
-	eventNames := make([]string, 0)
-	for _, e := range testSpan.Events {
-		eventNames = append(eventNames, e.Name)
-	}
-
-	if len(eventNames) != 2 {
-		t.Errorf("expected 2 events (pause, cont), got %d: %v", len(eventNames), eventNames)
+	// Verify pause and cont events are NOT recorded (dropped to reduce span volume)
+	if len(testSpan.Events) != 0 {
+		eventNames := make([]string, 0, len(testSpan.Events))
+		for _, e := range testSpan.Events {
+			eventNames = append(eventNames, e.Name)
+		}
+		t.Errorf("expected 0 events (pause/cont dropped), got %d: %v", len(testSpan.Events), eventNames)
 	}
 }
 
