@@ -333,3 +333,223 @@ func TestYarnAppExtraction_ScopedPackage(t *testing.T) {
 		})
 	}
 }
+
+func TestDockerS3CacheConfig(t *testing.T) {
+	tests := []struct {
+		name           string
+		config         *DockerS3CacheConfig
+		wantEnabled    bool
+		wantCacheFrom  string
+		wantCacheTo    string
+	}{
+		{
+			name:        "nil config",
+			config:      nil,
+			wantEnabled: false,
+		},
+		{
+			name: "empty config",
+			config: &DockerS3CacheConfig{},
+			wantEnabled: false,
+		},
+		{
+			name: "missing region",
+			config: &DockerS3CacheConfig{
+				Bucket: "my-bucket",
+			},
+			wantEnabled: false,
+		},
+		{
+			name: "missing bucket",
+			config: &DockerS3CacheConfig{
+				Region: "us-east-1",
+			},
+			wantEnabled: false,
+		},
+		{
+			name: "minimal config",
+			config: &DockerS3CacheConfig{
+				Bucket: "my-bucket",
+				Region: "us-east-1",
+			},
+			wantEnabled:   true,
+			wantCacheFrom: "type=s3,region=us-east-1,bucket=my-bucket",
+			wantCacheTo:   "type=s3,region=us-east-1,bucket=my-bucket,mode=max",
+		},
+		{
+			name: "with prefix",
+			config: &DockerS3CacheConfig{
+				Bucket: "my-bucket",
+				Region: "eu-west-1",
+				Prefix: "cache/myproject/",
+			},
+			wantEnabled:   true,
+			wantCacheFrom: "type=s3,region=eu-west-1,bucket=my-bucket,blobs_prefix=cache/myproject/,manifests_prefix=cache/myproject/",
+			wantCacheTo:   "type=s3,region=eu-west-1,bucket=my-bucket,mode=max,blobs_prefix=cache/myproject/,manifests_prefix=cache/myproject/",
+		},
+		{
+			name: "with mode min",
+			config: &DockerS3CacheConfig{
+				Bucket: "my-bucket",
+				Region: "us-west-2",
+				Mode:   "min",
+			},
+			wantEnabled:   true,
+			wantCacheFrom: "type=s3,region=us-west-2,bucket=my-bucket",
+			wantCacheTo:   "type=s3,region=us-west-2,bucket=my-bucket,mode=min",
+		},
+		{
+			name: "with custom endpoint",
+			config: &DockerS3CacheConfig{
+				Bucket:   "my-bucket",
+				Region:   "us-east-1",
+				Endpoint: "https://minio.example.com",
+			},
+			wantEnabled:   true,
+			wantCacheFrom: "type=s3,region=us-east-1,bucket=my-bucket,endpoint_url=https://minio.example.com",
+			wantCacheTo:   "type=s3,region=us-east-1,bucket=my-bucket,mode=max,endpoint_url=https://minio.example.com",
+		},
+		{
+			name: "full config",
+			config: &DockerS3CacheConfig{
+				Bucket:   "my-bucket",
+				Region:   "ap-southeast-1",
+				Prefix:   "docker/",
+				Mode:     "max",
+				Endpoint: "https://s3.custom.com",
+			},
+			wantEnabled:   true,
+			wantCacheFrom: "type=s3,region=ap-southeast-1,bucket=my-bucket,blobs_prefix=docker/,manifests_prefix=docker/,endpoint_url=https://s3.custom.com",
+			wantCacheTo:   "type=s3,region=ap-southeast-1,bucket=my-bucket,mode=max,blobs_prefix=docker/,manifests_prefix=docker/,endpoint_url=https://s3.custom.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotEnabled := tt.config.IsEnabled()
+			if gotEnabled != tt.wantEnabled {
+				t.Errorf("IsEnabled() = %v, want %v", gotEnabled, tt.wantEnabled)
+			}
+
+			if tt.wantEnabled {
+				gotCacheFrom := tt.config.CacheFromArg()
+				if gotCacheFrom != tt.wantCacheFrom {
+					t.Errorf("CacheFromArg() = %q, want %q", gotCacheFrom, tt.wantCacheFrom)
+				}
+
+				gotCacheTo := tt.config.CacheToArg()
+				if gotCacheTo != tt.wantCacheTo {
+					t.Errorf("CacheToArg() = %q, want %q", gotCacheTo, tt.wantCacheTo)
+				}
+			}
+		})
+	}
+}
+
+func TestDockerS3CacheFromEnv(t *testing.T) {
+	// Save original env vars
+	origBucket := os.Getenv(EnvvarDockerS3CacheBucket)
+	origRegion := os.Getenv(EnvvarDockerS3CacheRegion)
+	origPrefix := os.Getenv(EnvvarDockerS3CachePrefix)
+	origMode := os.Getenv(EnvvarDockerS3CacheMode)
+	origEndpoint := os.Getenv(EnvvarDockerS3CacheEndpoint)
+
+	// Restore env vars after test
+	defer func() {
+		os.Setenv(EnvvarDockerS3CacheBucket, origBucket)
+		os.Setenv(EnvvarDockerS3CacheRegion, origRegion)
+		os.Setenv(EnvvarDockerS3CachePrefix, origPrefix)
+		os.Setenv(EnvvarDockerS3CacheMode, origMode)
+		os.Setenv(EnvvarDockerS3CacheEndpoint, origEndpoint)
+	}()
+
+	tests := []struct {
+		name     string
+		envVars  map[string]string
+		wantNil  bool
+		wantCfg  *DockerS3CacheConfig
+	}{
+		{
+			name:    "no env vars set",
+			envVars: map[string]string{},
+			wantNil: true,
+		},
+		{
+			name: "only bucket set",
+			envVars: map[string]string{
+				EnvvarDockerS3CacheBucket: "my-bucket",
+			},
+			wantNil: true,
+		},
+		{
+			name: "only region set",
+			envVars: map[string]string{
+				EnvvarDockerS3CacheRegion: "us-east-1",
+			},
+			wantNil: true,
+		},
+		{
+			name: "bucket and region set",
+			envVars: map[string]string{
+				EnvvarDockerS3CacheBucket: "my-bucket",
+				EnvvarDockerS3CacheRegion: "us-east-1",
+			},
+			wantNil: false,
+			wantCfg: &DockerS3CacheConfig{
+				Bucket: "my-bucket",
+				Region: "us-east-1",
+			},
+		},
+		{
+			name: "all env vars set",
+			envVars: map[string]string{
+				EnvvarDockerS3CacheBucket:   "my-bucket",
+				EnvvarDockerS3CacheRegion:   "eu-west-1",
+				EnvvarDockerS3CachePrefix:   "cache/",
+				EnvvarDockerS3CacheMode:     "min",
+				EnvvarDockerS3CacheEndpoint: "https://minio.local",
+			},
+			wantNil: false,
+			wantCfg: &DockerS3CacheConfig{
+				Bucket:   "my-bucket",
+				Region:   "eu-west-1",
+				Prefix:   "cache/",
+				Mode:     "min",
+				Endpoint: "https://minio.local",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear all env vars first
+			os.Unsetenv(EnvvarDockerS3CacheBucket)
+			os.Unsetenv(EnvvarDockerS3CacheRegion)
+			os.Unsetenv(EnvvarDockerS3CachePrefix)
+			os.Unsetenv(EnvvarDockerS3CacheMode)
+			os.Unsetenv(EnvvarDockerS3CacheEndpoint)
+
+			// Set test env vars
+			for k, v := range tt.envVars {
+				os.Setenv(k, v)
+			}
+
+			got := DockerS3CacheFromEnv()
+
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("DockerS3CacheFromEnv() = %+v, want nil", got)
+				}
+				return
+			}
+
+			if got == nil {
+				t.Fatal("DockerS3CacheFromEnv() = nil, want non-nil")
+			}
+
+			if diff := cmp.Diff(tt.wantCfg, got); diff != "" {
+				t.Errorf("DockerS3CacheFromEnv() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

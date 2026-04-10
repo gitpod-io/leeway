@@ -102,6 +102,21 @@ const (
 	// EnvvarWorkspaceRoot names the environment variable for workspace root path
 	EnvvarWorkspaceRoot = "LEEWAY_WORKSPACE_ROOT"
 
+	// EnvvarDockerS3CacheBucket names the S3 bucket for Docker build layer caching
+	EnvvarDockerS3CacheBucket = "LEEWAY_DOCKER_S3_CACHE_BUCKET"
+
+	// EnvvarDockerS3CacheRegion names the AWS region for the S3 cache bucket
+	EnvvarDockerS3CacheRegion = "LEEWAY_DOCKER_S3_CACHE_REGION"
+
+	// EnvvarDockerS3CachePrefix names the prefix for S3 cache keys (optional)
+	EnvvarDockerS3CachePrefix = "LEEWAY_DOCKER_S3_CACHE_PREFIX"
+
+	// EnvvarDockerS3CacheMode controls the cache mode (min or max, defaults to max)
+	EnvvarDockerS3CacheMode = "LEEWAY_DOCKER_S3_CACHE_MODE"
+
+	// EnvvarDockerS3CacheEndpoint allows specifying a custom S3 endpoint (for S3-compatible storage)
+	EnvvarDockerS3CacheEndpoint = "LEEWAY_DOCKER_S3_CACHE_ENDPOINT"
+
 	// dockerImageNamesFiles is the name of the file store in poushed Docker build artifacts
 	// which contains the names of the Docker images we just pushed
 	dockerImageNamesFiles = "imgnames.txt"
@@ -492,11 +507,69 @@ type buildOptions struct {
 	DockerExportEnvValue bool // Value from explicit user env var
 	DockerExportEnvSet   bool // Whether user explicitly set env var (before workspace)
 
+	// Docker S3 build cache configuration
+	DockerS3Cache *DockerS3CacheConfig
+
 	context *buildContext
 }
 
 // DockerBuildOptions are options passed to "docker build"
 type DockerBuildOptions map[string]string
+
+// DockerS3CacheConfig configures S3-backed Docker build layer caching.
+// When configured, leeway adds --cache-from and --cache-to flags to docker buildx commands.
+type DockerS3CacheConfig struct {
+	// Bucket is the S3 bucket name (required)
+	Bucket string
+	// Region is the AWS region for the bucket (required)
+	Region string
+	// Prefix is an optional prefix for cache keys (e.g., "cache/myproject/")
+	Prefix string
+	// Mode controls cache export mode: "min" (default layers only) or "max" (all layers)
+	// Defaults to "max" for better cache hit rates
+	Mode string
+	// Endpoint is an optional custom S3 endpoint for S3-compatible storage
+	Endpoint string
+}
+
+// IsEnabled returns true if the S3 cache is properly configured
+func (c *DockerS3CacheConfig) IsEnabled() bool {
+	return c != nil && c.Bucket != "" && c.Region != ""
+}
+
+// CacheFromArg returns the --cache-from argument value for docker buildx
+func (c *DockerS3CacheConfig) CacheFromArg() string {
+	if !c.IsEnabled() {
+		return ""
+	}
+	arg := fmt.Sprintf("type=s3,region=%s,bucket=%s", c.Region, c.Bucket)
+	if c.Prefix != "" {
+		arg += fmt.Sprintf(",blobs_prefix=%s,manifests_prefix=%s", c.Prefix, c.Prefix)
+	}
+	if c.Endpoint != "" {
+		arg += fmt.Sprintf(",endpoint_url=%s", c.Endpoint)
+	}
+	return arg
+}
+
+// CacheToArg returns the --cache-to argument value for docker buildx
+func (c *DockerS3CacheConfig) CacheToArg() string {
+	if !c.IsEnabled() {
+		return ""
+	}
+	mode := c.Mode
+	if mode == "" {
+		mode = "max"
+	}
+	arg := fmt.Sprintf("type=s3,region=%s,bucket=%s,mode=%s", c.Region, c.Bucket, mode)
+	if c.Prefix != "" {
+		arg += fmt.Sprintf(",blobs_prefix=%s,manifests_prefix=%s", c.Prefix, c.Prefix)
+	}
+	if c.Endpoint != "" {
+		arg += fmt.Sprintf(",endpoint_url=%s", c.Endpoint)
+	}
+	return arg
+}
 
 // BuildOption configures the build behaviour
 type BuildOption func(*buildOptions) error
@@ -637,6 +710,33 @@ func WithDockerExportEnv(value, isSet bool) BuildOption {
 		opts.DockerExportEnvValue = value
 		opts.DockerExportEnvSet = isSet
 		return nil
+	}
+}
+
+// WithDockerS3Cache configures S3-backed Docker build layer caching
+func WithDockerS3Cache(cfg *DockerS3CacheConfig) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DockerS3Cache = cfg
+		return nil
+	}
+}
+
+// DockerS3CacheFromEnv creates a DockerS3CacheConfig from environment variables.
+// Returns nil if the required environment variables are not set.
+func DockerS3CacheFromEnv() *DockerS3CacheConfig {
+	bucket := os.Getenv(EnvvarDockerS3CacheBucket)
+	region := os.Getenv(EnvvarDockerS3CacheRegion)
+
+	if bucket == "" || region == "" {
+		return nil
+	}
+
+	return &DockerS3CacheConfig{
+		Bucket:   bucket,
+		Region:   region,
+		Prefix:   os.Getenv(EnvvarDockerS3CachePrefix),
+		Mode:     os.Getenv(EnvvarDockerS3CacheMode),
+		Endpoint: os.Getenv(EnvvarDockerS3CacheEndpoint),
 	}
 }
 
@@ -2382,7 +2482,11 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		return nil, err
 	}
 
-	// Use buildx for OCI layout export when exporting to cache
+	// Determine if we need buildx (required for OCI export or S3 cache)
+	useS3Cache := buildctx.DockerS3Cache.IsEnabled()
+	useBuildx := *cfg.ExportToCache || useS3Cache
+
+	// Use buildx for OCI layout export when exporting to cache, or when S3 cache is enabled
 	var buildcmd []string
 	if *cfg.ExportToCache {
 		// Build with OCI layout export for deterministic caching
@@ -2390,9 +2494,29 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		buildcmd = []string{"docker", "buildx", "build", "--pull"}
 		buildcmd = append(buildcmd, "--output", fmt.Sprintf("type=oci,dest=%s", imageTarPath))
 		buildcmd = append(buildcmd, "--tag", version)
+	} else if useBuildx {
+		// Use buildx for S3 cache support, but load to daemon for pushing
+		buildcmd = []string{"docker", "buildx", "build", "--pull", "--load", "-t", version}
 	} else {
 		// Normal build (load to daemon for pushing)
 		buildcmd = []string{"docker", "build", "--pull", "-t", version}
+	}
+
+	// Add S3 cache options if configured (only works with buildx)
+	if useS3Cache {
+		cacheFrom := buildctx.DockerS3Cache.CacheFromArg()
+		cacheTo := buildctx.DockerS3Cache.CacheToArg()
+		if cacheFrom != "" {
+			buildcmd = append(buildcmd, "--cache-from", cacheFrom)
+		}
+		if cacheTo != "" {
+			buildcmd = append(buildcmd, "--cache-to", cacheTo)
+		}
+		log.WithFields(log.Fields{
+			"bucket": buildctx.DockerS3Cache.Bucket,
+			"region": buildctx.DockerS3Cache.Region,
+			"prefix": buildctx.DockerS3Cache.Prefix,
+		}).Debug("Docker S3 build cache enabled")
 	}
 
 	for arg, val := range cfg.BuildArgs {

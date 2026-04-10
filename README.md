@@ -209,6 +209,39 @@ E.g. `component/nested:docker` becomes `COMPONENT_NESTED__DOCKER`.
 
 See `leeway build --help` for more details.
 
+#### S3 Docker Build Cache
+
+Leeway supports S3-backed Docker build layer caching using BuildKit's `type=s3` cache backend. This can significantly speed up Docker builds by caching intermediate layers in S3.
+
+**Configuration via environment variables:**
+```bash
+export LEEWAY_DOCKER_S3_CACHE_BUCKET=my-cache-bucket
+export LEEWAY_DOCKER_S3_CACHE_REGION=us-east-1
+export LEEWAY_DOCKER_S3_CACHE_PREFIX=docker-cache/  # optional
+export LEEWAY_DOCKER_S3_CACHE_MODE=max              # optional: 'min' or 'max' (default: max)
+export LEEWAY_DOCKER_S3_CACHE_ENDPOINT=https://...  # optional: for S3-compatible storage
+```
+
+**Configuration via CLI flags:**
+```bash
+leeway build \
+  --docker-s3-cache-bucket=my-cache-bucket \
+  --docker-s3-cache-region=us-east-1 \
+  --docker-s3-cache-prefix=docker-cache/ \
+  :my-docker-package
+```
+
+**Requirements:**
+- Docker Buildx (automatically used when S3 cache is configured)
+- AWS credentials configured (via environment variables, IAM role, or AWS config file)
+- S3 bucket with appropriate permissions
+
+**Cache modes:**
+- `max`: Cache all layers including intermediate layers (better cache hit rate, more storage)
+- `min`: Cache only the final layer (less storage, fewer cache hits)
+
+When S3 cache is enabled, leeway automatically switches to `docker buildx build` with `--cache-from` and `--cache-to` flags pointing to the configured S3 bucket.
+
 ### Generic packages
 ```YAML
 config:
