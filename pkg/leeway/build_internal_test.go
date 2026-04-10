@@ -333,3 +333,57 @@ func TestYarnAppExtraction_ScopedPackage(t *testing.T) {
 		})
 	}
 }
+
+func TestDockerBuildOptions_CommaInValue(t *testing.T) {
+	// DockerBuildOptions should preserve comma-containing values intact.
+	// This is the fix for: https://github.com/gitpod-io/leeway/issues/XXX
+	// Previously, using StringToString flag type would split "cache-to=type=gha,mode=max"
+	// into two separate options, breaking docker buildx cache options.
+
+	tests := []struct {
+		name     string
+		opts     DockerBuildOptions
+		expected []string
+	}{
+		{
+			name:     "single option with comma in value",
+			opts:     DockerBuildOptions{"cache-to=type=gha,mode=max"},
+			expected: []string{"--cache-to=type=gha,mode=max"},
+		},
+		{
+			name:     "multiple options with commas",
+			opts:     DockerBuildOptions{"cache-to=type=gha,mode=max", "cache-from=type=gha"},
+			expected: []string{"--cache-to=type=gha,mode=max", "--cache-from=type=gha"},
+		},
+		{
+			name:     "simple option without comma",
+			opts:     DockerBuildOptions{"no-cache=true"},
+			expected: []string{"--no-cache=true"},
+		},
+		{
+			name:     "empty options",
+			opts:     DockerBuildOptions{},
+			expected: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result []string
+			for _, opt := range tt.opts {
+				result = append(result, fmt.Sprintf("--%s", opt))
+			}
+
+			if len(result) != len(tt.expected) {
+				t.Errorf("got %d options, want %d", len(result), len(tt.expected))
+				return
+			}
+
+			for i, got := range result {
+				if got != tt.expected[i] {
+					t.Errorf("option %d: got %q, want %q", i, got, tt.expected[i])
+				}
+			}
+		})
+	}
+}

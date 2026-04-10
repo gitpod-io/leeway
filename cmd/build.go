@@ -231,7 +231,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().String("coverage-output-path", "", "Output path where test coverage file will be copied after running tests")
 	cmd.Flags().Bool("disable-coverage", false, "Disable test coverage collection (defaults to false)")
 	cmd.Flags().Bool("enable-test-tracing", false, "Enable per-test OpenTelemetry span creation (defaults to false)")
-	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
+	cmd.Flags().StringArray("docker-build-options", nil, "Options passed to all 'docker build' commands (can be repeated, e.g., --docker-build-options=cache-to=type=gha,mode=max)")
 	cmd.Flags().Bool("slsa-cache-verification", false, "Enable SLSA verification for cached artifacts")
 	cmd.Flags().String("slsa-source-uri", "", "Expected source URI for SLSA verification (required when verification enabled)")
 	cmd.Flags().Bool("slsa-require-attestation", false, "Require SLSA attestations (missing/invalid → build locally)")
@@ -367,11 +367,11 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 	disableCoverage, _ := cmd.Flags().GetBool("disable-coverage")
 	enableTestTracing, _ := cmd.Flags().GetBool("enable-test-tracing")
 
-	var dockerBuildOptions leeway.DockerBuildOptions
-	dockerBuildOptions, err = cmd.Flags().GetStringToString("docker-build-options")
+	dockerBuildOptionsSlice, err := cmd.Flags().GetStringArray("docker-build-options")
 	if err != nil {
 		log.Fatal(err)
 	}
+	dockerBuildOptions := leeway.DockerBuildOptions(dockerBuildOptionsSlice)
 
 	jailedExecution, err := cmd.Flags().GetBool("jailed-execution")
 	if err != nil {

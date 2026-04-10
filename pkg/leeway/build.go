@@ -495,8 +495,9 @@ type buildOptions struct {
 	context *buildContext
 }
 
-// DockerBuildOptions are options passed to "docker build"
-type DockerBuildOptions map[string]string
+// DockerBuildOptions are options passed to "docker build".
+// Each entry is a "key=value" string that becomes "--key=value" in the docker command.
+type DockerBuildOptions []string
 
 // BuildOption configures the build behaviour
 type BuildOption func(*buildOptions) error
@@ -2408,8 +2409,8 @@ func (p *Package) buildDocker(buildctx *buildContext, wd, result string) (res *p
 		buildcmd = append(buildcmd, "--squash")
 	}
 	if buildctx.DockerBuildOptions != nil {
-		for opt, v := range *buildctx.DockerBuildOptions {
-			buildcmd = append(buildcmd, fmt.Sprintf("--%s=%s", opt, v))
+		for _, opt := range *buildctx.DockerBuildOptions {
+			buildcmd = append(buildcmd, fmt.Sprintf("--%s", opt))
 		}
 	}
 	buildcmd = append(buildcmd, ".")
