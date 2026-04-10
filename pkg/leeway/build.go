@@ -492,6 +492,8 @@ type buildOptions struct {
 	DockerExportEnvValue bool // Value from explicit user env var
 	DockerExportEnvSet   bool // Whether user explicitly set env var (before workspace)
 
+	DisableSBOM bool // Disable SBOM generation (overrides workspace config)
+
 	context *buildContext
 }
 
@@ -636,6 +638,14 @@ func WithDockerExportEnv(value, isSet bool) BuildOption {
 	return func(opts *buildOptions) error {
 		opts.DockerExportEnvValue = value
 		opts.DockerExportEnvSet = isSet
+		return nil
+	}
+}
+
+// WithDisableSBOM disables SBOM generation during build (overrides workspace config)
+func WithDisableSBOM(disable bool) BuildOption {
+	return func(opts *buildOptions) error {
+		opts.DisableSBOM = disable
 		return nil
 	}
 }
@@ -897,7 +907,8 @@ func Build(pkg *Package, opts ...BuildOption) (err error) {
 	// This ensures we scan even cached packages that weren't rebuilt
 	// Only scan packages that were successfully built or downloaded to avoid
 	// errors when a dependency build failed in a parallel goroutine
-	if pkg.C.W.SBOM.Enabled && pkg.C.W.SBOM.ScanVulnerabilities {
+	// DisableSBOM build option overrides workspace config.
+	if pkg.C.W.SBOM.Enabled && pkg.C.W.SBOM.ScanVulnerabilities && !ctx.DisableSBOM {
 		if err := scanAllPackagesForVulnerabilities(ctx, allpkg, pkgstatus); err != nil {
 			return err
 		}
@@ -1261,7 +1272,8 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 
 	// Generate SBOM if enabled (after packaging - written alongside artifact)
 	// SBOM files are stored outside the tar.gz to maintain artifact determinism.
-	if p.C.W.SBOM.Enabled {
+	// DisableSBOM build option overrides workspace config.
+	if p.C.W.SBOM.Enabled && !buildctx.DisableSBOM {
 		if par, ok := buildctx.Reporter.(PhaseAwareReporter); ok {
 			par.PackageBuildPhaseStarted(p, PackageBuildPhaseSBOM)
 		}
