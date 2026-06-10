@@ -60,6 +60,9 @@ const (
 
 	// EnvvarMaxSigningConcurrency configures maximum concurrent signing operations
 	EnvvarMaxSigningConcurrency = "LEEWAY_MAX_SIGNING_CONCURRENCY"
+
+	// EnvvarSigningRetryAttempts configures retry attempts for transient signing failures
+	EnvvarSigningRetryAttempts = "LEEWAY_SIGNING_RETRY_ATTEMPTS"
 )
 
 const (
@@ -134,6 +137,7 @@ variables have an effect on leeway:
         <light_blue>LEEWAY_SLSA_SOURCE_URI</>  Expected source URI for SLSA verification (github.com/owner/repo).
 <light_blue>LEEWAY_SLSA_REQUIRE_ATTESTATION</>  Require valid attestations; missing/invalid → build locally (true/false).
 <light_blue>LEEWAY_ENABLE_IN_FLIGHT_CHECKSUMS</>  Enable checksumming of cache artifacts (true/false).
+<light_blue>LEEWAY_SIGNING_RETRY_ATTEMPTS</>  Retry attempts for transient Sigstore/Rekor signing failures.
            <light_blue>LEEWAY_EXPERIMENTAL</>  Enables experimental leeway features and commands.
 `),
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
