@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gitpod-io/leeway/pkg/leeway/cache"
 	"github.com/gitpod-io/leeway/pkg/leeway/signing"
 )
 
@@ -39,6 +41,31 @@ func createMockArtifact(t *testing.T, dir string, name string) string {
 	err := os.WriteFile(artifactPath, content, 0644)
 	require.NoError(t, err)
 	return artifactPath
+}
+
+type signCacheMockRemoteCache struct {
+	uploadFileCalls int
+}
+
+func (m *signCacheMockRemoteCache) ExistingPackages(ctx context.Context, pkgs []cache.Package) (map[cache.Package]struct{}, error) {
+	return map[cache.Package]struct{}{}, nil
+}
+
+func (m *signCacheMockRemoteCache) Download(ctx context.Context, dst cache.LocalCache, pkgs []cache.Package) map[string]cache.DownloadResult {
+	return map[string]cache.DownloadResult{}
+}
+
+func (m *signCacheMockRemoteCache) Upload(ctx context.Context, src cache.LocalCache, pkgs []cache.Package) error {
+	return nil
+}
+
+func (m *signCacheMockRemoteCache) UploadFile(ctx context.Context, filePath string, key string) error {
+	m.uploadFileCalls++
+	return nil
+}
+
+func (m *signCacheMockRemoteCache) HasFile(ctx context.Context, key string) (bool, error) {
+	return false, nil
 }
 
 // TestSignCacheCommand_Exists verifies the command is properly registered
@@ -68,6 +95,10 @@ func TestSignCacheCommand_FlagDefinitions(t *testing.T) {
 	dryRunFlag := cmd.Flags().Lookup("dry-run")
 	require.NotNil(t, dryRunFlag, "dry-run flag should exist")
 	assert.Equal(t, "bool", dryRunFlag.Value.Type())
+
+	retryFlag := cmd.Flags().Lookup("signing-retry-attempts")
+	require.NotNil(t, retryFlag, "signing-retry-attempts flag should exist")
+	assert.Equal(t, "int", retryFlag.Value.Type())
 
 	// Verify from-manifest is required
 	annotations := cmd.Flags().Lookup("from-manifest").Annotations
@@ -479,6 +510,32 @@ func TestSignCache_DryRunMode(t *testing.T) {
 	assert.False(t, operationsPerformed, "No real operations should occur in dry-run")
 }
 
+func TestProcessArtifact_RekorConflictWithoutProofFailsBeforeUpload(t *testing.T) {
+	tmpDir := t.TempDir()
+	artifact := createMockArtifact(t, tmpDir, "conflict.tar.gz")
+	remoteCache := &signCacheMockRemoteCache{}
+
+	originalGenerator := generateSignedSLSAAttestation
+	generateSignedSLSAAttestation = func(ctx context.Context, artifactPath string, githubCtx *signing.GitHubContext, options signing.SLSASigningOptions) (*signing.SignedAttestationResult, error) {
+		return nil, fmt.Errorf("[POST /api/v1/log/entries][409] createLogEntryConflict an equivalent entry already exists without verifiable proof")
+	}
+	t.Cleanup(func() {
+		generateSignedSLSAAttestation = originalGenerator
+	})
+
+	err := processArtifactWithOptions(context.Background(), artifact, &signing.GitHubContext{
+		RunID:       "123456",
+		Repository:  "gitpod-io/leeway",
+		SHA:         "abc123",
+		ServerURL:   "https://github.com",
+		WorkflowRef: ".github/workflows/build.yml@main",
+	}, remoteCache, false, signing.DefaultSLSASigningOptions())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "createLogEntryConflict")
+	assert.Equal(t, 0, remoteCache.uploadFileCalls, "unverified Rekor conflicts must not upload unsigned artifacts or attestations")
+}
+
 // Helper: Set up minimal GitHub environment for testing
 func setupGitHubEnv(t *testing.T) {
 	t.Setenv("GITHUB_RUN_ID", "123456")
@@ -514,7 +571,7 @@ func TestSignCache_ErrorScenarios(t *testing.T) {
 				manifestPath := createTestManifest(t, tmpDir, []string{artifact})
 
 				// Ensure no cache env vars set
-				os.Unsetenv("LEEWAY_REMOTE_CACHE_BUCKET")
+				_ = os.Unsetenv("LEEWAY_REMOTE_CACHE_BUCKET")
 
 				return manifestPath, func() {}
 			},

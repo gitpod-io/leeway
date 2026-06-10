@@ -31,11 +31,17 @@ Concurrency:
   Configure via --max-signing-concurrency flag or LEEWAY_MAX_SIGNING_CONCURRENCY env var
   Valid range: 1-100 (automatically capped)
 
+Retries:
+  Default: 3 attempts for transient Sigstore/Rekor signing failures
+  Configure via --signing-retry-attempts flag or LEEWAY_SIGNING_RETRY_ATTEMPTS env var
+  Valid range: 1-10 (automatically capped)
+
 Example:
   leeway plumbing sign-cache --from-manifest artifacts-to-sign.txt
   leeway plumbing sign-cache --from-manifest artifacts.txt --dry-run
   leeway plumbing sign-cache --from-manifest artifacts.txt --max-signing-concurrency 30
-  LEEWAY_MAX_SIGNING_CONCURRENCY=30 leeway plumbing sign-cache --from-manifest artifacts.txt`,
+  leeway plumbing sign-cache --from-manifest artifacts.txt --signing-retry-attempts 5
+  LEEWAY_MAX_SIGNING_CONCURRENCY=30 LEEWAY_SIGNING_RETRY_ATTEMPTS=5 leeway plumbing sign-cache --from-manifest artifacts.txt`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		manifestPath, _ := cmd.Flags().GetString("from-manifest")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -50,6 +56,15 @@ Example:
 			}
 		}
 
+		signingRetryAttempts, _ := cmd.Flags().GetInt("signing-retry-attempts")
+		if !cmd.Flags().Changed("signing-retry-attempts") {
+			if envVal := os.Getenv(EnvvarSigningRetryAttempts); envVal != "" {
+				if parsed, err := strconv.Atoi(envVal); err == nil && parsed > 0 {
+					signingRetryAttempts = parsed
+				}
+			}
+		}
+
 		if manifestPath == "" {
 			return fmt.Errorf("--from-manifest flag is required")
 		}
@@ -59,7 +74,9 @@ Example:
 			return fmt.Errorf("manifest file does not exist: %s", manifestPath)
 		}
 
-		return runSignCache(cmd.Context(), manifestPath, dryRun, maxConcurrency)
+		signingOptions := signing.DefaultSLSASigningOptions()
+		signingOptions.RetryOptions.MaxAttempts = signingRetryAttempts
+		return runSignCacheWithOptions(cmd.Context(), manifestPath, dryRun, maxConcurrency, signingOptions)
 	},
 }
 
@@ -68,11 +85,16 @@ func init() {
 	signCacheCmd.Flags().String("from-manifest", "", "Path to newline-separated artifact paths file")
 	signCacheCmd.Flags().Bool("dry-run", false, "Log actions without signing or uploading")
 	signCacheCmd.Flags().Int("max-signing-concurrency", 20, "Maximum concurrent signing operations (env: LEEWAY_MAX_SIGNING_CONCURRENCY)")
+	signCacheCmd.Flags().Int("signing-retry-attempts", 3, "Retry attempts for transient Sigstore/Rekor signing failures (env: LEEWAY_SIGNING_RETRY_ATTEMPTS)")
 	_ = signCacheCmd.MarkFlagRequired("from-manifest")
 }
 
 // runSignCache implements the main signing logic
 func runSignCache(ctx context.Context, manifestPath string, dryRun bool, maxConcurrency int) error {
+	return runSignCacheWithOptions(ctx, manifestPath, dryRun, maxConcurrency, signing.DefaultSLSASigningOptions())
+}
+
+func runSignCacheWithOptions(ctx context.Context, manifestPath string, dryRun bool, maxConcurrency int, signingOptions signing.SLSASigningOptions) error {
 	log.WithFields(log.Fields{
 		"manifest": manifestPath,
 		"dry_run":  dryRun,
@@ -141,6 +163,15 @@ func runSignCache(ctx context.Context, manifestPath string, dryRun bool, maxConc
 
 	log.WithField("maxConcurrency", maxConcurrency).Info("Configured signing concurrency")
 
+	if signingOptions.RetryOptions.MaxAttempts < 1 {
+		log.WithField("provided", signingOptions.RetryOptions.MaxAttempts).Warn("signing retry attempts must be at least 1, using 1")
+		signingOptions.RetryOptions.MaxAttempts = 1
+	} else if signingOptions.RetryOptions.MaxAttempts > 10 {
+		log.WithField("provided", signingOptions.RetryOptions.MaxAttempts).Warn("signing retry attempts exceeds maximum, capping at 10")
+		signingOptions.RetryOptions.MaxAttempts = 10
+	}
+	log.WithField("signingRetryAttempts", signingOptions.RetryOptions.MaxAttempts).Info("Configured signing retry attempts")
+
 	const maxAcceptableFailureRate = 0.5 // Fail command if more than 50% of artifacts fail
 	semaphore := make(chan struct{}, maxConcurrency)
 
@@ -171,7 +202,7 @@ func runSignCache(ctx context.Context, manifestPath string, dryRun bool, maxConc
 
 			log.WithField("artifact", artifactPath).Debug("Starting artifact processing")
 
-			if err := processArtifact(ctx, artifactPath, githubCtx, remoteCache, dryRun); err != nil {
+			if err := processArtifactWithOptions(ctx, artifactPath, githubCtx, remoteCache, dryRun, signingOptions); err != nil {
 				signingErr := signing.CategorizeError(artifactPath, err)
 
 				mu.Lock()
@@ -227,8 +258,10 @@ func runSignCache(ctx context.Context, manifestPath string, dryRun bool, maxConc
 	return nil
 }
 
+var generateSignedSLSAAttestation = signing.GenerateSignedSLSAAttestationWithOptions
+
 // processArtifact handles signing and uploading of a single artifact using integrated SLSA signing
-func processArtifact(ctx context.Context, artifactPath string, githubCtx *signing.GitHubContext, remoteCache cache.RemoteCache, dryRun bool) error {
+func processArtifactWithOptions(ctx context.Context, artifactPath string, githubCtx *signing.GitHubContext, remoteCache cache.RemoteCache, dryRun bool, signingOptions signing.SLSASigningOptions) error {
 	log.WithFields(log.Fields{
 		"artifact": artifactPath,
 		"dry_run":  dryRun,
@@ -240,7 +273,7 @@ func processArtifact(ctx context.Context, artifactPath string, githubCtx *signin
 	}
 
 	// Single step: generate and sign SLSA attestation using integrated approach
-	signedAttestation, err := signing.GenerateSignedSLSAAttestation(ctx, artifactPath, githubCtx)
+	signedAttestation, err := generateSignedSLSAAttestation(ctx, artifactPath, githubCtx, signingOptions)
 	if err != nil {
 		return fmt.Errorf("failed to generate signed attestation: %w", err)
 	}
