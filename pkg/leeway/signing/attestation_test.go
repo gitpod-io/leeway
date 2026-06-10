@@ -926,7 +926,7 @@ func TestSigningError_IsRetryable_AllTypes(t *testing.T) {
 		retryable bool
 	}{
 		{ErrorTypeNetwork, true},
-		{ErrorTypeSigstore, true},
+		{ErrorTypeSigstore, false},
 		{ErrorTypePermission, false},
 		{ErrorTypeValidation, false},
 		{ErrorTypeFileSystem, false},

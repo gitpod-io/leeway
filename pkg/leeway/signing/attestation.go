@@ -77,8 +77,25 @@ type SignedAttestationResult struct {
 	ArtifactName     string `json:"artifact_name"`     // Name of the artifact
 }
 
+// SLSASigningOptions configures SLSA attestation signing.
+type SLSASigningOptions struct {
+	RetryOptions RetryOptions
+}
+
+// DefaultSLSASigningOptions returns conservative defaults for CI signing.
+func DefaultSLSASigningOptions() SLSASigningOptions {
+	return SLSASigningOptions{
+		RetryOptions: DefaultRetryOptions(),
+	}
+}
+
 // GenerateSignedSLSAAttestation generates and signs SLSA provenance in one integrated step
 func GenerateSignedSLSAAttestation(ctx context.Context, artifactPath string, githubCtx *GitHubContext) (*SignedAttestationResult, error) {
+	return GenerateSignedSLSAAttestationWithOptions(ctx, artifactPath, githubCtx, DefaultSLSASigningOptions())
+}
+
+// GenerateSignedSLSAAttestationWithOptions generates and signs SLSA provenance with explicit signing options.
+func GenerateSignedSLSAAttestationWithOptions(ctx context.Context, artifactPath string, githubCtx *GitHubContext, signingOptions SLSASigningOptions) (*SignedAttestationResult, error) {
 	// Calculate artifact checksum
 	checksum, err := computeSHA256(artifactPath)
 	if err != nil {
@@ -94,8 +111,20 @@ func GenerateSignedSLSAAttestation(ctx context.Context, artifactPath string, git
 
 	// Extract builder ID from OIDC token to match certificate identity
 	// This is critical for compatibility with reusable workflows
-	builderID, err := extractBuilderIDFromOIDC(ctx, githubCtx)
-	if err != nil {
+	var builderID string
+	if err := WithRetryOptions(ctx, signingOptions.RetryOptions, func() error {
+		var retryErr error
+		builderID, retryErr = extractBuilderIDFromOIDC(ctx, githubCtx)
+		if retryErr != nil {
+			return &SigningError{
+				Type:     ErrorTypeSigstore,
+				Artifact: filepath.Base(artifactPath),
+				Message:  fmt.Sprintf("failed to extract builder ID from OIDC token: %v", retryErr),
+				Cause:    retryErr,
+			}
+		}
+		return nil
+	}); err != nil {
 		return nil, fmt.Errorf("failed to extract builder ID from OIDC token: %w", err)
 	}
 
@@ -163,8 +192,12 @@ func GenerateSignedSLSAAttestation(ctx context.Context, artifactPath string, git
 	}).Debug("Generated SLSA provenance, proceeding with integrated signing")
 
 	// Generate and sign the SLSA provenance using Sigstore
-	signedAttestation, err := signProvenanceWithSigstore(ctx, stmt)
-	if err != nil {
+	var signedAttestation []byte
+	if err := WithRetryOptions(ctx, signingOptions.RetryOptions, func() error {
+		var retryErr error
+		signedAttestation, retryErr = signProvenanceWithSigstore(ctx, stmt, signingOptions)
+		return retryErr
+	}); err != nil {
 		return nil, fmt.Errorf("failed to sign SLSA provenance: %w", err)
 	}
 
@@ -192,7 +225,7 @@ func computeSHA256(filePath string) (string, error) {
 }
 
 // signProvenanceWithSigstore signs SLSA provenance using Sigstore keyless signing
-func signProvenanceWithSigstore(ctx context.Context, statement *in_toto.Statement) ([]byte, error) {
+func signProvenanceWithSigstore(ctx context.Context, statement *in_toto.Statement, signingOptions SLSASigningOptions) ([]byte, error) {
 	// Validate GitHub OIDC environment
 	if err := validateSigstoreEnvironment(); err != nil {
 		return nil, fmt.Errorf("sigstore environment validation failed: %w", err)
