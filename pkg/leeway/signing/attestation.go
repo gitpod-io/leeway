@@ -340,7 +340,16 @@ func signProvenanceWithSigstore(ctx context.Context, statement *in_toto.Statemen
 				Retries: 1,
 				Version: rekorService.MajorAPIVersion,
 			}
-			bundleOpts.TransparencyLogs = append(bundleOpts.TransparencyLogs, sign.NewRekor(rekorOpts))
+			if rekorService.MajorAPIVersion == 1 {
+				bundleOpts.TransparencyLogs = append(bundleOpts.TransparencyLogs, newRecoveringRekorV1(recoveringRekorOptions{
+					BaseURL:      rekorOpts.BaseURL,
+					Timeout:      rekorOpts.Timeout,
+					Retries:      rekorOpts.Retries,
+					RetryOptions: signingOptions.RetryOptions,
+				}))
+			} else {
+				bundleOpts.TransparencyLogs = append(bundleOpts.TransparencyLogs, sign.NewRekor(rekorOpts))
+			}
 		}
 	}
 
