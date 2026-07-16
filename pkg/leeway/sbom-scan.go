@@ -45,6 +45,26 @@ type PackageVulnerabilityStats struct {
 	Ignored    int    `json:"ignored"`
 }
 
+type sbomVulnerabilityScanner interface {
+	Scan(buildctx *buildContext, p *Package, sbomFile string, outputDir string) (*PackageVulnerabilityStats, error)
+	Close() error
+}
+
+type grypeVulnerabilityScanner struct {
+	provider vulnerability.Provider
+	status   *vulnerability.ProviderStatus
+}
+
+func (s *grypeVulnerabilityScanner) Scan(buildctx *buildContext, p *Package, sbomFile string, outputDir string) (*PackageVulnerabilityStats, error) {
+	return scanSBOMForVulnerabilities(buildctx, p, sbomFile, outputDir, s.provider, s.status)
+}
+
+func (s *grypeVulnerabilityScanner) Close() error {
+	return s.provider.Close()
+}
+
+type vulnerabilityScannerFactory func(buildctx *buildContext, p *Package) (sbomVulnerabilityScanner, error)
+
 // scanAllPackagesForVulnerabilities scans all packages for vulnerabilities.
 // This function is called after the build process completes to identify security issues
 // in all built packages, including those loaded from cache. It generates comprehensive
@@ -54,6 +74,10 @@ type PackageVulnerabilityStats struct {
 // This prevents errors when a dependency build fails in a parallel goroutine but the main
 // build continues (due to the build lock mechanism allowing other goroutines to proceed).
 func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Package, pkgstatus map[*Package]PackageBuildStatus, customOutputDir ...string) error {
+	return scanAllPackagesForVulnerabilitiesWithScannerFactory(buildctx, packages, pkgstatus, newGrypeVulnerabilityScanner, customOutputDir...)
+}
+
+func scanAllPackagesForVulnerabilitiesWithScannerFactory(buildctx *buildContext, packages []*Package, pkgstatus map[*Package]PackageBuildStatus, scannerFactory vulnerabilityScannerFactory, customOutputDir ...string) error {
 	if len(packages) == 0 {
 		return nil
 	}
@@ -75,6 +99,17 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 		buildctx.Reporter.PackageBuildLog(nil, true, []byte(errMsg+"\n"))
 		return xerrors.Errorf(errMsg)
 	}
+
+	var scanner sbomVulnerabilityScanner
+	var scannerPackage *Package
+	defer func() {
+		if scanner == nil {
+			return
+		}
+		if closeErr := scanner.Close(); closeErr != nil {
+			buildctx.Reporter.PackageBuildLog(scannerPackage, true, []byte("failed to close vulnerability provider: "+closeErr.Error()+"\n"))
+		}
+	}()
 
 	// Process each package
 	for _, p := range packages {
@@ -153,7 +188,19 @@ func scanAllPackagesForVulnerabilities(buildctx *buildContext, packages []*Packa
 		}
 
 		// Scan for vulnerabilities
-		stats, err := scanSBOMForVulnerabilities(buildctx, p, sbomFilename, outputDir)
+		if scanner == nil {
+			// Scanner construction opens and may update Grype's database. Keep that
+			// lifecycle outside the package scan so update failures are retried once.
+			scanner, err = scannerFactory(buildctx, p)
+			if err != nil {
+				errMsg := fmt.Sprintf("failed to initialize vulnerability scanner: %s", err)
+				buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
+				return xerrors.Errorf(errMsg)
+			}
+			scannerPackage = p
+		}
+
+		stats, err := scanner.Scan(buildctx, p, sbomFilename, outputDir)
 		if err != nil {
 			buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Failed to scan package %s for vulnerabilities: %s\n", p.FullName(), err.Error()))
 			failedPackages = append(failedPackages, p.FullName())
@@ -242,12 +289,8 @@ func ScanAllPackagesForVulnerabilities(localCache cache.LocalCache, packages []*
 	return scanAllPackagesForVulnerabilities(buildctx, packages, pkgstatus, customOutputDir...)
 }
 
-// scanSBOMForVulnerabilities scans an SBOM file for vulnerabilities and generates reports.
-// This function can be called independently of the build process to analyze a specific SBOM file.
-// It returns vulnerability statistics for the package and an error if the scan fails.
-// The function handles loading the vulnerability database, parsing the SBOM, finding matches,
-// and generating reports in multiple formats.
-func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile string, outputDir string) (stats *PackageVulnerabilityStats, err error) {
+// scanSBOMForVulnerabilities scans an SBOM file using an initialized vulnerability provider.
+func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile string, outputDir string, vulnProvider vulnerability.Provider, vulnProviderStatus *vulnerability.ProviderStatus) (stats *PackageVulnerabilityStats, err error) {
 	if !p.C.W.SBOM.Enabled {
 		return nil, xerrors.Errorf("SBOM feature is disabled, cannot scan for vulnerabilities")
 	}
@@ -259,19 +302,6 @@ func scanSBOMForVulnerabilities(buildctx *buildContext, p *Package, sbomFile str
 		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
 		return nil, xerrors.Errorf(errMsg)
 	}
-
-	// Load vulnerability database
-	vulnProvider, vulnProviderStatus, err := loadVulnerabilityDB(buildctx, p)
-	if err != nil {
-		errMsg := fmt.Sprintf("failed to load vulnerability database: %s", err)
-		buildctx.Reporter.PackageBuildLog(p, true, []byte(errMsg+"\n"))
-		return nil, xerrors.Errorf(errMsg)
-	}
-	defer func() {
-		if closeErr := vulnProvider.Close(); closeErr != nil {
-			buildctx.Reporter.PackageBuildLog(p, true, []byte("failed to close vulnerability provider: "+closeErr.Error()+"\n"))
-		}
-	}()
 
 	buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Using vulnerability database (path: %s, built on: %s)\n",
 		vulnProviderStatus.Path, vulnProviderStatus.Built.Format("2006-01-02")))
@@ -673,9 +703,62 @@ func WritePackageVulnerabilityMarkdown(outputDir string, stats []*PackageVulnera
 	return nil
 }
 
+const (
+	vulnerabilityDBLoadMaxAttempts    = 3
+	vulnerabilityDBLoadInitialBackoff = time.Second
+)
+
+type vulnerabilityDBLoadFunc func() (vulnerability.Provider, *vulnerability.ProviderStatus, error)
+
+type vulnerabilityDBLoader struct {
+	load           vulnerabilityDBLoadFunc
+	sleep          func(time.Duration)
+	maxAttempts    int
+	initialBackoff time.Duration
+}
+
+func newGrypeVulnerabilityScanner(buildctx *buildContext, p *Package) (sbomVulnerabilityScanner, error) {
+	loader := vulnerabilityDBLoader{
+		load:           loadVulnerabilityDB,
+		sleep:          time.Sleep,
+		maxAttempts:    vulnerabilityDBLoadMaxAttempts,
+		initialBackoff: vulnerabilityDBLoadInitialBackoff,
+	}
+
+	provider, status, err := loader.Load(buildctx, p)
+	if err != nil {
+		return nil, err
+	}
+
+	return &grypeVulnerabilityScanner{provider: provider, status: status}, nil
+}
+
+func (l vulnerabilityDBLoader) Load(buildctx *buildContext, p *Package) (vulnerability.Provider, *vulnerability.ProviderStatus, error) {
+	backoff := l.initialBackoff
+	var lastErr error
+
+	for attempt := 1; attempt <= l.maxAttempts; attempt++ {
+		buildctx.Reporter.PackageBuildLog(p, false, fmt.Appendf(nil, "Loading vulnerability database (attempt %d/%d) ...\n", attempt, l.maxAttempts))
+
+		provider, status, err := l.load()
+		if err == nil {
+			return provider, status, nil
+		}
+		lastErr = err
+
+		if attempt < l.maxAttempts {
+			buildctx.Reporter.PackageBuildLog(p, true, fmt.Appendf(nil, "Failed to load vulnerability database: %s; retrying in %s\n", err, backoff))
+			l.sleep(backoff)
+			backoff *= 2
+		}
+	}
+
+	return nil, nil, xerrors.Errorf("failed to load vulnerability database after %d attempts: %w", l.maxAttempts, lastErr)
+}
+
 // loadVulnerabilityDB initializes and loads the vulnerability database.
 // It configures the database provider and handles downloading/updating the database if needed.
-func loadVulnerabilityDB(buildctx *buildContext, p *Package) (vulnerability.Provider, *vulnerability.ProviderStatus, error) {
+func loadVulnerabilityDB() (vulnerability.Provider, *vulnerability.ProviderStatus, error) {
 	distConfig := distribution.DefaultConfig()
 
 	id := clio.Identification{
@@ -684,8 +767,6 @@ func loadVulnerabilityDB(buildctx *buildContext, p *Package) (vulnerability.Prov
 	}
 
 	installConfig := installation.DefaultConfig(id)
-
-	buildctx.Reporter.PackageBuildLog(p, false, []byte("Loading vulnerability database (this may take a moment on first run) ...\n"))
 
 	provider, status, err := grype.LoadVulnerabilityDB(distConfig, installConfig, true)
 	if err != nil {
