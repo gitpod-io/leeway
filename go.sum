@@ -815,14 +815,12 @@ github.com/olekukonko/tablewriter v1.0.9 h1:XGwRsYLC2bY7bNd93Dk51bcPZksWZmLYuaTH
 github.com/olekukonko/tablewriter v1.0.9/go.mod h1:5c+EBPeSqvXnLLgkm9isDdzR3wjfBkHR9Nhfp3NWrzo=
 github.com/onsi/gomega v1.34.1 h1:EUMJIKUjM8sKjYbtxQI9A4z2o+rruxnzNvpknOXie6k=
 github.com/onsi/gomega v1.34.1/go.mod h1:kU1QgUvBDLXBJq618Xvm2LUX6rSAfRaFRTcdOeDLwwY=
-github.com/opencontainers/cgroups v0.0.1 h1:MXjMkkFpKv6kpuirUa4USFBas573sSAY082B4CiHEVA=
-github.com/opencontainers/cgroups v0.0.1/go.mod h1:s8lktyhlGUqM7OSRL5P7eAW6Wb+kWPNvt4qvVfzA5vs=
 github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJwooC2xJA040=
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
-github.com/opencontainers/runc v1.3.0 h1:cvP7xbEvD0QQAs0nZKLzkVog2OPZhI/V2w3WmTmUSXI=
-github.com/opencontainers/runc v1.3.0/go.mod h1:9wbWt42gV+KRxKRVVugNP6D5+PQciRbenB4fLVsqGPs=
+github.com/opencontainers/runc v1.1.10 h1:EaL5WeO9lv9wmS6SASjszOeQdSctvpbu0DdBQBizE40=
+github.com/opencontainers/runc v1.1.10/go.mod h1:+/R6+KmDlh+hOO8NkjmgkG9Qzvypzk0yXxAPYYR65+M=
 github.com/opencontainers/runtime-spec v1.2.1 h1:S4k4ryNgEpxW1dzyqffOmhI1BHYcjzU8lpJfSlR0xww=
 github.com/opencontainers/runtime-spec v1.2.1/go.mod h1:jwyrGlmzljRJv/Fgzds9SsS/C5hL+LL3ko9hs6T5lQ0=
 github.com/opencontainers/selinux v1.12.0 h1:6n5JV4Cf+4y0KNXW48TLj5DwfXpvWlxXplUkdTrmPb8=
