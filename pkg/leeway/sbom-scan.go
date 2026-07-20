@@ -407,6 +407,7 @@ func writeVulnerabilityResults(
 		}{Ignore: ignoreRules},
 		dbStatus,
 		models.SortByPackage,
+		true,
 	)
 	if err != nil {
 		return xerrors.Errorf("failed to create document model: %w", err)
