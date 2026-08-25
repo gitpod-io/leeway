@@ -120,9 +120,10 @@ func NewS3Cache(cfg *cache.RemoteConfig) (*S3Cache, error) {
 	// Initialize SLSA verifier if enabled
 	var slsaVerifier slsa.VerifierInterface
 	if cfg.SLSA != nil && cfg.SLSA.Verification && cfg.SLSA.SourceURI != "" {
-		slsaVerifier = slsa.NewVerifier(cfg.SLSA.SourceURI, cfg.SLSA.TrustedRoots)
+		slsaVerifier = slsa.NewVerifierForRef(cfg.SLSA.SourceURI, cfg.SLSA.SourceRef, cfg.SLSA.TrustedRoots)
 		log.WithFields(log.Fields{
 			"sourceURI":    cfg.SLSA.SourceURI,
+			"sourceRef":    cfg.SLSA.SourceRef,
 			"trustedRoots": len(cfg.SLSA.TrustedRoots),
 		}).Debug("SLSA verification enabled for cache")
 	}

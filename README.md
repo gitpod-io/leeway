@@ -660,6 +660,17 @@ These features are automatically enabled by setting environment variables:
 - `LEEWAY_DOCKER_EXPORT_TO_CACHE=true`
 - `LEEWAY_SLSA_SOURCE_URI` (set from Git origin)
 
+Cache verification requires a certificate issued by GitHub Actions for the
+configured source repository. Trusted branch consumers should also set
+`LEEWAY_SLSA_SOURCE_REF` (or `--slsa-source-ref`) to an exact ref. For example:
+
+```bash
+export LEEWAY_SLSA_SOURCE_REF=refs/heads/main
+```
+
+An attestation signed by a different issuer, repository, or configured ref is
+treated as invalid. In strict mode, Leeway rebuilds the package locally.
+
 ### SLSA Cache Verification Modes
 
 When cache verification is enabled, Leeway can operate in two modes:

@@ -172,6 +172,9 @@ type SLSAConfig struct {
 	// SourceURI is the expected source URI for SLSA verification
 	SourceURI string `yaml:"source_uri" json:"source_uri"`
 
+	// SourceRef optionally restricts attestations to an exact source ref.
+	SourceRef string `yaml:"source_ref" json:"source_ref"`
+
 	// TrustedRoots contains the trusted root certificates for SLSA verification
 	TrustedRoots []string `yaml:"trusted_roots" json:"trusted_roots"`
 

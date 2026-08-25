@@ -8,14 +8,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/bundle"
+	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	log "github.com/sirupsen/logrus"
 )
+
+const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
+
+var validGitHubRepositoryComponent = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 // VerificationFailedError is returned when SLSA verification fails
 type VerificationFailedError struct {
@@ -34,13 +42,20 @@ type VerifierInterface interface {
 // Verifier handles SLSA attestation verification using Go API
 type Verifier struct {
 	sourceURI    string
+	sourceRef    string
 	trustedRoots []string
 }
 
 // NewVerifier creates a new SLSA verifier instance
 func NewVerifier(sourceURI string, trustedRoots []string) *Verifier {
+	return NewVerifierForRef(sourceURI, "", trustedRoots)
+}
+
+// NewVerifierForRef creates a verifier restricted to an optional source ref.
+func NewVerifierForRef(sourceURI, sourceRef string, trustedRoots []string) *Verifier {
 	return &Verifier{
 		sourceURI:    sourceURI,
+		sourceRef:    sourceRef,
 		trustedRoots: trustedRoots,
 	}
 }
@@ -102,13 +117,18 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 		}
 	}()
 
-	// Step 5: Create verification policy
-	// WithArtifact provides the artifact for hash verification
-	// WithoutIdentitiesUnsafe skips identity verification (we only care about signature)
-	// In production, you might want to verify the identity (GitHub Actions workflow)
+	// Step 5: Create verification policy. The certificate identity binds the
+	// signature to the configured GitHub repository and optional source ref.
+	identity, err := newGitHubCertificateIdentity(v.sourceURI, v.sourceRef)
+	if err != nil {
+		return VerificationFailedError{
+			Reason: fmt.Sprintf("invalid certificate identity policy: %v", err),
+		}
+	}
+
 	policy := verify.NewPolicy(
 		verify.WithArtifact(artifactFile),
-		verify.WithoutIdentitiesUnsafe(),
+		verify.WithCertificateIdentity(identity),
 	)
 
 	// Step 6: Verify the bundle
@@ -118,6 +138,7 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 	// - Transparency log entry is valid (using embedded tlog_entries!)
 	// - Timestamps are consistent
 	// - Artifact hash matches (if provided)
+	// - Certificate identity matches the configured repository and source ref
 	_, err = verifier.Verify(b, policy)
 	if err != nil {
 		return VerificationFailedError{
@@ -207,6 +228,72 @@ func (v *Verifier) VerifyArtifact(ctx context.Context, artifactPath, attestation
 	}).Info("SLSA verification successful")
 
 	return nil
+}
+
+func newGitHubCertificateIdentity(sourceURI, sourceRef string) (verify.CertificateIdentity, error) {
+	repositoryURI, err := normalizeGitHubRepositoryURI(sourceURI)
+	if err != nil {
+		return verify.CertificateIdentity{}, err
+	}
+
+	if sourceRef != "" && !strings.HasPrefix(sourceRef, "refs/") {
+		return verify.CertificateIdentity{}, fmt.Errorf("source ref must start with refs/")
+	}
+
+	refPattern := `[^@]+`
+	if sourceRef != "" {
+		refPattern = regexp.QuoteMeta(sourceRef)
+	}
+	sanPattern := fmt.Sprintf(`^%s/\.github/workflows/[^/@]+@%s$`, regexp.QuoteMeta(repositoryURI), refPattern)
+
+	sanMatcher, err := verify.NewSANMatcher("", sanPattern)
+	if err != nil {
+		return verify.CertificateIdentity{}, fmt.Errorf("cannot create certificate SAN matcher: %w", err)
+	}
+	issuerMatcher, err := verify.NewIssuerMatcher(githubActionsOIDCIssuer, "")
+	if err != nil {
+		return verify.CertificateIdentity{}, fmt.Errorf("cannot create certificate issuer matcher: %w", err)
+	}
+
+	return verify.NewCertificateIdentity(sanMatcher, issuerMatcher, certificate.Extensions{
+		SourceRepositoryURI: repositoryURI,
+		SourceRepositoryRef: sourceRef,
+	})
+}
+
+func normalizeGitHubRepositoryURI(sourceURI string) (string, error) {
+	raw := strings.TrimSpace(sourceURI)
+	if raw == "" {
+		return "", fmt.Errorf("source URI is empty")
+	}
+
+	if strings.HasPrefix(raw, "git@github.com:") {
+		raw = "https://github.com/" + strings.TrimPrefix(raw, "git@github.com:")
+	} else if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("cannot parse source URI: %w", err)
+	}
+	if !strings.EqualFold(parsed.Hostname(), "github.com") {
+		return "", fmt.Errorf("source URI must identify a github.com repository")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("source URI must not contain a query or fragment")
+	}
+
+	repositoryPath := strings.TrimSuffix(strings.Trim(parsed.Path, "/"), ".git")
+	parts := strings.Split(repositoryPath, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", fmt.Errorf("source URI must contain an owner and repository")
+	}
+	if !validGitHubRepositoryComponent.MatchString(parts[0]) || !validGitHubRepositoryComponent.MatchString(parts[1]) {
+		return "", fmt.Errorf("source URI contains an invalid owner or repository")
+	}
+
+	return "https://github.com/" + strings.Join(parts, "/"), nil
 }
 
 // calculateSHA256 calculates the SHA256 hash of a file
