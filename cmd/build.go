@@ -234,6 +234,7 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().StringToString("docker-build-options", nil, "Options passed to all 'docker build' commands")
 	cmd.Flags().Bool("slsa-cache-verification", false, "Enable SLSA verification for cached artifacts")
 	cmd.Flags().String("slsa-source-uri", "", "Expected source URI for SLSA verification (required when verification enabled)")
+	cmd.Flags().String("slsa-source-ref", "", "Expected source ref for SLSA verification")
 	cmd.Flags().Bool("slsa-require-attestation", false, "Require SLSA attestations (missing/invalid → build locally)")
 	cmd.Flags().Bool("in-flight-checksums", false, "Enable checksumming of cache artifacts to prevent TOCTU attacks")
 	cmd.Flags().String("report", "", "Generate a HTML report after the build has finished. (e.g. --report myreport.html)")
@@ -495,6 +496,7 @@ func parseSLSAConfig(cmd *cobra.Command) (*cache.SLSAConfig, error) {
 	// Get SLSA verification settings from environment variables (defaults)
 	slsaVerificationEnabled := os.Getenv(EnvvarSLSACacheVerification) == "true"
 	slsaSourceURI := os.Getenv(EnvvarSLSASourceURI)
+	slsaSourceRef := os.Getenv(EnvvarSLSASourceRef)
 	requireAttestation := os.Getenv(EnvvarSLSARequireAttestation) == "true"
 
 	// CLI flags override environment variables (if cmd is provided)
@@ -507,6 +509,11 @@ func parseSLSAConfig(cmd *cobra.Command) (*cache.SLSAConfig, error) {
 		if cmd.Flags().Changed("slsa-source-uri") {
 			if flagValue, err := cmd.Flags().GetString("slsa-source-uri"); err == nil && flagValue != "" {
 				slsaSourceURI = flagValue
+			}
+		}
+		if cmd.Flags().Changed("slsa-source-ref") {
+			if flagValue, err := cmd.Flags().GetString("slsa-source-ref"); err == nil {
+				slsaSourceRef = flagValue
 			}
 		}
 		if cmd.Flags().Changed("slsa-require-attestation") {
@@ -529,6 +536,7 @@ func parseSLSAConfig(cmd *cobra.Command) (*cache.SLSAConfig, error) {
 	return &cache.SLSAConfig{
 		Verification:       true,
 		SourceURI:          slsaSourceURI,
+		SourceRef:          slsaSourceRef,
 		TrustedRoots:       []string{"https://fulcio.sigstore.dev"},
 		RequireAttestation: requireAttestation,
 	}, nil

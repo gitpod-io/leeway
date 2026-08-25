@@ -34,6 +34,9 @@ const (
 	// EnvvarSLSASourceURI configures the expected source URI for SLSA verification
 	EnvvarSLSASourceURI = "LEEWAY_SLSA_SOURCE_URI"
 
+	// EnvvarSLSASourceRef restricts SLSA verification to an exact source ref
+	EnvvarSLSASourceRef = "LEEWAY_SLSA_SOURCE_REF"
+
 	// EnvvarSLSARequireAttestation requires SLSA attestations (missing/invalid → build locally)
 	EnvvarSLSARequireAttestation = "LEEWAY_SLSA_REQUIRE_ATTESTATION"
 

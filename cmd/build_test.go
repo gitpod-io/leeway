@@ -264,11 +264,14 @@ func TestParseSLSAConfig(t *testing.T) {
 		name                   string
 		envVerification        string
 		envSourceURI           string
+		envSourceRef           string
 		envRequireAttestation  string
 		flagVerification       *bool
 		flagSourceURI          *string
+		flagSourceRef          *string
 		flagRequireAttestation *bool
 		wantConfig             bool
+		wantSourceRef          string
 		wantRequireAttestation bool
 		wantError              bool
 	}{
@@ -286,6 +289,23 @@ func TestParseSLSAConfig(t *testing.T) {
 			envVerification: "true",
 			envSourceURI:    "https://github.com/gitpod-io/leeway",
 			wantConfig:      true,
+		},
+		{
+			name:            "source ref via env",
+			envVerification: "true",
+			envSourceURI:    "https://github.com/gitpod-io/leeway",
+			envSourceRef:    "refs/heads/main",
+			wantConfig:      true,
+			wantSourceRef:   "refs/heads/main",
+		},
+		{
+			name:            "source ref flag overrides env",
+			envVerification: "true",
+			envSourceURI:    "https://github.com/gitpod-io/leeway",
+			envSourceRef:    "refs/heads/other",
+			flagSourceRef:   stringPtr("refs/heads/main"),
+			wantConfig:      true,
+			wantSourceRef:   "refs/heads/main",
 		},
 		{
 			name:                   "require attestation via env",
@@ -318,11 +338,15 @@ func TestParseSLSAConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set environment variables
+			t.Setenv(EnvvarSLSASourceRef, "")
 			if tt.envVerification != "" {
 				t.Setenv(EnvvarSLSACacheVerification, tt.envVerification)
 			}
 			if tt.envSourceURI != "" {
 				t.Setenv(EnvvarSLSASourceURI, tt.envSourceURI)
+			}
+			if tt.envSourceRef != "" {
+				t.Setenv(EnvvarSLSASourceRef, tt.envSourceRef)
 			}
 			if tt.envRequireAttestation != "" {
 				t.Setenv(EnvvarSLSARequireAttestation, tt.envRequireAttestation)
@@ -344,6 +368,11 @@ func TestParseSLSAConfig(t *testing.T) {
 			if tt.flagSourceURI != nil {
 				if err := cmd.Flags().Set("slsa-source-uri", *tt.flagSourceURI); err != nil {
 					t.Fatalf("failed to set source URI flag: %v", err)
+				}
+			}
+			if tt.flagSourceRef != nil {
+				if err := cmd.Flags().Set("slsa-source-ref", *tt.flagSourceRef); err != nil {
+					t.Fatalf("failed to set source ref flag: %v", err)
 				}
 			}
 			if tt.flagRequireAttestation != nil {
@@ -373,6 +402,9 @@ func TestParseSLSAConfig(t *testing.T) {
 				if config.RequireAttestation != tt.wantRequireAttestation {
 					t.Errorf("expected RequireAttestation=%v, got %v", tt.wantRequireAttestation, config.RequireAttestation)
 				}
+				if config.SourceRef != tt.wantSourceRef {
+					t.Errorf("expected SourceRef=%q, got %q", tt.wantSourceRef, config.SourceRef)
+				}
 			} else {
 				if config != nil {
 					t.Errorf("expected nil config but got %+v", config)
@@ -384,6 +416,10 @@ func TestParseSLSAConfig(t *testing.T) {
 
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
 
 func boolToString(b bool) string {

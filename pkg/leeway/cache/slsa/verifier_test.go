@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
 )
 
 func TestNewVerifier(t *testing.T) {
@@ -24,6 +26,122 @@ func TestNewVerifier(t *testing.T) {
 
 	if verifier.trustedRoots[0] != trustedRoots[0] {
 		t.Errorf("Expected trusted root %s, got %s", trustedRoots[0], verifier.trustedRoots[0])
+	}
+}
+
+func TestNewVerifierForRef(t *testing.T) {
+	verifier := NewVerifierForRef("github.com/gitpod-io/gitpod-next", "refs/heads/main", nil)
+
+	if verifier.sourceRef != "refs/heads/main" {
+		t.Errorf("expected source ref refs/heads/main, got %q", verifier.sourceRef)
+	}
+}
+
+func TestNormalizeGitHubRepositoryURI(t *testing.T) {
+	tests := []struct {
+		name      string
+		sourceURI string
+		want      string
+		wantError bool
+	}{
+		{name: "HTTPS", sourceURI: "https://github.com/gitpod-io/gitpod-next", want: "https://github.com/gitpod-io/gitpod-next"},
+		{name: "HTTPS Git suffix", sourceURI: "https://github.com/gitpod-io/gitpod-next.git", want: "https://github.com/gitpod-io/gitpod-next"},
+		{name: "HTTPS Git suffix and slash", sourceURI: "https://github.com/gitpod-io/gitpod-next.git/", want: "https://github.com/gitpod-io/gitpod-next"},
+		{name: "host and path", sourceURI: "github.com/gitpod-io/gitpod-next", want: "https://github.com/gitpod-io/gitpod-next"},
+		{name: "SSH", sourceURI: "git@github.com:gitpod-io/gitpod-next.git", want: "https://github.com/gitpod-io/gitpod-next"},
+		{name: "empty", wantError: true},
+		{name: "wrong host", sourceURI: "https://example.com/gitpod-io/gitpod-next", wantError: true},
+		{name: "missing repository", sourceURI: "https://github.com/gitpod-io", wantError: true},
+		{name: "extra path", sourceURI: "https://github.com/gitpod-io/gitpod-next/actions", wantError: true},
+		{name: "query", sourceURI: "https://github.com/gitpod-io/gitpod-next?ref=main", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeGitHubRepositoryURI(tt.sourceURI)
+			if tt.wantError {
+				if err == nil {
+					t.Fatalf("expected an error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeGitHubRepositoryURI failed: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestGitHubCertificateIdentity(t *testing.T) {
+	identity, err := newGitHubCertificateIdentity("git@github.com:gitpod-io/gitpod-next.git", "refs/heads/main")
+	if err != nil {
+		t.Fatalf("newGitHubCertificateIdentity failed: %v", err)
+	}
+
+	valid := certificate.Summary{
+		SubjectAlternativeName: "https://github.com/gitpod-io/gitpod-next/.github/workflows/build-main.yml@refs/heads/main",
+		Extensions: certificate.Extensions{
+			Issuer:              githubActionsOIDCIssuer,
+			SourceRepositoryURI: "https://github.com/gitpod-io/gitpod-next",
+			SourceRepositoryRef: "refs/heads/main",
+		},
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*certificate.Summary)
+		wantErr bool
+	}{
+		{name: "trusted main signer"},
+		{
+			name: "wrong issuer",
+			mutate: func(summary *certificate.Summary) {
+				summary.Issuer = "https://issuer.example.com"
+			},
+			wantErr: true,
+		},
+		{
+			name: "wrong repository",
+			mutate: func(summary *certificate.Summary) {
+				summary.SubjectAlternativeName = "https://github.com/attacker/repo/.github/workflows/build.yml@refs/heads/main"
+				summary.SourceRepositoryURI = "https://github.com/attacker/repo"
+			},
+			wantErr: true,
+		},
+		{
+			name: "wrong ref",
+			mutate: func(summary *certificate.Summary) {
+				summary.SubjectAlternativeName = "https://github.com/gitpod-io/gitpod-next/.github/workflows/build-branch.yml@refs/pull/123/merge"
+				summary.SourceRepositoryRef = "refs/pull/123/merge"
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing repository claim",
+			mutate: func(summary *certificate.Summary) {
+				summary.SourceRepositoryURI = ""
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			summary := valid
+			if tt.mutate != nil {
+				tt.mutate(&summary)
+			}
+			err := identity.Verify(summary)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected identity verification to fail")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected identity verification to succeed: %v", err)
+			}
+		})
 	}
 }
 
