@@ -97,7 +97,7 @@ func (c *checkImplicitTransitiveDependencies) grepInFile(fn string, pat *regexp.
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	r := bufio.NewReader(f)
 	for {

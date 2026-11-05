@@ -198,7 +198,7 @@ func Execute() {
 			log.WithError(err).Fatal("cannot start trace but LEEWAY_TRACE is set")
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		err = trace.Start(f)
 		if err != nil {
 			log.WithError(err).Fatal("cannot start trace but LEEWAY_TRACE is set")

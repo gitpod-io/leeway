@@ -118,7 +118,7 @@ func exportSBOM(pkg *leeway.Package, localCache cache.LocalCache, outputFile str
 	if err != nil {
 		log.WithError(err).Fatalf("cannot create output file %s", outputFile)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	output = file
 
 	// Extract and output the SBOM

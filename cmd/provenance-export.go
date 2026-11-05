@@ -58,7 +58,7 @@ var provenanceExportCmd = &cobra.Command{
 			if err != nil {
 				log.WithError(err).Fatal("cannot open attestation bundle")
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			err = provutil.DecodeBundle(f, export)
 			if err != nil {
 				log.WithError(err).Fatal("cannot extract attestation bundle")

@@ -155,7 +155,7 @@ func newBuildContext(options buildOptions) (ctx *buildContext, err error) {
 	if err != nil {
 		return nil, xerrors.Errorf("cannot compute hash of myself: %w", err)
 	}
-	defer self.Close()
+	defer func() { _ = self.Close() }()
 	leewayHash := sha256.New()
 	_, err = io.Copy(leewayHash, self)
 	if err != nil {
@@ -356,13 +356,13 @@ func extractNpmPackageNames(tarballPath string) (map[string]bool, error) {
 	if err != nil {
 		return nil, xerrors.Errorf("cannot open tarball: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	gzr, err := gzip.NewReader(file)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot create gzip reader: %w", err)
 	}
-	defer gzr.Close()
+	defer func() { _ = gzr.Close() }()
 
 	result := make(map[string]bool)
 	tr := tar.NewReader(gzr)
@@ -1148,7 +1148,7 @@ func (p *Package) build(buildctx *buildContext) (err error) {
 	defer func() {
 		// Clean up build directory after build, such that the next build of the same component
 		// can use the fixed build directory again.
-		os.RemoveAll(builddir)
+		_ = os.RemoveAll(builddir)
 	}()
 
 	// Notify reporter that package build is starting
@@ -1740,9 +1740,9 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 										break
 									}
 								}
-								gzr.Close()
+								_ = gzr.Close()
 							}
-							f.Close()
+							_ = f.Close()
 						}
 
 						var newRef string
@@ -1925,7 +1925,8 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 		pkgCommands [][]string
 		resultDir   string
 	)
-	if cfg.Packaging == YarnOfflineMirror {
+	switch cfg.Packaging {
+	case YarnOfflineMirror:
 		builtinScripts := map[string]string{
 			"get_yarn_lock.sh":       getYarnLockScript,
 			"install.sh":             installScript,
@@ -1952,12 +1953,12 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			),
 		}...)
 		resultDir = "_mirror"
-	} else if cfg.Packaging == YarnLibrary {
+	case YarnLibrary:
 		pkgCommands = append(pkgCommands, [][]string{
 			{"sh", "-c", fmt.Sprintf("yarn generate-lock-entry --resolved file://%s > %s", result, pkgYarnLock)},
 			{"yarn", "pack", "--filename", result},
 		}...)
-	} else if cfg.Packaging == YarnApp {
+	case YarnApp:
 		err := os.Mkdir(filepath.Join(wd, "_pkg"), 0755)
 		if err != nil {
 			return nil, err
@@ -1981,13 +1982,13 @@ func (p *Package) buildYarn(buildctx *buildContext, wd, result string) (bld *pac
 			),
 		}...)
 		resultDir = "_pkg"
-	} else if cfg.Packaging == YarnArchive {
+	case YarnArchive:
 		pkgCommands = append(pkgCommands, BuildTarCommand(
 			WithOutputFile(result),
 			WithCompression(!buildctx.DontCompress),
 			WithMtime(mtime),
 		))
-	} else {
+	default:
 		return nil, xerrors.Errorf("unknown Yarn packaging: %s", cfg.Packaging)
 	}
 	res.Commands[PackageBuildPhasePackage] = pkgCommands
@@ -2141,7 +2142,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 		// Added as an option to disable test coverage until Go 1.25 is released https://github.com/golang/go/commit/6a4bc8d17eb6703baf0c483fb40e0d3e1f0f6af3
 		// Running with coverage stops the test cache from being used, which will be fixed in Go 1.25.
 		if !buildctx.DisableCoverage {
-			if buildctx.buildOptions.CoverageOutputPath != "" {
+			if buildctx.CoverageOutputPath != "" {
 				testCommand = append(testCommand, fmt.Sprintf("-coverprofile=%v", codecovComponentName(p.FullName())))
 			} else {
 				testCommand = append(testCommand, "-coverprofile=testcoverage.out")
@@ -2182,7 +2183,7 @@ func (p *Package) buildGo(buildctx *buildContext, wd, result string) (res *packa
 	)
 	if !cfg.DontTest && !buildctx.DontTest {
 		commands[PackageBuildPhasePackage] = append(commands[PackageBuildPhasePackage], [][]string{
-			{"sh", "-c", fmt.Sprintf(`if [ -f "%v" ]; then cp -f %v %v; fi`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.buildOptions.CoverageOutputPath)},
+			{"sh", "-c", fmt.Sprintf(`if [ -f "%v" ]; then cp -f %v %v; fi`, codecovComponentName(p.FullName()), codecovComponentName(p.FullName()), buildctx.CoverageOutputPath)},
 		}...)
 	}
 
@@ -2660,13 +2661,13 @@ func extractImageNameFromCache(pkgName, cacheBundleFN string) (imgname string, e
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gzin, err := gzip.NewReader(f)
 	if err != nil {
 		return "", err
 	}
-	defer gzin.Close()
+	defer func() { _ = gzin.Close() }()
 
 	tarin := tar.NewReader(gzin)
 	for {
@@ -2822,7 +2823,7 @@ func createOCILayoutSubjectsFunction(version string, cfg DockerPkgConfig, buildD
 		if err := os.MkdirAll(ociLayoutPath, 0755); err != nil {
 			return nil, xerrors.Errorf("failed to create OCI layout extraction directory: %w", err)
 		}
-		defer os.RemoveAll(ociLayoutPath)
+		defer func() { _ = os.RemoveAll(ociLayoutPath) }()
 
 		// Extract image.tar
 		imageTarPath := filepath.Join(buildDir, "image.tar")

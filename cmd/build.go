@@ -174,7 +174,7 @@ func serveBuildResult(ctx context.Context, addr string, localCache cache.LocalCa
 func saveBuildResult(ctx context.Context, loc string, localCache cache.LocalCache, pkg *leeway.Package) error {
 	br, exists := localCache.Location(pkg)
 	if !exists {
-		return errors.New("build result is not in local cache despite just being built. Something's wrong with the cache.")
+		return errors.New("build result is not in local cache despite just being built: something is wrong with the cache")
 	}
 
 	fout, err := os.OpenFile(loc, os.O_CREATE|os.O_WRONLY, 0644)
@@ -183,15 +183,18 @@ func saveBuildResult(ctx context.Context, loc string, localCache cache.LocalCach
 	}
 	fin, err := os.OpenFile(br, os.O_RDONLY, 0644)
 	if err != nil {
-		fout.Close()
+		_ = fout.Close()
 		return fmt.Errorf("cannot copy build result: %w", err)
 	}
 
 	_, err = io.Copy(fout, fin)
-	fout.Close()
-	fin.Close()
+	closeErr := fout.Close()
+	_ = fin.Close()
 	if err != nil {
 		return fmt.Errorf("cannot copy build result: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("cannot close build result: %w", closeErr)
 	}
 
 	fmt.Printf("\n💾  saving build result to %s\n", color.Cyan.Render(loc))
@@ -314,7 +317,7 @@ func getBuildOpts(cmd *cobra.Command) ([]leeway.BuildOption, cache.LocalCache) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 
 			planOutlet = f
 		}
