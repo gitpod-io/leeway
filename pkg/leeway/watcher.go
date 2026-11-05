@@ -93,7 +93,7 @@ func WatchSources(ctx context.Context, pkgs []*Package, debounceDuration time.Du
 	}
 
 	go func() {
-		defer watcher.Close()
+		defer func() { _ = watcher.Close() }()
 		for {
 			select {
 			case evt := <-watcher.Events:

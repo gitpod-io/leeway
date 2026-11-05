@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -139,8 +140,8 @@ func TestSignCacheCommand_FlagParsing(t *testing.T) {
 			cmd.SetArgs(tt.args)
 
 			// Capture output to prevent spam
-			cmd.SetOut(os.NewFile(0, os.DevNull))
-			cmd.SetErr(os.NewFile(0, os.DevNull))
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
 
 			err := cmd.Execute()
 

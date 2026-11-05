@@ -67,7 +67,7 @@ func TestNewFilesystemCache(t *testing.T) {
 
 			if test.Expectation.Error == "" {
 				// Cleanup created directory
-				os.RemoveAll(test.Location)
+				_ = os.RemoveAll(test.Location)
 			}
 		})
 	}

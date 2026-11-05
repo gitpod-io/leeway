@@ -134,7 +134,7 @@ func TestMaterialise(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { os.RemoveAll(loc) })
+			t.Cleanup(func() { _ = os.RemoveAll(loc) })
 			t.Logf("materialized at %s", loc)
 
 			for _, f := range test.Expectation {
@@ -159,7 +159,7 @@ func TestMaterialise(t *testing.T) {
 					continue
 				}
 				_, err = io.Copy(hash, fp)
-				fp.Close()
+				_ = fp.Close()
 				if err != nil {
 					t.Errorf("cannot hash %s: %v", fn, err)
 					continue

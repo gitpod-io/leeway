@@ -123,8 +123,7 @@ func (w *Workspace) ApplySLSADefaults() {
 // Returns true if the value was set, false if it was already present.
 func setEnvDefault(key, value string) bool {
 	if os.Getenv(key) == "" {
-		os.Setenv(key, value)
-		return true
+		return os.Setenv(key, value) == nil
 	}
 	return false
 }
@@ -635,7 +634,7 @@ func loadComponent(ctx context.Context, workspace *Workspace, path string, args 
 	}
 
 	// replace build args
-	var rfc []byte = fc
+	var rfc = fc
 	if len(args) > 0 {
 		rfc = replaceBuildArguments(fc, compargs)
 	}

@@ -133,9 +133,9 @@ func TestBuildDockerDeps(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { os.RemoveAll(pth) })
+		t.Cleanup(func() { _ = os.RemoveAll(pth) })
 
-		os.Setenv("PATH", pth+":"+os.Getenv("PATH"))
+		_ = os.Setenv("PATH", pth+":"+os.Getenv("PATH"))
 		log.WithField("path", os.Getenv("PATH")).Debug("modified path to use dummy docker")
 	}
 	testutil.RunDUT()
@@ -424,9 +424,9 @@ func TestBuildDocker_ExportToCache(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { os.RemoveAll(pth) })
+		t.Cleanup(func() { _ = os.RemoveAll(pth) })
 
-		os.Setenv("PATH", pth+":"+os.Getenv("PATH"))
+		_ = os.Setenv("PATH", pth+":"+os.Getenv("PATH"))
 		log.WithField("path", os.Getenv("PATH")).Debug("modified path to use dummy docker")
 	}
 	testutil.RunDUT()
@@ -568,9 +568,9 @@ func TestDockerPostProcessing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { os.RemoveAll(pth) })
+		t.Cleanup(func() { _ = os.RemoveAll(pth) })
 
-		os.Setenv("PATH", pth+":"+os.Getenv("PATH"))
+		_ = os.Setenv("PATH", pth+":"+os.Getenv("PATH"))
 		log.WithField("path", os.Getenv("PATH")).Debug("modified path to use dummy docker")
 	}
 	testutil.RunDUT()

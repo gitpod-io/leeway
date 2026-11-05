@@ -193,8 +193,8 @@ func (r *ConsoleReporter) BuildStarted(pkg *Package, status map[*Package]Package
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i] < lines[j] })
 	tw := tabwriter.NewWriter(r.out, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, strings.Join(lines, ""))
-	tw.Flush()
+	_, _ = fmt.Fprintln(tw, strings.Join(lines, ""))
+	_ = tw.Flush()
 }
 
 // BuildFinished is called when the build of a package which was started by the user has finished.
@@ -510,7 +510,7 @@ func (r *HTMLReporter) Report() {
 		log.WithError(err).WithField("filename", r.filename).Fatal("Failed to create output file")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	err = tmpl.Execute(file, vars)
 	if err != nil {
@@ -637,7 +637,7 @@ func (sr *SegmentReporter) BuildFinished(pkg *Package, err error) {
 	addPackageToSegmentEventProps(props, pkg)
 	sr.track("build_finished", props)
 
-	sr.client.Close()
+	_ = sr.client.Close()
 	sr.client = nil
 }
 
@@ -712,13 +712,13 @@ func (sr *GitHubActionReporter) PackageBuildFinished(pkg *Package, rep *PackageB
 		log.WithField("fn", fn).WithError(err).Warn("cannot open GITHUB_OUTPUT file")
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var success bool
 	if rep.Error == nil {
 		success = true
 	}
-	fmt.Fprintf(f, "%s=%v\n", pkg.FilesystemSafeName(), success)
+	_, _ = fmt.Fprintf(f, "%s=%v\n", pkg.FilesystemSafeName(), success)
 }
 
 // OTelReporter reports build progress using OpenTelemetry tracing

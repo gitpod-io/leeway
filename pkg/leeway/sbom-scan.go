@@ -639,23 +639,23 @@ func WritePackageVulnerabilityMarkdown(outputDir string, stats []*PackageVulnera
 	var md strings.Builder
 
 	md.WriteString("# Vulnerability Scan Summary\n\n")
-	md.WriteString(fmt.Sprintf("Scan completed on: %s\n\n", time.Now().Format("2006-01-02 15:04:05")))
+	fmt.Fprintf(&md, "Scan completed on: %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
 
 	md.WriteString("## Overview\n\n")
-	md.WriteString(fmt.Sprintf("Total packages scanned: %d\n", len(stats)))
-	md.WriteString(fmt.Sprintf("Packages with vulnerabilities: %d\n\n", packagesWithVulnerabilities))
+	fmt.Fprintf(&md, "Total packages scanned: %d\n", len(stats))
+	fmt.Fprintf(&md, "Packages with vulnerabilities: %d\n\n", packagesWithVulnerabilities)
 
 	md.WriteString("| Severity  | Count |\n")
 	md.WriteString("|-----------|-------|\n")
-	md.WriteString(fmt.Sprintf("| Critical  | %d     |\n", totalCritical))
-	md.WriteString(fmt.Sprintf("| High      | %d     |\n", totalHigh))
-	md.WriteString(fmt.Sprintf("| Medium    | %d     |\n", totalMedium))
-	md.WriteString(fmt.Sprintf("| Low       | %d     |\n", totalLow))
-	md.WriteString(fmt.Sprintf("| Negligible| %d     |\n", totalNegligible))
-	md.WriteString(fmt.Sprintf("| Unknown   | %d     |\n", totalUnknown))
-	md.WriteString(fmt.Sprintf("| **Total** | %d     |\n", totalVulnerabilities))
+	fmt.Fprintf(&md, "| Critical  | %d     |\n", totalCritical)
+	fmt.Fprintf(&md, "| High      | %d     |\n", totalHigh)
+	fmt.Fprintf(&md, "| Medium    | %d     |\n", totalMedium)
+	fmt.Fprintf(&md, "| Low       | %d     |\n", totalLow)
+	fmt.Fprintf(&md, "| Negligible| %d     |\n", totalNegligible)
+	fmt.Fprintf(&md, "| Unknown   | %d     |\n", totalUnknown)
+	fmt.Fprintf(&md, "| **Total** | %d     |\n", totalVulnerabilities)
 	md.WriteString("|-----------|-------|\n")
-	md.WriteString(fmt.Sprintf("| *Ignored* | %d     |\n\n", totalIgnored))
+	fmt.Fprintf(&md, "| *Ignored* | %d     |\n\n", totalIgnored)
 
 	md.WriteString("## Package Details\n\n")
 	md.WriteString("| Package | Critical | High | Medium | Low | Negligible | Unknown | Total | *Ignored* |\n")
@@ -691,8 +691,8 @@ func WritePackageVulnerabilityMarkdown(outputDir string, stats []*PackageVulnera
 			ignoredStr = fmt.Sprintf("🔕 %d", stat.Ignored)
 		}
 
-		md.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s | %d | %s |\n",
-			stat.Name, criticalStr, highStr, mediumStr, lowStr, negligibleStr, unknownStr, stat.Total, ignoredStr))
+		fmt.Fprintf(&md, "| %s | %s | %s | %s | %s | %s | %s | %d | %s |\n",
+			stat.Name, criticalStr, highStr, mediumStr, lowStr, negligibleStr, unknownStr, stat.Total, ignoredStr)
 	}
 
 	if err := os.WriteFile(outputPath, []byte(md.String()), 0644); err != nil {

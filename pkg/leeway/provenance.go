@@ -90,7 +90,7 @@ func writeProvenance(p *Package, buildctx *buildContext, builddir string, subjec
 	if err != nil {
 		return fmt.Errorf("cannot write provenance for %s: %w", p.FullName(), err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	bundle := newAttestationBundle(f)
 	err = p.getDependenciesProvenanceBundles(buildctx, bundle)
@@ -183,7 +183,7 @@ func AccessAttestationBundleInCachedArchive(fn string, handler func(bundle io.Re
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	return handler(f)
 }
@@ -340,7 +340,7 @@ func sha256Hash(fn string) (res string, err error) {
 		return "", xerrors.Errorf("cannot compute hash of %s: %w", fn, err)
 	}
 
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	hash := sha256.New()
 	_, err = io.Copy(hash, f)
@@ -410,7 +410,7 @@ func (fset fileset) Subjects(base string) ([]in_toto.Subject, error) {
 		if err != nil {
 			return nil, xerrors.Errorf("cannot compute hash of %s: %w", src, err)
 		}
-		f.Close()
+		_ = f.Close()
 
 		res = append(res, in_toto.Subject{
 			Name: src,

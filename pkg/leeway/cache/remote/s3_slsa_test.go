@@ -230,7 +230,7 @@ func TestS3Cache_DownloadWithSLSAVerification(t *testing.T) {
 			// Clean up the temp directory before each test
 			files, _ := filepath.Glob(filepath.Join(tmpDir, "*"))
 			for _, f := range files {
-				os.Remove(f)
+				_ = os.Remove(f)
 			}
 
 			// Create mock storage

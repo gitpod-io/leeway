@@ -167,13 +167,13 @@ func createEmptyTarGz(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gw := gzip.NewWriter(f)
-	defer gw.Close()
+	defer func() { _ = gw.Close() }()
 
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	return nil
 }
@@ -183,13 +183,13 @@ func createTarGzWithSBOM(path, sbomName, sbomContent string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gw := gzip.NewWriter(f)
-	defer gw.Close()
+	defer func() { _ = gw.Close() }()
 
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	// Add SBOM file to tar
 	hdr := &tar.Header{

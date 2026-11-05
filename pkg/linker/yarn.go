@@ -100,7 +100,7 @@ func LinkYarnPackagesWithYarn2(workspace *leeway.Workspace) error {
 		enc.SetEscapeHTML(false)
 		enc.SetIndent("", "  ")
 		err = enc.Encode(pkgjson)
-		fd.Close()
+		_ = fd.Close()
 		if err != nil {
 			return err
 		}

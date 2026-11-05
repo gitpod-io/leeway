@@ -37,7 +37,7 @@ func TestDefaultGoBuildCommand_IncludesTrimpath(t *testing.T) {
 		t.Fatalf("expected build, -trimpath, and . in command, got: %v", buildCmd)
 	}
 
-	if !(buildIdx < trimpathIdx && trimpathIdx < dotIdx) {
+	if buildIdx >= trimpathIdx || trimpathIdx >= dotIdx {
 		t.Errorf("expected order: build < -trimpath < ., got indices: build=%d, -trimpath=%d, .=%d",
 			buildIdx, trimpathIdx, dotIdx)
 	}
@@ -100,13 +100,13 @@ func createTestTarball(t *testing.T, files map[string]string) string {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 
 	gzw := gzip.NewWriter(tmpFile)
-	defer gzw.Close()
+	defer func() { _ = gzw.Close() }()
 
 	tw := tar.NewWriter(gzw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	for path, content := range files {
 		hdr := &tar.Header{
