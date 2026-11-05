@@ -36,7 +36,7 @@ func executeCommandsForPackageSafe(buildctx *buildContext, p *Package, wd string
 	}
 
 	if !log.IsLevelEnabled(log.DebugLevel) {
-		defer os.RemoveAll(tmpdir)
+		defer func() { _ = os.RemoveAll(tmpdir) }()
 	}
 
 	log.WithField("tmpdir", tmpdir).WithField("package", p.FullName()).Debug("preparing build runc environment")
