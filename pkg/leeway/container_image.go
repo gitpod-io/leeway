@@ -309,9 +309,7 @@ func extractTarToDir(r io.Reader, destDir string) error {
 				_ = f.Close()
 				return err
 			}
-			if err := f.Close(); err != nil {
-				return err
-			}
+			_ = f.Close()
 
 		case tar.TypeSymlink:
 			// Create containing directory
@@ -472,11 +470,8 @@ func copyFileOrDirectory(src, dst string) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = destination.Close() }()
 	_, err = io.Copy(destination, source)
-	closeErr := destination.Close()
-	if err == nil {
-		err = closeErr
-	}
 	return err
 }
 

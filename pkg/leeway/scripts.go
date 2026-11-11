@@ -250,9 +250,7 @@ func executeBashScript(script string, wd string, env []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.Close(); err != nil {
-		return err
-	}
+	_ = f.Close()
 
 	log.WithField("env", env).WithField("wd", wd).Debug("running bash script")
 

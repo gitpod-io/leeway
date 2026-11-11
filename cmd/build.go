@@ -188,13 +188,10 @@ func saveBuildResult(ctx context.Context, loc string, localCache cache.LocalCach
 	}
 
 	_, err = io.Copy(fout, fin)
-	closeErr := fout.Close()
+	_ = fout.Close()
 	_ = fin.Close()
 	if err != nil {
 		return fmt.Errorf("cannot copy build result: %w", err)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("cannot close build result: %w", closeErr)
 	}
 
 	fmt.Printf("\n💾  saving build result to %s\n", color.Cyan.Render(loc))

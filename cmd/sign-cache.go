@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gitpod-io/leeway/pkg/leeway/cache"
-	"github.com/gitpod-io/leeway/pkg/leeway/cache/remote"
 	"github.com/gitpod-io/leeway/pkg/leeway/signing"
 )
 
@@ -113,9 +112,6 @@ func runSignCacheWithOptions(ctx context.Context, manifestPath string, dryRun bo
 
 	// Get remote cache using existing Leeway patterns
 	remoteCache := getRemoteCacheFromEnv()
-	if _, disabled := remoteCache.(*remote.NoRemoteCache); disabled && !dryRun {
-		return fmt.Errorf("remote cache not configured - set LEEWAY_REMOTE_CACHE_BUCKET and LEEWAY_REMOTE_CACHE_STORAGE")
-	}
 
 	log.WithFields(log.Fields{
 		"workspace":  ws.Origin,

@@ -123,7 +123,8 @@ func (w *Workspace) ApplySLSADefaults() {
 // Returns true if the value was set, false if it was already present.
 func setEnvDefault(key, value string) bool {
 	if os.Getenv(key) == "" {
-		return os.Setenv(key, value) == nil
+		_ = os.Setenv(key, value)
+		return true
 	}
 	return false
 }
