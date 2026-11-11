@@ -412,7 +412,7 @@ func writeFileHandler(outputPath string) func(io.Reader) error {
 		if err != nil {
 			return fmt.Errorf("cannot create output file %s: %w", outputPath, err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		_, err = io.Copy(file, r)
 		return err
@@ -459,7 +459,7 @@ func AccessSBOMInCachedArchive(fn string, format string, handler func(sbomFile i
 
 	formatValid, validFormats := ValidateSBOMFormat(format)
 	if !formatValid {
-		return fmt.Errorf("Unsupported format: %s. Supported formats are: %s", format, strings.Join(validFormats, ", "))
+		return fmt.Errorf("unsupported format: %s; supported formats are: %s", format, strings.Join(validFormats, ", "))
 	}
 
 	// Try reading from separate SBOM file first (new format)

@@ -112,9 +112,6 @@ func runSignCacheWithOptions(ctx context.Context, manifestPath string, dryRun bo
 
 	// Get remote cache using existing Leeway patterns
 	remoteCache := getRemoteCacheFromEnv()
-	if remoteCache == nil {
-		return fmt.Errorf("remote cache not configured - set LEEWAY_REMOTE_CACHE_BUCKET and LEEWAY_REMOTE_CACHE_STORAGE")
-	}
 
 	log.WithFields(log.Fields{
 		"workspace":  ws.Origin,

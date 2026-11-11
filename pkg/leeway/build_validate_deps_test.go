@@ -33,7 +33,7 @@ func newTestPackage(name string, pkgType PackageType) *Package {
 		fullNameOverride: name,
 		dependencies:     []*Package{},
 	}
-	pkg.PackageInternal.Type = pkgType
+	pkg.Type = pkgType
 	return pkg
 }
 

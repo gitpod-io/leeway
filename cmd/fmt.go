@@ -48,7 +48,7 @@ func formatBuildYaml(fn string, inPlace, fix bool) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var out io.Writer = os.Stdout
 	if inPlace {

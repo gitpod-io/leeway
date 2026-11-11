@@ -32,7 +32,7 @@ func createSizedArtifact(t testing.TB, size int64) string {
 
 	f, err := os.Create(artifactPath)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Write random data
 	data := make([]byte, size)

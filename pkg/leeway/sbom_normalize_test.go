@@ -72,9 +72,9 @@ func TestGetCommitTimestamp_SourceDateEpoch(t *testing.T) {
 	originalEnv := os.Getenv("SOURCE_DATE_EPOCH")
 	defer func() {
 		if originalEnv != "" {
-			os.Setenv("SOURCE_DATE_EPOCH", originalEnv)
+			_ = os.Setenv("SOURCE_DATE_EPOCH", originalEnv)
 		} else {
-			os.Unsetenv("SOURCE_DATE_EPOCH")
+			_ = os.Unsetenv("SOURCE_DATE_EPOCH")
 		}
 	}()
 
@@ -105,9 +105,9 @@ func TestGetCommitTimestamp_SourceDateEpoch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.sourceEpoch != "" {
-				os.Setenv("SOURCE_DATE_EPOCH", tt.sourceEpoch)
+				_ = os.Setenv("SOURCE_DATE_EPOCH", tt.sourceEpoch)
 			} else {
-				os.Unsetenv("SOURCE_DATE_EPOCH")
+				_ = os.Unsetenv("SOURCE_DATE_EPOCH")
 			}
 
 			// Use HEAD as commit (should exist in test environment)

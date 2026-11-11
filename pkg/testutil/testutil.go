@@ -164,7 +164,7 @@ func (ft *CommandFixtureTest) Run() {
 				t.Fatalf("cannot load fixture from %s: %v", ft.FixturePath, err)
 			}
 			ft.Fixture, err = LoadFromYAML(fp)
-			fp.Close()
+			_ = fp.Close()
 			if err != nil {
 				t.Fatalf("cannot load fixture from %s: %v", ft.FixturePath, err)
 			}
@@ -176,7 +176,7 @@ func (ft *CommandFixtureTest) Run() {
 				t.Fatalf("cannot materialize fixture: %v", err)
 			}
 			t.Logf("materialized fixture workspace: %s", loc)
-			t.Cleanup(func() { os.RemoveAll(loc) })
+			t.Cleanup(func() { _ = os.RemoveAll(loc) })
 		}
 
 		env := os.Environ()

@@ -62,11 +62,11 @@ func TestGetEnvInt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clean up env var before and after test
-			os.Unsetenv(tt.envVar)
-			defer os.Unsetenv(tt.envVar)
+			_ = os.Unsetenv(tt.envVar)
+			defer func() { _ = os.Unsetenv(tt.envVar) }()
 
 			if tt.envValue != "" {
-				os.Setenv(tt.envVar, tt.envValue)
+				_ = os.Setenv(tt.envVar, tt.envValue)
 			}
 
 			result := getEnvInt(tt.envVar, tt.defaultVal)
@@ -85,32 +85,32 @@ func TestS3CacheEnvVarTuning(t *testing.T) {
 	// Restore after test
 	defer func() {
 		if origWorkerCount != "" {
-			os.Setenv(envvarS3WorkerCount, origWorkerCount)
+			_ = os.Setenv(envvarS3WorkerCount, origWorkerCount)
 		} else {
-			os.Unsetenv(envvarS3WorkerCount)
+			_ = os.Unsetenv(envvarS3WorkerCount)
 		}
 		if origDownloadWorkers != "" {
-			os.Setenv(envvarS3DownloadWorkers, origDownloadWorkers)
+			_ = os.Setenv(envvarS3DownloadWorkers, origDownloadWorkers)
 		} else {
-			os.Unsetenv(envvarS3DownloadWorkers)
+			_ = os.Unsetenv(envvarS3DownloadWorkers)
 		}
 		if origRateLimit != "" {
-			os.Setenv(envvarS3RateLimit, origRateLimit)
+			_ = os.Setenv(envvarS3RateLimit, origRateLimit)
 		} else {
-			os.Unsetenv(envvarS3RateLimit)
+			_ = os.Unsetenv(envvarS3RateLimit)
 		}
 		if origBurstLimit != "" {
-			os.Setenv(envvarS3BurstLimit, origBurstLimit)
+			_ = os.Setenv(envvarS3BurstLimit, origBurstLimit)
 		} else {
-			os.Unsetenv(envvarS3BurstLimit)
+			_ = os.Unsetenv(envvarS3BurstLimit)
 		}
 	}()
 
 	t.Run("uses defaults when env vars not set", func(t *testing.T) {
-		os.Unsetenv(envvarS3WorkerCount)
-		os.Unsetenv(envvarS3DownloadWorkers)
-		os.Unsetenv(envvarS3RateLimit)
-		os.Unsetenv(envvarS3BurstLimit)
+		_ = os.Unsetenv(envvarS3WorkerCount)
+		_ = os.Unsetenv(envvarS3DownloadWorkers)
+		_ = os.Unsetenv(envvarS3RateLimit)
+		_ = os.Unsetenv(envvarS3BurstLimit)
 
 		workerCount := getEnvInt(envvarS3WorkerCount, defaultWorkerCount)
 		downloadWorkers := getEnvInt(envvarS3DownloadWorkers, defaultDownloadWorkerCount)
@@ -124,10 +124,10 @@ func TestS3CacheEnvVarTuning(t *testing.T) {
 	})
 
 	t.Run("uses custom values when env vars set", func(t *testing.T) {
-		os.Setenv(envvarS3WorkerCount, "20")
-		os.Setenv(envvarS3DownloadWorkers, "50")
-		os.Setenv(envvarS3RateLimit, "300")
-		os.Setenv(envvarS3BurstLimit, "500")
+		_ = os.Setenv(envvarS3WorkerCount, "20")
+		_ = os.Setenv(envvarS3DownloadWorkers, "50")
+		_ = os.Setenv(envvarS3RateLimit, "300")
+		_ = os.Setenv(envvarS3BurstLimit, "500")
 
 		workerCount := getEnvInt(envvarS3WorkerCount, defaultWorkerCount)
 		downloadWorkers := getEnvInt(envvarS3DownloadWorkers, defaultDownloadWorkerCount)

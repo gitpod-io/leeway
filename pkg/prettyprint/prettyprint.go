@@ -51,7 +51,6 @@ func writeTemplate(out io.Writer, in interface{}, tplc string) error {
 	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	defer w.Flush()
-
+	defer func() { _ = w.Flush() }()
 	return tpl.Execute(w, in)
 }

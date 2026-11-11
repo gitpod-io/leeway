@@ -25,7 +25,7 @@ func checkDockerCopyFromPackage(pkg *leeway.Package) ([]Finding, error) {
 	if !ok {
 		// this is an error as compared to a finding because the issue most likely is with leeway,
 		// and not a user config error.
-		return nil, fmt.Errorf("Docker package does not have docker package config")
+		return nil, fmt.Errorf("docker package does not have docker package config")
 	}
 
 	var dockerfileFN string
@@ -47,7 +47,7 @@ func checkDockerCopyFromPackage(pkg *leeway.Package) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var findings []Finding
 	scanner := bufio.NewScanner(f)

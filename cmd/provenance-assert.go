@@ -95,7 +95,7 @@ var provenanceAssertCmd = &cobra.Command{
 			if err != nil {
 				log.WithError(err).Fatalf("cannot open attestation bundle %s", bundleFN)
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 
 			err = provutil.DecodeBundle(f, assert)
 		} else {

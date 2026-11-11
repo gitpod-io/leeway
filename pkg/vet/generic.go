@@ -17,7 +17,7 @@ func checkArgsReferingToPackage(pkg *leeway.Package) ([]Finding, error) {
 	if !ok {
 		// this is an error as compared to a finding because the issue most likely is with leeway,
 		// and not a user config error.
-		return nil, fmt.Errorf("Generic package does not have generic package config")
+		return nil, fmt.Errorf("generic package does not have generic package config")
 	}
 
 	checkForFindings := func(fs []Finding, segmentIndex int, seg string) (findings []Finding) {

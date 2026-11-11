@@ -74,8 +74,8 @@ func (p *Script) GetDependencies() []*Package {
 // FilesystemSafeName returns a string that is safe to use in a Unix filesystem as directory or filename
 func (p *Script) FilesystemSafeName() string {
 	pkgdir := p.FullName()
-	pkgdir = strings.Replace(pkgdir, "/", "-", -1)
-	pkgdir = strings.Replace(pkgdir, ":", "--", -1)
+	pkgdir = strings.ReplaceAll(pkgdir, "/", "-")
+	pkgdir = strings.ReplaceAll(pkgdir, ":", "--")
 	// components in the workspace root would otherwise start with - which breaks a lot of shell commands
 	pkgdir = strings.TrimLeft(pkgdir, "-")
 	return pkgdir
@@ -240,7 +240,7 @@ func executeBashScript(script string, wd string, env []string) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 
 	_, err = f.WriteString("#!/bin/bash\n")
 	if err != nil {
@@ -250,7 +250,7 @@ func executeBashScript(script string, wd string, env []string) error {
 	if err != nil {
 		return err
 	}
-	f.Close()
+	_ = f.Close()
 
 	log.WithField("env", env).WithField("wd", wd).Debug("running bash script")
 

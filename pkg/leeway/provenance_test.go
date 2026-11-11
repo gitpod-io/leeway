@@ -103,13 +103,13 @@ func TestProvenanceNotInTarGz(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gw := gzip.NewWriter(f)
-	defer gw.Close()
+	defer func() { _ = gw.Close() }()
 
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	// Add a regular file
 	if err := tw.WriteHeader(&tar.Header{
@@ -136,9 +136,9 @@ func TestProvenanceNotInTarGz(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tw.Close()
-	gw.Close()
-	f.Close()
+	_ = tw.Close()
+	_ = gw.Close()
+	_ = f.Close()
 
 	// Verify that AccessAttestationBundleInCachedArchive does NOT find it inside tar.gz
 	err = leeway.AccessAttestationBundleInCachedArchive(artifactPath, func(bundle io.Reader) error {
@@ -161,13 +161,13 @@ func TestProvenanceOutsideTarGz(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gw := gzip.NewWriter(f)
-	defer gw.Close()
+	defer func() { _ = gw.Close() }()
 
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	// Add a regular file
 	if err := tw.WriteHeader(&tar.Header{
@@ -181,9 +181,9 @@ func TestProvenanceOutsideTarGz(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tw.Close()
-	gw.Close()
-	f.Close()
+	_ = tw.Close()
+	_ = gw.Close()
+	_ = f.Close()
 
 	// Create provenance OUTSIDE tar.gz (new behavior)
 	provenanceContent := `{"test": "provenance outside"}`
@@ -197,13 +197,13 @@ func TestProvenanceOutsideTarGz(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f2.Close()
+	defer func() { _ = f2.Close() }()
 
 	gr, err := gzip.NewReader(f2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 
 	tr := tar.NewReader(gr)
 	for {
